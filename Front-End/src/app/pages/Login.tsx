@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { Brain, Eye, EyeOff, User, Mail, Lock, Building2, GraduationCap, Briefcase, Shield, CheckCircle2 } from "lucide-react";
@@ -67,6 +67,10 @@ export function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  useEffect(() => {
+    document.title = `${isLogin ? "Sign In" : "Sign Up"} | ExamAI`;
+  }, [isLogin]);
 
   const navigateByRole = (userRole: UserRole) => {
     switch (userRole) {

@@ -1,10 +1,9 @@
-import { useState, ReactNode } from "react";
+import { useEffect, useMemo, useState, ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Brain,
   Menu,
-  X,
   LogOut,
   Bell,
   Settings,
@@ -28,6 +27,20 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const location = useLocation();
   const navigate = useNavigate();
   const session = authStorage.getSession();
+  const dashboardPath = menuItems[0]?.path || "/";
+
+  const pageTitle = useMemo(() => {
+    const sortedItems = [...menuItems].sort((a, b) => b.path.length - a.path.length);
+    const matchedItem = sortedItems.find((item) => {
+      return location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+    });
+
+    return matchedItem?.label || `${userRole} Dashboard`;
+  }, [location.pathname, menuItems, userRole]);
+
+  useEffect(() => {
+    document.title = `${pageTitle} | ExamAI`;
+  }, [pageTitle]);
 
   const fullName = [session?.user.first_name, session?.user.last_name]
     .filter(Boolean)
@@ -126,6 +139,15 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
               >
                 {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
+              <Link to={dashboardPath} className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
+                  <Brain className="w-4 h-4 text-white" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground leading-tight">ExamAI</p>
+                  <p className="text-xs text-muted-foreground leading-tight truncate">{pageTitle}</p>
+                </div>
+              </Link>
             </div>
             <div className="flex items-center gap-4">
               <button className="p-2 rounded-lg hover:bg-accent transition-colors relative">
