@@ -1,0 +1,60 @@
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .serializers import StudentLoginSerializer, StudentSignupSerializer
+
+
+def _build_token_payload(user):
+    refresh = RefreshToken.for_user(user)
+    return {
+        'refresh': str(refresh),
+        'access': str(refresh.access_token),
+    }
+
+
+class StudentSignupAPIView(APIView):
+    def post(self, request):
+        serializer = StudentSignupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Student account created successfully.',
+                'tokens': _build_token_payload(user),
+                'user': {
+                    'id': user.id,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'email': user.email,
+                    'role': 'student',
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class StudentLoginAPIView(APIView):
+    def post(self, request):
+        serializer = StudentLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data['user']
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Student login successful.',
+                'tokens': _build_token_payload(user),
+                'user': {
+                    'id': user.id,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'email': user.email,
+                    'role': 'student',
+                },
+            },
+            status=status.HTTP_200_OK,
+        )

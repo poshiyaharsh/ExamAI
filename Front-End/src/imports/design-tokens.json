@@ -1,0 +1,121 @@
+{
+  "design_style": "Modern AI SaaS Platform",
+  "theme": {
+    "primary": "#4F46E5",
+    "secondary": "#6366F1",
+    "background": "#FFFFFF",
+    "accent": "#EEF2FF",
+    "text_primary": "#111827"
+  },
+  "typography": "Inter, Clean, Professional",
+  "layout_style": "Sidebar Dashboard Layout",
+  "components_style": {
+    "cards": "Rounded-xl with soft shadow",
+    "buttons": "Gradient Indigo, Rounded-md",
+    "inputs": "Minimal with focus glow",
+    "tables": "Modern striped table"
+  },
+  "pages": [
+    {
+      "name": "Landing Page",
+      "sections": [
+        "Hero Section with AI Illustration",
+        "Features Grid",
+        "How It Works (Step Flow)",
+        "Testimonials Section",
+        "Footer"
+      ]
+    },
+    {
+      "name": "Login / Register Page",
+      "design": "Centered Card",
+      "elements": [
+        "Role Selector Dropdown",
+        "Email",
+        "Password",
+        "Forgot Password",
+        "Login Button"
+      ]
+    },
+    {
+      "name": "Super Admin Panel (Personal Admin)",
+      "layout": "Sidebar + Topbar",
+      "sections": [
+        "System Overview Stats",
+        "Manage Institutes",
+        "Manage All Users",
+        "System Logs",
+        "AI Model Settings",
+        "Difficulty Ratio Configuration",
+        "Database Monitoring",
+        "Analytics Overview"
+      ]
+    },
+    {
+      "name": "Admin Dashboard",
+      "sections": [
+        "Total Exams",
+        "Total Students",
+        "Performance Graph",
+        "Question Bank Overview",
+        "Create Exam Button"
+      ]
+    },
+    {
+      "name": "Faculty Dashboard",
+      "sections": [
+        "Upload Syllabus",
+        "Generate Paper Form",
+        "Difficulty Slider (Easy/Medium/Hard)",
+        "Preview Generated Paper",
+        "Exam History"
+      ]
+    },
+    {
+      "name": "Question Bank Management",
+      "sections": [
+        "Add Question Modal",
+        "Difficulty Tag Selector",
+        "Bloom's Taxonomy Dropdown",
+        "Search & Filter Bar",
+        "Bulk Upload CSV Option"
+      ]
+    },
+    {
+      "name": "Student Dashboard",
+      "sections": [
+        "Available Exams",
+        "Upcoming Exams",
+        "Previous Results",
+        "Performance Overview Chart"
+      ]
+    },
+    {
+      "name": "Exam Interface",
+      "design": "Distraction Free Layout",
+      "elements": [
+        "Timer Top Bar",
+        "Question Navigation Panel",
+        "MCQ Options",
+        "Subjective Answer Textarea",
+        "Auto Save Indicator",
+        "Submit Exam Button"
+      ]
+    },
+    {
+      "name": "Result Page",
+      "sections": [
+        "Score Card",
+        "Topic Wise Analysis",
+        "AI Feedback Section",
+        "Strength & Weakness Report",
+        "Download Result PDF"
+      ]
+    }
+  ],
+  "animations": [
+    "Fade In Transitions",
+    "Smooth Sidebar Collapse",
+    "Loading Skeleton UI"
+  ]
+}
