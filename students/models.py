@@ -2,9 +2,18 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 
+from admins.models import AdminInstitution
+
 
 class StudentProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
+    institution = models.ForeignKey(
+        AdminInstitution,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='student_profiles',
+    )
     student_id = models.CharField(max_length=13, unique=True, blank=True, null=True)
     department = models.CharField(max_length=120, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)

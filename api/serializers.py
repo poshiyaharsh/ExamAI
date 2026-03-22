@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from admins.models import AdminInstitution
+
 
 class TestMessageSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
@@ -64,3 +66,9 @@ class ResetPasswordSerializer(serializers.Serializer):
         if attrs['new_password'] != attrs['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'Confirm password must match new password.'})
         return attrs
+
+
+class InstitutionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdminInstitution
+        fields = ('id', 'institution_name', 'institution_code')

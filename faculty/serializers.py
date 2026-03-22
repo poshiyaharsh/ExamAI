@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.db import OperationalError, transaction
 from rest_framework import serializers
 
+from admins.models import AdminInstitution
 from .models import FacultyProfile
 
 
@@ -11,6 +12,7 @@ class FacultySignupSerializer(serializers.Serializer):
     last_name = serializers.CharField(max_length=150)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
+    institution_id = serializers.IntegerField(write_only=True)
 
     def validate_email(self, value):
         normalized = value.lower().strip()
@@ -20,6 +22,10 @@ class FacultySignupSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         email = validated_data['email']
+        institution = AdminInstitution.objects.filter(id=validated_data['institution_id']).first()
+        if not institution:
+            raise serializers.ValidationError({'institution_id': 'Please select a valid institution.'})
+
         try:
             with transaction.atomic():
                 user = User.objects.create_user(
@@ -29,7 +35,7 @@ class FacultySignupSerializer(serializers.Serializer):
                     last_name=validated_data['last_name'].strip(),
                     password=validated_data['password'],
                 )
-                FacultyProfile.objects.create(user=user)
+                FacultyProfile.objects.create(user=user, institution=institution)
                 return user
         except OperationalError as exc:
             raise serializers.ValidationError(
@@ -59,15 +65,25 @@ class FacultyLoginSerializer(serializers.Serializer):
 class FacultyProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)
+    institution = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyProfile
-        fields = ('full_name', 'email', 'employee_id', 'department')
+        fields = ('full_name', 'email', 'employee_id', 'department', 'institution')
         read_only_fields = ('full_name', 'email', 'employee_id')
 
     def get_full_name(self, obj):
         full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
         return full_name or obj.user.username
+
+    def get_institution(self, obj):
+        if not obj.institution:
+            return None
+        return {
+            'id': obj.institution.id,
+            'institution_name': obj.institution.institution_name,
+            'institution_code': obj.institution.institution_code,
+        }
 
 
 class FacultyProfileDepartmentUpdateSerializer(serializers.ModelSerializer):

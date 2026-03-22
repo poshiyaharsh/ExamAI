@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Brain, Eye, EyeOff, User, Mail, Lock, Building2, GraduationCap, Briefcase, Shield, CheckCircle2 } from "lucide-react";
 import axios from "axios";
 
-import { authApi, type UserRole } from "../../services/api";
+import { authApi, institutionsApi, type InstitutionOption, type UserRole } from "../../services/api";
 import { authStorage } from "../../services/auth";
 
 function extractApiErrorMessage(apiError: unknown): string | null {
@@ -64,6 +64,9 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [institutions, setInstitutions] = useState<InstitutionOption[]>([]);
+  const [selectedInstitutionId, setSelectedInstitutionId] = useState("");
+  const [institutionsLoading, setInstitutionsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -71,6 +74,36 @@ export function Login() {
   useEffect(() => {
     document.title = `${isLogin ? "Sign In" : "Sign Up"} | ExamAI`;
   }, [isLogin]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadInstitutions = async () => {
+      setInstitutionsLoading(true);
+      try {
+        const response = await institutionsApi.getInstitutions();
+        if (!isMounted) {
+          return;
+        }
+        setInstitutions(response.data || []);
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        setInstitutions([]);
+      } finally {
+        if (isMounted) {
+          setInstitutionsLoading(false);
+        }
+      }
+    };
+
+    void loadInstitutions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const navigateByRole = (userRole: UserRole) => {
     switch (userRole) {
@@ -91,6 +124,11 @@ export function Login() {
     setSuccessMessage("");
 
     if (!isLogin) {
+      if ((role === "student" || role === "faculty") && !selectedInstitutionId) {
+        setError("Please select an institution.");
+        return;
+      }
+
       if (password !== confirmPassword) {
         setError("Passwords do not match.");
         return;
@@ -129,6 +167,10 @@ export function Login() {
           last_name: lastName,
           email,
           password,
+          institution_id:
+            role === "student" || role === "faculty"
+              ? Number(selectedInstitutionId)
+              : undefined,
         });
         authStorage.setSession({
           access: response.tokens.access,
@@ -228,6 +270,29 @@ export function Login() {
                 ))}
               </div>
             </div>
+
+            {!isLogin && (role === "student" || role === "faculty") && (
+              <div>
+                <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-primary" />
+                  Institution
+                </label>
+                <select
+                  value={selectedInstitutionId}
+                  onChange={(event) => setSelectedInstitutionId(event.target.value)}
+                  disabled={institutionsLoading}
+                  className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                  required
+                >
+                  <option value="">{institutionsLoading ? "Loading institutions..." : "Select institution"}</option>
+                  {institutions.map((institution) => (
+                    <option key={institution.id} value={institution.id}>
+                      {institution.institution_name} ({institution.institution_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <AnimatePresence mode="wait">
               {!isLogin && (

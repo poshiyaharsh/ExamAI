@@ -14,10 +14,12 @@ from .models import PasswordResetOTP
 from .serializers import (
     ChangePasswordSerializer,
     ForgotPasswordSerializer,
+    InstitutionSerializer,
     ResetPasswordSerializer,
     TestMessageSerializer,
     VerifyOTPSerializer,
 )
+from admins.models import AdminInstitution
 
 
 class TestAPIView(APIView):
@@ -256,6 +258,23 @@ class ResetPasswordAPIView(APIView):
             {
                 'status': 'success',
                 'message': 'Password has been reset successfully.',
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class InstitutionListAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        institutions = AdminInstitution.objects.order_by('institution_name')
+        serializer = InstitutionSerializer(institutions, many=True)
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Institutions fetched successfully.',
+                'data': serializer.data,
             },
             status=status.HTTP_200_OK,
         )

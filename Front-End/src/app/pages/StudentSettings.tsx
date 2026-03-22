@@ -70,10 +70,10 @@ export function StudentSettings() {
   const [email, setEmail] = useState("");
   const [studentId, setStudentId] = useState("");
   const [department, setDepartment] = useState("");
+  const [institutionName, setInstitutionName] = useState("");
 
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [examReminders, setExamReminders] = useState(true);
-  const [resultNotifications, setResultNotifications] = useState(true);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -101,6 +101,7 @@ export function StudentSettings() {
         setEmail(response.data.email || "");
         setStudentId(response.data.student_id || "");
         setDepartment(response.data.department || "");
+        setInstitutionName(response.data.institution?.institution_name || "");
       } catch (requestError) {
         if (!isMounted) {
           return;
@@ -284,6 +285,15 @@ export function StudentSettings() {
                 </select>
               </div>
             </div>
+            <div>
+              <label className="block text-sm text-muted-foreground mb-2">Institution</label>
+              <input
+                type="text"
+                value={profileLoading ? "Loading..." : institutionName}
+                disabled
+                className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
+              />
+            </div>
             {profileError && <p className="text-sm text-destructive">{profileError}</p>}
             {profileSuccess && <p className="text-sm text-green-600">{profileSuccess}</p>}
             <div className="pt-4">
@@ -345,24 +355,6 @@ export function StudentSettings() {
               </button>
             </div>
 
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="font-medium text-foreground">Result Notifications</div>
-                <div className="text-sm text-muted-foreground">Notify when results are published</div>
-              </div>
-              <button
-                onClick={() => setResultNotifications(!resultNotifications)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  resultNotifications ? "bg-primary" : "bg-switch-background"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    resultNotifications ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </div>
           </div>
         </div>
 

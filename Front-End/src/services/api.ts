@@ -28,6 +28,19 @@ export type AuthPayload = {
   last_name?: string;
   email: string;
   password: string;
+  institution_id?: number;
+};
+
+export type InstitutionOption = {
+  id: number;
+  institution_name: string;
+  institution_code: string;
+};
+
+export type InstitutionsResponse = {
+  status: string;
+  message: string;
+  data: InstitutionOption[];
 };
 
 export type AuthResponse = {
@@ -51,6 +64,7 @@ export type StudentProfileData = {
   email: string;
   student_id: string;
   department: string;
+  institution: InstitutionOption | null;
 };
 
 export type StudentProfileResponse = {
@@ -64,6 +78,7 @@ export type FacultyProfileData = {
   email: string;
   employee_id: string;
   department: string;
+  institution: InstitutionOption | null;
 };
 
 export type FacultyProfileResponse = {
@@ -219,6 +234,13 @@ export const testApi = {
   },
   postTestData: async (payload: TestApiPostPayload): Promise<TestApiPostResponse> => {
     const response = await apiClient.post<TestApiPostResponse>("/api/test/", payload);
+    return response.data;
+  },
+};
+
+export const institutionsApi = {
+  getInstitutions: async (): Promise<InstitutionsResponse> => {
+    const response = await apiClient.get<InstitutionsResponse>("/api/institutions");
     return response.data;
   },
 };

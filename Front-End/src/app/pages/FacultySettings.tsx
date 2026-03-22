@@ -19,7 +19,8 @@ export function FacultySettings() {
     name: "",
     email: "",
     department: "",
-    employeeId: ""
+    employeeId: "",
+    institutionName: ""
   });
   const [profileLoading, setProfileLoading] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -82,6 +83,7 @@ export function FacultySettings() {
           email: response.data.email || "",
           department: response.data.department || "",
           employeeId: response.data.employee_id || "",
+          institutionName: response.data.institution?.institution_name || "",
         });
       } catch (requestError) {
         if (!isMounted) {
@@ -315,6 +317,15 @@ export function FacultySettings() {
                       className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Institution</label>
+                  <input
+                    type="text"
+                    value={profileLoading ? "Loading..." : profile.institutionName}
+                    disabled
+                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                  />
                 </div>
                 {profileError && <p className="text-sm text-destructive">{profileError}</p>}
                 {profileSuccess && <p className="text-sm text-green-600">{profileSuccess}</p>}

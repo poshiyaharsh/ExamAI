@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from admins.models import AdminInstitution
 from .models import FacultyProfile
 from .serializers import (
     FacultyLoginSerializer,
@@ -25,6 +26,11 @@ def _build_token_payload(user):
 
 def _get_or_create_faculty_profile(user):
     profile, _ = FacultyProfile.objects.get_or_create(user=user)
+    if not profile.institution:
+        default_institution = AdminInstitution.objects.order_by('id').first()
+        if default_institution:
+            profile.institution = default_institution
+            profile.save(update_fields=['institution'])
     profile.ensure_employee_id()
     return profile
 
