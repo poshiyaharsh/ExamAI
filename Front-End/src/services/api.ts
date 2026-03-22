@@ -59,6 +59,39 @@ export type StudentProfileResponse = {
   data: StudentProfileData;
 };
 
+export type FacultyProfileData = {
+  full_name: string;
+  email: string;
+  employee_id: string;
+  department: string;
+};
+
+export type FacultyProfileResponse = {
+  status: string;
+  message: string;
+  data: FacultyProfileData;
+};
+
+export type AdminInstitutionData = {
+  institution_name: string;
+  institution_code: string;
+  address: string;
+  phone: string;
+  email: string;
+};
+
+export type AdminInstitutionResponse = {
+  status: string;
+  message: string;
+  data: AdminInstitutionData;
+  exists: boolean;
+};
+
+export type ChangePasswordResponse = {
+  status: string;
+  message: string;
+};
+
 const API_BASE_URL =
   (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
   "http://127.0.0.1:8000";
@@ -199,6 +232,52 @@ export const studentProfileApi = {
     const response = await apiClient.put<StudentProfileResponse>("/api/student/profile", {
       department,
     });
+    return response.data;
+  },
+};
+
+export const facultyProfileApi = {
+  getProfile: async (): Promise<FacultyProfileResponse> => {
+    const response = await apiClient.get<FacultyProfileResponse>("/api/faculty/profile");
+    return response.data;
+  },
+  updateProfile: async (department: string): Promise<FacultyProfileResponse> => {
+    const response = await apiClient.put<FacultyProfileResponse>("/api/faculty/profile", {
+      department,
+    });
+    return response.data;
+  },
+};
+
+export const adminInstitutionApi = {
+  getInstitution: async (): Promise<AdminInstitutionResponse> => {
+    const response = await apiClient.get<AdminInstitutionResponse>("/api/admin/institution");
+    return response.data;
+  },
+  createInstitution: async (payload: {
+    institution_name: string;
+    address: string;
+    phone: string;
+  }): Promise<AdminInstitutionResponse> => {
+    const response = await apiClient.post<AdminInstitutionResponse>("/api/admin/institution", payload);
+    return response.data;
+  },
+  updateInstitution: async (payload: {
+    institution_name: string;
+    address: string;
+    phone: string;
+  }): Promise<AdminInstitutionResponse> => {
+    const response = await apiClient.put<AdminInstitutionResponse>("/api/admin/institution", payload);
+    return response.data;
+  },
+};
+
+export const authAccountApi = {
+  changePassword: async (payload: {
+    current_password: string;
+    new_password: string;
+  }): Promise<ChangePasswordResponse> => {
+    const response = await apiClient.post<ChangePasswordResponse>("/api/auth/change-password", payload);
     return response.data;
   },
 };

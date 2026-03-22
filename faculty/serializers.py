@@ -54,3 +54,31 @@ class FacultyLoginSerializer(serializers.Serializer):
 
         attrs['user'] = user
         return attrs
+
+
+class FacultyProfileSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    email = serializers.EmailField(source='user.email', read_only=True)
+
+    class Meta:
+        model = FacultyProfile
+        fields = ('full_name', 'email', 'employee_id', 'department')
+        read_only_fields = ('full_name', 'email', 'employee_id')
+
+    def get_full_name(self, obj):
+        full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return full_name or obj.user.username
+
+
+class FacultyProfileDepartmentUpdateSerializer(serializers.ModelSerializer):
+    department = serializers.CharField(max_length=120, allow_blank=False, trim_whitespace=True)
+
+    class Meta:
+        model = FacultyProfile
+        fields = ('department',)
+
+    def validate_department(self, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise serializers.ValidationError('Department must not be empty.')
+        return cleaned

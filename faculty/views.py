@@ -1,10 +1,18 @@
 from rest_framework import status
+from django.db import OperationalError
 from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .serializers import FacultyLoginSerializer, FacultySignupSerializer
+from .models import FacultyProfile
+from .serializers import (
+    FacultyLoginSerializer,
+    FacultyProfileDepartmentUpdateSerializer,
+    FacultyProfileSerializer,
+    FacultySignupSerializer,
+)
 
 
 def _build_token_payload(user):
@@ -13,6 +21,12 @@ def _build_token_payload(user):
         'refresh': str(refresh),
         'access': str(refresh.access_token),
     }
+
+
+def _get_or_create_faculty_profile(user):
+    profile, _ = FacultyProfile.objects.get_or_create(user=user)
+    profile.ensure_employee_id()
+    return profile
 
 
 class FacultySignupAPIView(APIView):
@@ -62,6 +76,57 @@ class FacultyLoginAPIView(APIView):
                     'email': user.email,
                     'role': 'faculty',
                 },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class FacultyProfileAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            profile = _get_or_create_faculty_profile(request.user)
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        serializer = FacultyProfileSerializer(profile)
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Faculty profile fetched successfully.',
+                'data': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def put(self, request):
+        try:
+            profile = _get_or_create_faculty_profile(request.user)
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        serializer = FacultyProfileDepartmentUpdateSerializer(profile, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        response_serializer = FacultyProfileSerializer(profile)
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Department updated successfully.',
+                'data': response_serializer.data,
             },
             status=status.HTTP_200_OK,
         )

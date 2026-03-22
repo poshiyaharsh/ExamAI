@@ -1,6 +1,10 @@
-import { useState } from "react";
+import axios from "axios";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, History, Settings, User, Bell, Lock, Globe } from "lucide-react";
+import { LayoutDashboard, FileText, History, Settings, User, Bell, Lock, Eye, EyeOff } from "lucide-react";
+import { authAccountApi, facultyProfileApi } from "../../services/api";
+import { authStorage } from "../../services/auth";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },
@@ -10,12 +14,17 @@ const menuItems = [
 ];
 
 export function FacultySettings() {
+  const navigate = useNavigate();
   const [profile, setProfile] = useState({
-    name: "Dr. Sarah Johnson",
-    email: "sarah.johnson@university.edu",
-    department: "Computer Science",
-    employeeId: "FAC-2024-001"
+    name: "",
+    email: "",
+    department: "",
+    employeeId: ""
   });
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileSuccess, setProfileSuccess] = useState("");
 
   const [notifications, setNotifications] = useState({
     emailNotifications: true,
@@ -30,6 +39,194 @@ export function FacultySettings() {
     autoSave: true,
     theme: "light"
   });
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const departmentOptions = [
+    "Computer Science",
+    "Information Technology",
+    "Electronics and Communication",
+    "Mechanical Engineering",
+    "Civil Engineering",
+    "Electrical Engineering",
+    "Business Administration",
+    "Commerce",
+    "Mathematics",
+    "Physics",
+    "Chemistry",
+  ];
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadProfile = async () => {
+      setProfileLoading(true);
+      setProfileError("");
+      setProfileSuccess("");
+
+      try {
+        const response = await facultyProfileApi.getProfile();
+        if (!isMounted) {
+          return;
+        }
+
+        setProfile({
+          name: response.data.full_name || "",
+          email: response.data.email || "",
+          department: response.data.department || "",
+          employeeId: response.data.employee_id || "",
+        });
+      } catch (requestError) {
+        if (!isMounted) {
+          return;
+        }
+
+        if (axios.isAxiosError(requestError)) {
+          if (requestError.response?.status === 401) {
+            authStorage.clearSession();
+            navigate("/login", { replace: true });
+            return;
+          }
+
+          const apiError = requestError.response?.data as Record<string, unknown> | undefined;
+          const apiMessage =
+            typeof apiError?.message === "string"
+              ? apiError.message
+              : typeof apiError?.detail === "string"
+                ? apiError.detail
+                : "Unable to fetch profile. Please try again.";
+          setProfileError(apiMessage);
+        } else {
+          setProfileError("Unable to fetch profile. Please try again.");
+        }
+      } finally {
+        if (isMounted) {
+          setProfileLoading(false);
+        }
+      }
+    };
+
+    void loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
+
+  const handleSaveProfile = async () => {
+    setProfileError("");
+    setProfileSuccess("");
+
+    const cleanedDepartment = profile.department.trim();
+    if (!cleanedDepartment) {
+      setProfileError("Department must not be empty.");
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const response = await facultyProfileApi.updateProfile(cleanedDepartment);
+      setProfile((prev) => ({
+        ...prev,
+        department: response.data.department || cleanedDepartment,
+      }));
+      setProfileSuccess(response.message || "Department updated successfully.");
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          authStorage.clearSession();
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        const apiError = requestError.response?.data as Record<string, unknown> | undefined;
+        const apiMessage =
+          typeof apiError?.message === "string"
+            ? apiError.message
+            : Array.isArray(apiError?.department) && typeof apiError.department[0] === "string"
+              ? apiError.department[0]
+              : typeof apiError?.detail === "string"
+                ? apiError.detail
+                : "Unable to update department. Please try again.";
+        setProfileError(apiMessage);
+      } else {
+        setProfileError("Unable to update department. Please try again.");
+      }
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handlePasswordUpdate = async () => {
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError("All password fields are required.");
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setPasswordError("New password must be at least 8 characters long.");
+      return;
+    }
+
+    const hasLetter = /[A-Za-z]/.test(newPassword);
+    const hasNumber = /\d/.test(newPassword);
+    if (!hasLetter || !hasNumber) {
+      setPasswordError("New password must include at least one letter and one number.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError("Confirm Password must match New Password.");
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const response = await authAccountApi.changePassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setPasswordSuccess(response.message || "Password updated successfully.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          authStorage.clearSession();
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        const apiError = requestError.response?.data as Record<string, unknown> | undefined;
+        const apiMessage =
+          typeof apiError?.message === "string"
+            ? apiError.message
+            : Array.isArray(apiError?.new_password) && typeof apiError.new_password[0] === "string"
+              ? apiError.new_password[0]
+              : Array.isArray(apiError?.current_password) && typeof apiError.current_password[0] === "string"
+                ? apiError.current_password[0]
+                : typeof apiError?.detail === "string"
+                  ? apiError.detail
+                  : "Unable to update password. Please try again.";
+        setPasswordError(apiMessage);
+      } else {
+        setPasswordError("Unable to update password. Please try again.");
+      }
+    } finally {
+      setChangingPassword(false);
+    }
+  };
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
@@ -78,43 +275,56 @@ export function FacultySettings() {
                   <label className="block text-sm font-medium mb-2">Full Name</label>
                   <input
                     type="text"
-                    value={profile.name}
-                    onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    value={profileLoading ? "Loading..." : profile.name}
+                    disabled
+                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">Email</label>
                   <input
                     type="email"
-                    value={profile.email}
-                    onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    value={profileLoading ? "Loading..." : profile.email}
+                    disabled
+                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
                   />
                 </div>
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-2">Department</label>
-                    <input
-                      type="text"
+                    <select
                       value={profile.department}
                       onChange={(e) => setProfile({ ...profile, department: e.target.value })}
+                      disabled={profileLoading || savingProfile}
                       className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                    />
+                    >
+                      <option value="">Select Department</option>
+                      {departmentOptions.map((department) => (
+                        <option key={department} value={department}>
+                          {department}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-2">Employee ID</label>
                     <input
                       type="text"
-                      value={profile.employeeId}
+                      value={profileLoading ? "Loading..." : profile.employeeId}
                       disabled
                       className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
                     />
                   </div>
                 </div>
+                {profileError && <p className="text-sm text-destructive">{profileError}</p>}
+                {profileSuccess && <p className="text-sm text-green-600">{profileSuccess}</p>}
                 <div className="pt-4">
-                  <button className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all">
-                    Save Changes
+                  <button
+                    onClick={handleSaveProfile}
+                    disabled={profileLoading || savingProfile}
+                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {savingProfile ? "Saving..." : "Save Changes"}
                   </button>
                 </div>
               </div>
@@ -229,31 +439,70 @@ export function FacultySettings() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">Current Password</label>
-                  <input
-                    type="password"
-                    placeholder="Enter current password"
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showCurrentPassword ? "text" : "password"}
+                      placeholder="Enter current password"
+                      value={currentPassword}
+                      onChange={(event) => setCurrentPassword(event.target.value)}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    >
+                      {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">New Password</label>
-                  <input
-                    type="password"
-                    placeholder="Enter new password"
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? "text" : "password"}
+                      placeholder="Enter new password"
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    >
+                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">Confirm New Password</label>
-                  <input
-                    type="password"
-                    placeholder="Confirm new password"
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="Confirm new password"
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
+                {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+                {passwordSuccess && <p className="text-sm text-green-600">{passwordSuccess}</p>}
                 <div className="pt-4">
-                  <button className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all">
-                    Update Password
+                  <button
+                    onClick={handlePasswordUpdate}
+                    disabled={changingPassword}
+                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {changingPassword ? "Updating..." : "Update Password"}
                   </button>
                 </div>
               </div>

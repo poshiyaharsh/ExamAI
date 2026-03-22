@@ -1,8 +1,9 @@
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .serializers import TestMessageSerializer
+from .serializers import ChangePasswordSerializer, TestMessageSerializer
 
 
 class TestAPIView(APIView):
@@ -32,4 +33,23 @@ class TestAPIView(APIView):
                 'submitted': validated_data,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class ChangePasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+
+        request.user.set_password(serializer.validated_data['new_password'])
+        request.user.save(update_fields=['password'])
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Password updated successfully.',
+            },
+            status=status.HTTP_200_OK,
         )

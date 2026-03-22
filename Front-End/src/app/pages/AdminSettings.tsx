@@ -1,6 +1,10 @@
-import { useState } from "react";
+import axios from "axios";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { LayoutDashboard, FileText, Users, Database, Settings, Building, Bell, Shield, Globe } from "lucide-react";
+import { adminInstitutionApi } from "../../services/api";
+import { authStorage } from "../../services/auth";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
@@ -11,13 +15,19 @@ const menuItems = [
 ];
 
 export function AdminSettings() {
+  const navigate = useNavigate();
   const [institutionSettings, setInstitutionSettings] = useState({
-    name: "University of Technology",
-    code: "UOT-2024",
-    address: "123 University Avenue, Tech City",
-    phone: "+1 (555) 123-4567",
-    email: "admin@university.edu"
+    name: "",
+    code: "",
+    address: "",
+    phone: "",
+    email: ""
   });
+  const [institutionExists, setInstitutionExists] = useState(false);
+  const [institutionLoading, setInstitutionLoading] = useState(true);
+  const [institutionSaving, setInstitutionSaving] = useState(false);
+  const [institutionError, setInstitutionError] = useState("");
+  const [institutionSuccess, setInstitutionSuccess] = useState("");
 
   const [examSettings, setExamSettings] = useState({
     defaultDuration: "90",
@@ -38,6 +48,132 @@ export function AdminSettings() {
     sessionTimeout: "30",
     passwordExpiry: "90"
   });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadInstitution = async () => {
+      setInstitutionLoading(true);
+      setInstitutionError("");
+      setInstitutionSuccess("");
+
+      try {
+        const response = await adminInstitutionApi.getInstitution();
+        if (!isMounted) {
+          return;
+        }
+
+        setInstitutionExists(response.exists);
+        setInstitutionSettings({
+          name: response.data.institution_name || "",
+          code: response.data.institution_code || "",
+          address: response.data.address || "",
+          phone: response.data.phone || "",
+          email: response.data.email || "",
+        });
+      } catch (requestError) {
+        if (!isMounted) {
+          return;
+        }
+
+        if (axios.isAxiosError(requestError)) {
+          if (requestError.response?.status === 401) {
+            authStorage.clearSession();
+            navigate("/login", { replace: true });
+            return;
+          }
+
+          const apiError = requestError.response?.data as Record<string, unknown> | undefined;
+          const message =
+            typeof apiError?.message === "string"
+              ? apiError.message
+              : typeof apiError?.detail === "string"
+                ? apiError.detail
+                : "Unable to fetch institution information. Please try again.";
+          setInstitutionError(message);
+        } else {
+          setInstitutionError("Unable to fetch institution information. Please try again.");
+        }
+      } finally {
+        if (isMounted) {
+          setInstitutionLoading(false);
+        }
+      }
+    };
+
+    void loadInstitution();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
+
+  const handleSaveInstitution = async () => {
+    setInstitutionError("");
+    setInstitutionSuccess("");
+
+    const institutionName = institutionSettings.name.trim();
+    const phone = institutionSettings.phone.trim();
+
+    if (!institutionName) {
+      setInstitutionError("Institution Name is required.");
+      return;
+    }
+
+    const phonePattern = /^\+?[0-9()\-\s]{7,20}$/;
+    if (phone && !phonePattern.test(phone)) {
+      setInstitutionError("Enter a valid phone number.");
+      return;
+    }
+
+    setInstitutionSaving(true);
+    try {
+      const payload = {
+        institution_name: institutionName,
+        address: institutionSettings.address,
+        phone,
+      };
+
+      const response = institutionExists
+        ? await adminInstitutionApi.updateInstitution(payload)
+        : await adminInstitutionApi.createInstitution(payload);
+
+      setInstitutionExists(true);
+      setInstitutionSettings({
+        name: response.data.institution_name || "",
+        code: response.data.institution_code || "",
+        address: response.data.address || "",
+        phone: response.data.phone || "",
+        email: response.data.email || "",
+      });
+      setInstitutionSuccess(response.message || "Institution information saved successfully.");
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          authStorage.clearSession();
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        const apiError = requestError.response?.data as Record<string, unknown> | undefined;
+        const message =
+          typeof apiError?.message === "string"
+            ? apiError.message
+            : Array.isArray(apiError?.phone) && typeof apiError.phone[0] === "string"
+              ? apiError.phone[0]
+              : Array.isArray(apiError?.institution_name) && typeof apiError.institution_name[0] === "string"
+                ? apiError.institution_name[0]
+                : typeof apiError?.detail === "string"
+                  ? apiError.detail
+                  : "Unable to save institution information. Please try again.";
+        setInstitutionError(message);
+      } else {
+        setInstitutionError("Unable to save institution information. Please try again.");
+      }
+    } finally {
+      setInstitutionSaving(false);
+    }
+  };
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Admin">
@@ -88,6 +224,7 @@ export function AdminSettings() {
                     type="text"
                     value={institutionSettings.name}
                     onChange={(e) => setInstitutionSettings({ ...institutionSettings, name: e.target.value })}
+                    disabled={institutionLoading || institutionSaving}
                     className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                   />
                 </div>
@@ -95,7 +232,7 @@ export function AdminSettings() {
                   <label className="block text-sm font-medium mb-2">Institution Code</label>
                   <input
                     type="text"
-                    value={institutionSettings.code}
+                    value={institutionLoading ? "Loading..." : institutionSettings.code}
                     disabled
                     className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
                   />
@@ -106,6 +243,7 @@ export function AdminSettings() {
                     type="text"
                     value={institutionSettings.address}
                     onChange={(e) => setInstitutionSettings({ ...institutionSettings, address: e.target.value })}
+                    disabled={institutionLoading || institutionSaving}
                     className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                   />
                 </div>
@@ -116,6 +254,7 @@ export function AdminSettings() {
                       type="tel"
                       value={institutionSettings.phone}
                       onChange={(e) => setInstitutionSettings({ ...institutionSettings, phone: e.target.value })}
+                      disabled={institutionLoading || institutionSaving}
                       className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                     />
                   </div>
@@ -123,15 +262,21 @@ export function AdminSettings() {
                     <label className="block text-sm font-medium mb-2">Email</label>
                     <input
                       type="email"
-                      value={institutionSettings.email}
-                      onChange={(e) => setInstitutionSettings({ ...institutionSettings, email: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                      value={institutionLoading ? "Loading..." : institutionSettings.email}
+                      disabled
+                      className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
                     />
                   </div>
                 </div>
+                {institutionError && <p className="text-sm text-destructive">{institutionError}</p>}
+                {institutionSuccess && <p className="text-sm text-green-600">{institutionSuccess}</p>}
                 <div className="pt-4">
-                  <button className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all">
-                    Save Changes
+                  <button
+                    onClick={handleSaveInstitution}
+                    disabled={institutionLoading || institutionSaving}
+                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {institutionSaving ? "Saving..." : "Save Changes"}
                   </button>
                 </div>
               </div>

@@ -1,9 +1,11 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import OperationalError, transaction
+from django.db import IntegrityError
+from django.core.validators import RegexValidator
 from rest_framework import serializers
 
-from .models import AdminProfile
+from .models import AdminInstitution, AdminProfile
 
 
 class AdminSignupSerializer(serializers.Serializer):
@@ -54,3 +56,55 @@ class AdminLoginSerializer(serializers.Serializer):
 
         attrs['user'] = user
         return attrs
+
+
+class AdminInstitutionSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(source='admin.email', read_only=True)
+
+    class Meta:
+        model = AdminInstitution
+        fields = ('institution_name', 'institution_code', 'address', 'phone', 'email')
+        read_only_fields = ('institution_code', 'email')
+
+
+phone_validator = RegexValidator(
+    regex=r'^\+?[0-9()\-\s]{7,20}$',
+    message='Enter a valid phone number.',
+)
+
+
+class AdminInstitutionCreateSerializer(serializers.ModelSerializer):
+    institution_name = serializers.CharField(max_length=255, allow_blank=False, trim_whitespace=True)
+    phone = serializers.CharField(max_length=20, allow_blank=True, required=False, validators=[phone_validator])
+
+    class Meta:
+        model = AdminInstitution
+        fields = ('institution_name', 'address', 'phone')
+
+    def validate_institution_name(self, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise serializers.ValidationError('Institution Name is required.')
+        return cleaned
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        try:
+            return AdminInstitution.objects.create(admin=user, **validated_data)
+        except IntegrityError as exc:
+            raise serializers.ValidationError('Institution Code already exists. Please retry.') from exc
+
+
+class AdminInstitutionUpdateSerializer(serializers.ModelSerializer):
+    institution_name = serializers.CharField(max_length=255, allow_blank=False, trim_whitespace=True)
+    phone = serializers.CharField(max_length=20, allow_blank=True, required=False, validators=[phone_validator])
+
+    class Meta:
+        model = AdminInstitution
+        fields = ('institution_name', 'address', 'phone')
+
+    def validate_institution_name(self, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise serializers.ValidationError('Institution Name is required.')
+        return cleaned
