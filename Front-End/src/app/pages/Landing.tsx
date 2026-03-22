@@ -3,7 +3,6 @@ import { Link } from "react-router";
 import { motion } from "motion/react";
 import { Brain, FileText, TrendingUp, Users, Clock, CheckCircle, Star } from "lucide-react";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";
-import { BackendApiDemo } from "../components/BackendApiDemo";
 
 export function Landing() {
   useEffect(() => {
@@ -266,8 +265,6 @@ export function Landing() {
           ))}
         </div>
       </section>
-
-      <BackendApiDemo />
 
       {/* Footer */}
       <footer className="bg-foreground text-white py-12">
