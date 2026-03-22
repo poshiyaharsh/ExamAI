@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router";
 import { Landing } from "./pages/Landing";
 import { Login } from "./pages/Login";
+import { ForgotPassword } from "./pages/ForgotPassword";
 import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminExams } from "./pages/AdminExams";
 import { AdminStudents } from "./pages/AdminStudents";
@@ -38,6 +39,10 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     Component: Login,
+  },
+  {
+    path: "/forgot-password",
+    Component: ForgotPassword,
   },
   {
     path: "/admin",

@@ -92,6 +92,23 @@ export type ChangePasswordResponse = {
   message: string;
 };
 
+export type ForgotPasswordResponse = {
+  status: string;
+  message: string;
+  debug_otp?: string;
+};
+
+export type VerifyOtpResponse = {
+  status: string;
+  message: string;
+  reset_token: string;
+};
+
+export type ResetPasswordResponse = {
+  status: string;
+  message: string;
+};
+
 const API_BASE_URL =
   (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
   "http://127.0.0.1:8000";
@@ -278,6 +295,26 @@ export const authAccountApi = {
     new_password: string;
   }): Promise<ChangePasswordResponse> => {
     const response = await apiClient.post<ChangePasswordResponse>("/api/auth/change-password", payload);
+    return response.data;
+  },
+};
+
+export const forgotPasswordApi = {
+  requestReset: async (email: string): Promise<ForgotPasswordResponse> => {
+    const response = await apiClient.post<ForgotPasswordResponse>("/api/auth/forgot-password", { email });
+    return response.data;
+  },
+  verifyOtp: async (email: string, otp: string): Promise<VerifyOtpResponse> => {
+    const response = await apiClient.post<VerifyOtpResponse>("/api/auth/verify-otp", { email, otp });
+    return response.data;
+  },
+  resetPassword: async (payload: {
+    email: string;
+    reset_token: string;
+    new_password: string;
+    confirm_password: string;
+  }): Promise<ResetPasswordResponse> => {
+    const response = await apiClient.post<ResetPasswordResponse>("/api/auth/reset-password", payload);
     return response.data;
   },
 };
