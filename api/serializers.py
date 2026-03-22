@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from admins.models import AdminInstitution
+from admins.models import AdminDepartment, AdminInstitution
 
 
 class TestMessageSerializer(serializers.Serializer):
@@ -72,3 +72,9 @@ class InstitutionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdminInstitution
         fields = ('id', 'institution_name', 'institution_code')
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdminDepartment
+        fields = ('id', 'department_name')

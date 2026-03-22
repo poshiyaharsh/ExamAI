@@ -37,10 +37,21 @@ export type InstitutionOption = {
   institution_code: string;
 };
 
+export type DepartmentOption = {
+  id: number;
+  department_name: string;
+};
+
 export type InstitutionsResponse = {
   status: string;
   message: string;
   data: InstitutionOption[];
+};
+
+export type DepartmentsResponse = {
+  status: string;
+  message: string;
+  data: DepartmentOption[];
 };
 
 export type AuthResponse = {
@@ -57,6 +68,18 @@ export type AuthResponse = {
     email: string;
     role: UserRole;
   };
+};
+
+export type AuthMeResponse = {
+  status: string;
+  message: string;
+  user: {
+    id: number;
+    first_name: string;
+    last_name: string;
+    email: string;
+  };
+  role: UserRole;
 };
 
 export type StudentProfileData = {
@@ -159,6 +182,14 @@ export type AdminStudentDetailResponse = {
   status: string;
   message: string;
   data: AdminStudentDetails;
+};
+
+export type AdminStudentCreatePayload = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  department_id: number;
 };
 
 const API_BASE_URL =
@@ -282,6 +313,13 @@ export const institutionsApi = {
   },
 };
 
+export const departmentsApi = {
+  getDepartments: async (): Promise<DepartmentsResponse> => {
+    const response = await apiClient.get<DepartmentsResponse>("/api/departments");
+    return response.data;
+  },
+};
+
 const authPathByRole: Record<UserRole, string> = {
   student: "/api/students",
   faculty: "/api/faculty",
@@ -295,6 +333,10 @@ export const authApi = {
   },
   login: async (role: UserRole, payload: AuthPayload): Promise<AuthResponse> => {
     const response = await apiClient.post<AuthResponse>(`${authPathByRole[role]}/login/`, payload);
+    return response.data;
+  },
+  me: async (): Promise<AuthMeResponse> => {
+    const response = await apiClient.get<AuthMeResponse>("/api/auth/me");
     return response.data;
   },
 };
@@ -360,6 +402,10 @@ export const adminStudentsApi = {
   },
   getStudentById: async (studentId: number): Promise<AdminStudentDetailResponse> => {
     const response = await apiClient.get<AdminStudentDetailResponse>(`/api/admin/students/${studentId}`);
+    return response.data;
+  },
+  createStudent: async (payload: AdminStudentCreatePayload): Promise<AdminStudentDetailResponse> => {
+    const response = await apiClient.post<AdminStudentDetailResponse>("/api/admin/students", payload);
     return response.data;
   },
   updateStudent: async (

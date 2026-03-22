@@ -13,6 +13,13 @@ export type AuthSession = {
 };
 
 const AUTH_STORAGE_KEY = "exam_ai_auth";
+export const AUTH_SESSION_CHANGED_EVENT = "exam_ai_auth_changed";
+
+function emitAuthSessionChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_SESSION_CHANGED_EVENT));
+  }
+}
 
 export const authStorage = {
   getSession(): AuthSession | null {
@@ -30,8 +37,10 @@ export const authStorage = {
   },
   setSession(session: AuthSession) {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+    emitAuthSessionChanged();
   },
   clearSession() {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    emitAuthSessionChanged();
   },
 };

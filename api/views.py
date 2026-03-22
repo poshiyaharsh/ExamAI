@@ -13,13 +13,33 @@ import secrets
 from .models import PasswordResetOTP
 from .serializers import (
     ChangePasswordSerializer,
+    DepartmentSerializer,
     ForgotPasswordSerializer,
     InstitutionSerializer,
     ResetPasswordSerializer,
     TestMessageSerializer,
     VerifyOTPSerializer,
 )
-from admins.models import AdminInstitution
+from admins.models import AdminDepartment, AdminInstitution
+from admins.models import AdminProfile
+from faculty.models import FacultyProfile
+from students.models import StudentProfile
+from .permissions import IsAdminUser
+
+
+DEFAULT_DEPARTMENT_NAMES = [
+    'Computer Science',
+    'Information Technology',
+    'Electronics and Communication',
+    'Mechanical Engineering',
+    'Civil Engineering',
+    'Electrical Engineering',
+    'Business Administration',
+    'Commerce',
+    'Mathematics',
+    'Physics',
+    'Chemistry',
+]
 
 
 class TestAPIView(APIView):
@@ -49,6 +69,62 @@ class TestAPIView(APIView):
                 'submitted': validated_data,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+def _resolve_user_role(user, token_role=None):
+    roles = []
+    if AdminProfile.objects.filter(user=user).exists():
+        roles.append('admin')
+    if FacultyProfile.objects.filter(user=user).exists():
+        roles.append('faculty')
+    if StudentProfile.objects.filter(user=user).exists():
+        roles.append('student')
+
+    if not roles:
+        return None
+
+    if token_role in roles:
+        return token_role
+
+    if 'admin' in roles:
+        return 'admin'
+    if 'faculty' in roles:
+        return 'faculty'
+    return 'student'
+
+
+class AuthMeAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        token_role = None
+        if request.auth and hasattr(request.auth, 'get'):
+            token_role = request.auth.get('role')
+
+        role = _resolve_user_role(request.user, token_role=token_role)
+        if not role:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'No role profile is associated with this account.',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Authenticated user fetched successfully.',
+                'user': {
+                    'id': request.user.id,
+                    'first_name': request.user.first_name,
+                    'last_name': request.user.last_name,
+                    'email': request.user.email,
+                },
+                'role': role,
+            },
+            status=status.HTTP_200_OK,
         )
 
 
@@ -274,6 +350,74 @@ class InstitutionListAPIView(APIView):
             {
                 'status': 'success',
                 'message': 'Institutions fetched successfully.',
+                'data': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class DepartmentListAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        institution = AdminInstitution.objects.filter(admin=request.user).first()
+        if not institution:
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Institution information not created yet.',
+                    'data': [],
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        existing_departments = set(
+            AdminDepartment.objects.filter(institution=institution).values_list('department_name', flat=True)
+        )
+
+        # Ensure the standard department catalog exists for each institution.
+        missing_defaults = [
+            name for name in DEFAULT_DEPARTMENT_NAMES if name not in existing_departments
+        ]
+        if missing_defaults:
+            AdminDepartment.objects.bulk_create(
+                [
+                    AdminDepartment(institution=institution, department_name=department_name)
+                    for department_name in missing_defaults
+                ],
+                ignore_conflicts=True,
+            )
+
+        # Keep department table synced with existing student records for this institution.
+        student_departments = (
+            StudentProfile.objects.filter(institution=institution)
+            .exclude(department='')
+            .values_list('department', flat=True)
+            .distinct()
+        )
+        existing_departments = set(
+            AdminDepartment.objects.filter(institution=institution).values_list('department_name', flat=True)
+        )
+        missing_departments = [
+            department_name.strip()
+            for department_name in student_departments
+            if department_name and department_name.strip() and department_name.strip() not in existing_departments
+        ]
+        if missing_departments:
+            AdminDepartment.objects.bulk_create(
+                [
+                    AdminDepartment(institution=institution, department_name=department_name)
+                    for department_name in missing_departments
+                ],
+                ignore_conflicts=True,
+            )
+
+        departments = AdminDepartment.objects.filter(institution=institution).order_by('department_name')
+        serializer = DepartmentSerializer(departments, many=True)
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Departments fetched successfully.',
                 'data': serializer.data,
             },
             status=status.HTTP_200_OK,

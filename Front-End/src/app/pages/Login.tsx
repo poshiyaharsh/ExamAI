@@ -5,7 +5,7 @@ import { Brain, Eye, EyeOff, User, Mail, Lock, Building2, GraduationCap, Briefca
 import axios from "axios";
 
 import { authApi, institutionsApi, type InstitutionOption, type UserRole } from "../../services/api";
-import { authStorage } from "../../services/auth";
+import { useAuth } from "../context/AuthContext";
 
 function extractApiErrorMessage(apiError: unknown): string | null {
   if (!apiError) {
@@ -54,6 +54,7 @@ function extractApiErrorMessage(apiError: unknown): string | null {
 
 export function Login() {
   const navigate = useNavigate();
+  const { setAuthenticatedSession } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [role, setRole] = useState<UserRole>("student");
@@ -148,7 +149,7 @@ export function Login() {
           email,
           password,
         });
-        authStorage.setSession({
+        setAuthenticatedSession({
           access: response.tokens.access,
           refresh: response.tokens.refresh,
           role: response.user.role,
@@ -172,7 +173,7 @@ export function Login() {
               ? Number(selectedInstitutionId)
               : undefined,
         });
-        authStorage.setSession({
+        setAuthenticatedSession({
           access: response.tokens.access,
           refresh: response.tokens.refresh,
           role: response.user.role,

@@ -10,7 +10,7 @@ import {
   User,
   ChevronLeft
 } from "lucide-react";
-import { authStorage } from "../../services/auth";
+import { useAuth } from "../context/AuthContext";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -26,7 +26,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
-  const session = authStorage.getSession();
+  const { session, clearAuthenticatedSession } = useAuth();
   const dashboardPath = menuItems[0]?.path || "/";
 
   const pageTitle = useMemo(() => {
@@ -50,7 +50,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const displayEmail = session?.user.email || "";
 
   const handleLogout = () => {
-    authStorage.clearSession();
+    clearAuthenticatedSession();
     navigate("/", { replace: true });
   };
 

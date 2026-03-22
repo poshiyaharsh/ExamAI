@@ -1,3 +1,5 @@
+import re
+
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import OperationalError, transaction
@@ -5,7 +7,7 @@ from django.db import IntegrityError
 from django.core.validators import RegexValidator
 from rest_framework import serializers
 
-from .models import AdminInstitution, AdminProfile
+from .models import AdminDepartment, AdminInstitution, AdminProfile
 from students.models import StudentProfile
 
 
@@ -252,3 +254,65 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
         if update_fields:
             instance.save(update_fields=update_fields)
         return instance
+
+
+class AdminStudentCreateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    department_id = serializers.IntegerField(write_only=True)
+
+    def validate_email(self, value):
+        normalized = value.lower().strip()
+        if User.objects.filter(username=normalized).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return normalized
+
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError('Password must be at least 8 characters long.')
+
+        has_letter = re.search(r'[A-Za-z]', value) is not None
+        has_number = re.search(r'\d', value) is not None
+        if not has_letter or not has_number:
+            raise serializers.ValidationError('Password must include at least one letter and one number.')
+
+        return value
+
+    def validate_department_id(self, value):
+        institution = self.context.get('institution')
+        if not institution:
+            raise serializers.ValidationError('Admin institution not found.')
+
+        department = AdminDepartment.objects.filter(id=value, institution=institution).first()
+        if not department:
+            raise serializers.ValidationError('Please select a valid department.')
+
+        self.context['department'] = department
+        return value
+
+    def create(self, validated_data):
+        institution = self.context.get('institution')
+        if not institution:
+            raise serializers.ValidationError({'institution_id': 'Admin institution not found.'})
+
+        department = self.context.get('department')
+        if not department:
+            raise serializers.ValidationError({'department_id': 'Please select a valid department.'})
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=validated_data['email'],
+                email=validated_data['email'],
+                first_name=validated_data['first_name'].strip(),
+                last_name=validated_data['last_name'].strip(),
+                password=validated_data['password'],
+            )
+            profile = StudentProfile.objects.create(
+                user=user,
+                institution=institution,
+                department=department.department_name,
+            )
+            profile.ensure_student_id()
+            return profile

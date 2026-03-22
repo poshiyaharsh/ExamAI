@@ -56,3 +56,25 @@ class AdminInstitution(models.Model):
 
     def __str__(self):
         return f'{self.institution_name} ({self.institution_code})'
+
+
+class AdminDepartment(models.Model):
+    institution = models.ForeignKey(
+        AdminInstitution,
+        on_delete=models.CASCADE,
+        related_name='departments',
+    )
+    department_name = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['institution', 'department_name'],
+                name='unique_department_per_institution',
+            )
+        ]
+        ordering = ['department_name']
+
+    def __str__(self):
+        return f'{self.department_name} ({self.institution.institution_code})'

@@ -1,7 +1,7 @@
 import { Navigate, useLocation } from "react-router";
 
 import type { UserRole } from "../../services/api";
-import { authStorage } from "../../services/auth";
+import { useAuth } from "../context/AuthContext";
 
 type ProtectedRouteProps = {
   allowedRoles: UserRole[];
@@ -10,14 +10,18 @@ type ProtectedRouteProps = {
 
 export function ProtectedRoute({ allowedRoles, children }: ProtectedRouteProps) {
   const location = useLocation();
-  const session = authStorage.getSession();
+  const { session, isLoading, getDashboardPathByRole } = useAuth();
+
+  if (isLoading) {
+    return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading...</div>;
+  }
 
   if (!session) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   if (!allowedRoles.includes(session.role)) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+    return <Navigate to={getDashboardPathByRole(session.role)} replace />;
   }
 
   return <>{children}</>;

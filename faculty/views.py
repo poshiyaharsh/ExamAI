@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from api.permissions import IsFacultyUser
 
 from admins.models import AdminInstitution
 from .models import FacultyProfile
@@ -18,9 +19,12 @@ from .serializers import (
 
 def _build_token_payload(user):
     refresh = RefreshToken.for_user(user)
+    refresh['role'] = 'faculty'
+    access = refresh.access_token
+    access['role'] = 'faculty'
     return {
         'refresh': str(refresh),
-        'access': str(refresh.access_token),
+        'access': str(access),
     }
 
 
@@ -88,7 +92,7 @@ class FacultyLoginAPIView(APIView):
 
 
 class FacultyProfileAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsFacultyUser]
 
     def get(self, request):
         try:

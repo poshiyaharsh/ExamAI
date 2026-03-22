@@ -7,12 +7,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from api.permissions import IsAdminUser
 
 from students.models import StudentProfile
 from .models import AdminInstitution, AdminProfile
 from .serializers import (
     AdminInstitutionCreateSerializer,
     AdminInstitutionSerializer,
+    AdminStudentCreateSerializer,
     AdminStudentDetailSerializer,
     AdminStudentListSerializer,
     AdminStudentUpdateSerializer,
@@ -24,9 +26,12 @@ from .serializers import (
 
 def _build_token_payload(user):
     refresh = RefreshToken.for_user(user)
+    refresh['role'] = 'admin'
+    access = refresh.access_token
+    access['role'] = 'admin'
     return {
         'refresh': str(refresh),
-        'access': str(refresh.access_token),
+        'access': str(access),
     }
 
 
@@ -91,7 +96,7 @@ class AdminLoginAPIView(APIView):
 
 
 class AdminInstitutionAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def get(self, request):
         try:
@@ -186,7 +191,7 @@ class AdminInstitutionAPIView(APIView):
 
 
 class AdminStudentsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def get(self, request):
         if not _ensure_admin_user(request.user):
@@ -242,9 +247,56 @@ class AdminStudentsAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    def post(self, request):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            institution = _get_admin_institution(request.user)
+            if not institution:
+                return Response(
+                    {
+                        'status': 'error',
+                        'message': 'Institution information does not exist. Create it first.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            serializer = AdminStudentCreateSerializer(
+                data=request.data,
+                context={'institution': institution},
+            )
+            serializer.is_valid(raise_exception=True)
+            student_profile = serializer.save()
+
+            response_serializer = AdminStudentDetailSerializer(student_profile)
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Student Created Successfully',
+                    'data': {
+                        **response_serializer.data,
+                        'institution_id': institution.id,
+                        'role': 'student',
+                    },
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class AdminStudentDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def _get_student_for_admin(self, request, student_id):
         if not _ensure_admin_user(request.user):
