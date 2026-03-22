@@ -1,15 +1,21 @@
 from rest_framework import status
 from django.db import OperationalError
+from django.db import transaction
+from django.db.models import Q
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import AdminInstitution
+from students.models import StudentProfile
+from .models import AdminInstitution, AdminProfile
 from .serializers import (
     AdminInstitutionCreateSerializer,
     AdminInstitutionSerializer,
+    AdminStudentDetailSerializer,
+    AdminStudentListSerializer,
+    AdminStudentUpdateSerializer,
     AdminInstitutionUpdateSerializer,
     AdminLoginSerializer,
     AdminSignupSerializer,
@@ -22,6 +28,14 @@ def _build_token_payload(user):
         'refresh': str(refresh),
         'access': str(refresh.access_token),
     }
+
+
+def _ensure_admin_user(user):
+    return AdminProfile.objects.filter(user=user).exists()
+
+
+def _get_admin_institution(user):
+    return AdminInstitution.objects.filter(admin=user).first()
 
 
 class AdminSignupAPIView(APIView):
@@ -169,3 +183,173 @@ class AdminInstitutionAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class AdminStudentsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            institution = _get_admin_institution(request.user)
+            if not institution:
+                return Response(
+                    {
+                        'status': 'success',
+                        'message': 'Institution information not created yet.',
+                        'data': [],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            queryset = StudentProfile.objects.select_related('user').filter(institution=institution)
+
+            search_query = request.query_params.get('search', '').strip()
+            if search_query:
+                queryset = queryset.filter(
+                    Q(user__first_name__icontains=search_query)
+                    | Q(user__last_name__icontains=search_query)
+                    | Q(user__email__icontains=search_query)
+                    | Q(student_id__icontains=search_query)
+                )
+
+            department = request.query_params.get('department', '').strip()
+            if department:
+                queryset = queryset.filter(department__iexact=department)
+
+            students = queryset.order_by('user__first_name', 'user__last_name', 'id')
+            serializer = AdminStudentListSerializer(students, many=True)
+
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Students fetched successfully.',
+                    'data': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class AdminStudentDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_student_for_admin(self, request, student_id):
+        if not _ensure_admin_user(request.user):
+            return None, Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        institution = _get_admin_institution(request.user)
+        if not institution:
+            return None, Response(
+                {'status': 'error', 'message': 'Admin institution not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        student = (
+            StudentProfile.objects.select_related('user', 'institution')
+            .filter(id=student_id, institution=institution)
+            .first()
+        )
+        if not student:
+            return None, Response(
+                {'status': 'error', 'message': 'Student not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return student, None
+
+    def get(self, request, student_id):
+        try:
+            student, error_response = self._get_student_for_admin(request, student_id)
+            if error_response:
+                return error_response
+
+            serializer = AdminStudentDetailSerializer(student)
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Student details fetched successfully.',
+                    'data': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def put(self, request, student_id):
+        try:
+            student, error_response = self._get_student_for_admin(request, student_id)
+            if error_response:
+                return error_response
+
+            serializer = AdminStudentUpdateSerializer(
+                student,
+                data=request.data,
+                context={'student_profile': student},
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            response_serializer = AdminStudentDetailSerializer(student)
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Student information updated successfully.',
+                    'data': response_serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def delete(self, request, student_id):
+        try:
+            student, error_response = self._get_student_for_admin(request, student_id)
+            if error_response:
+                return error_response
+
+            with transaction.atomic():
+                student.user.delete()
+
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Student deleted successfully.',
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

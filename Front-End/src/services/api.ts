@@ -124,6 +124,43 @@ export type ResetPasswordResponse = {
   message: string;
 };
 
+export type AdminStudentRow = {
+  id: number;
+  full_name: string;
+  email: string;
+  roll_number: string;
+  department: string;
+  year: string;
+  number_of_exams: number;
+  average_score: number | null;
+};
+
+export type AdminStudentListResponse = {
+  status: string;
+  message: string;
+  data: AdminStudentRow[];
+};
+
+export type AdminStudentDetails = {
+  id: number;
+  full_name: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  roll_number: string;
+  department: string;
+  year: string;
+  number_of_exams: number;
+  average_score: number | null;
+  institution: InstitutionOption | null;
+};
+
+export type AdminStudentDetailResponse = {
+  status: string;
+  message: string;
+  data: AdminStudentDetails;
+};
+
 const API_BASE_URL =
   (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
   "http://127.0.0.1:8000";
@@ -307,6 +344,37 @@ export const adminInstitutionApi = {
     phone: string;
   }): Promise<AdminInstitutionResponse> => {
     const response = await apiClient.put<AdminInstitutionResponse>("/api/admin/institution", payload);
+    return response.data;
+  },
+};
+
+export const adminStudentsApi = {
+  getStudents: async (params?: {
+    search?: string;
+    department?: string;
+  }): Promise<AdminStudentListResponse> => {
+    const response = await apiClient.get<AdminStudentListResponse>('/api/admin/students', {
+      params,
+    });
+    return response.data;
+  },
+  getStudentById: async (studentId: number): Promise<AdminStudentDetailResponse> => {
+    const response = await apiClient.get<AdminStudentDetailResponse>(`/api/admin/students/${studentId}`);
+    return response.data;
+  },
+  updateStudent: async (
+    studentId: number,
+    payload: {
+      first_name: string;
+      last_name: string;
+      email: string;
+    }
+  ): Promise<AdminStudentDetailResponse> => {
+    const response = await apiClient.put<AdminStudentDetailResponse>(`/api/admin/students/${studentId}`, payload);
+    return response.data;
+  },
+  deleteStudent: async (studentId: number): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.delete<{ status: string; message: string }>(`/api/admin/students/${studentId}`);
     return response.data;
   },
 };

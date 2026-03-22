@@ -6,6 +6,7 @@ from django.core.validators import RegexValidator
 from rest_framework import serializers
 
 from .models import AdminInstitution, AdminProfile
+from students.models import StudentProfile
 
 
 class AdminSignupSerializer(serializers.Serializer):
@@ -108,3 +109,146 @@ class AdminInstitutionUpdateSerializer(serializers.ModelSerializer):
         if not cleaned:
             raise serializers.ValidationError('Institution Name is required.')
         return cleaned
+
+
+class AdminStudentListSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    email = serializers.EmailField(source='user.email', read_only=True)
+    roll_number = serializers.CharField(source='student_id', read_only=True)
+    year = serializers.SerializerMethodField()
+    number_of_exams = serializers.SerializerMethodField()
+    average_score = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StudentProfile
+        fields = (
+            'id',
+            'full_name',
+            'email',
+            'roll_number',
+            'department',
+            'year',
+            'number_of_exams',
+            'average_score',
+        )
+
+    def get_full_name(self, obj):
+        full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return full_name or obj.user.username
+
+    def get_year(self, obj):
+        return ''
+
+    def get_number_of_exams(self, obj):
+        return 0
+
+    def get_average_score(self, obj):
+        return None
+
+
+class AdminStudentDetailSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    roll_number = serializers.CharField(source='student_id', read_only=True)
+    year = serializers.SerializerMethodField()
+    number_of_exams = serializers.SerializerMethodField()
+    average_score = serializers.SerializerMethodField()
+    institution = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StudentProfile
+        fields = (
+            'id',
+            'full_name',
+            'first_name',
+            'last_name',
+            'email',
+            'roll_number',
+            'department',
+            'year',
+            'number_of_exams',
+            'average_score',
+            'institution',
+        )
+
+    def get_full_name(self, obj):
+        full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return full_name or obj.user.username
+
+    def get_year(self, obj):
+        return ''
+
+    def get_number_of_exams(self, obj):
+        return 0
+
+    def get_average_score(self, obj):
+        return None
+
+    def get_institution(self, obj):
+        if not obj.institution:
+            return None
+        return {
+            'id': obj.institution.id,
+            'institution_name': obj.institution.institution_name,
+            'institution_code': obj.institution.institution_code,
+        }
+
+
+class AdminStudentUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    student_id = serializers.CharField(max_length=13, required=False)
+    department = serializers.CharField(max_length=120, allow_blank=False, trim_whitespace=True, required=False)
+
+    def validate_email(self, value):
+        normalized = value.lower().strip()
+        profile = self.context.get('student_profile')
+        if not profile:
+            return normalized
+
+        if User.objects.filter(username=normalized).exclude(id=profile.user_id).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return normalized
+
+    def validate_student_id(self, value):
+        normalized = value.strip().upper()
+        if not normalized:
+            raise serializers.ValidationError('Student ID is required.')
+
+        profile = self.context.get('student_profile')
+        if not profile:
+            return normalized
+
+        if StudentProfile.objects.filter(student_id=normalized).exclude(id=profile.id).exists():
+            raise serializers.ValidationError('Student ID already exists.')
+        return normalized
+
+    def validate_department(self, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise serializers.ValidationError('Department must not be empty.')
+        return cleaned
+
+    def update(self, instance, validated_data):
+        user = instance.user
+        user.first_name = validated_data['first_name'].strip()
+        user.last_name = validated_data['last_name'].strip()
+        user.email = validated_data['email']
+        user.username = validated_data['email']
+        user.save(update_fields=['first_name', 'last_name', 'email', 'username'])
+
+        update_fields = []
+        if 'student_id' in validated_data:
+            instance.student_id = validated_data['student_id']
+            update_fields.append('student_id')
+
+        if 'department' in validated_data:
+            instance.department = validated_data['department']
+            update_fields.append('department')
+
+        if update_fields:
+            instance.save(update_fields=update_fields)
+        return instance

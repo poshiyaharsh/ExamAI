@@ -1,6 +1,14 @@
-import { useState } from "react";
+import axios from "axios";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { LayoutDashboard, FileText, Users, Database, Settings, Search, Filter, Plus, Edit, Trash2, Eye, Mail } from "lucide-react";
+import {
+  adminStudentsApi,
+  type AdminStudentDetails,
+  type AdminStudentRow,
+} from "../../services/api";
+import { authStorage } from "../../services/auth";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
@@ -10,83 +18,281 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/admin/settings" }
 ];
 
-const studentsData = [
-  {
-    id: "STU-001",
-    name: "Alice Johnson",
-    email: "alice.j@university.edu",
-    rollNo: "2024-CS-001",
-    department: "Computer Science",
-    year: "3rd Year",
-    examsTaken: 12,
-    avgScore: 88.5,
-    status: "Active"
-  },
-  {
-    id: "STU-002",
-    name: "Bob Smith",
-    email: "bob.s@university.edu",
-    rollNo: "2024-CS-002",
-    department: "Computer Science",
-    year: "3rd Year",
-    examsTaken: 11,
-    avgScore: 76.2,
-    status: "Active"
-  },
-  {
-    id: "STU-003",
-    name: "Carol Davis",
-    email: "carol.d@university.edu",
-    rollNo: "2024-MATH-015",
-    department: "Mathematics",
-    year: "2nd Year",
-    examsTaken: 10,
-    avgScore: 92.3,
-    status: "Active"
-  },
-  {
-    id: "STU-004",
-    name: "David Lee",
-    email: "david.l@university.edu",
-    rollNo: "2024-PHY-008",
-    department: "Physics",
-    year: "4th Year",
-    examsTaken: 15,
-    avgScore: 81.7,
-    status: "Active"
-  },
-  {
-    id: "STU-005",
-    name: "Emma Wilson",
-    email: "emma.w@university.edu",
-    rollNo: "2024-CS-045",
-    department: "Computer Science",
-    year: "1st Year",
-    examsTaken: 6,
-    avgScore: 85.9,
-    status: "Active"
+function extractApiErrorMessage(apiError: unknown): string | null {
+  if (!apiError || typeof apiError !== "object") {
+    return null;
   }
-];
 
-export function AdminStudents() {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const record = apiError as Record<string, unknown>;
 
-  const filteredStudents = studentsData.filter(student => {
-    const matchesSearch = student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          student.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          student.rollNo.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesDepartment = departmentFilter === "all" || student.department === departmentFilter;
-    return matchesSearch && matchesDepartment;
+  if (typeof record.detail === "string") {
+    return record.detail;
+  }
+
+  if (typeof record.message === "string") {
+    return record.message;
+  }
+
+  const firstFieldError = Object.values(record).find((value) => {
+    if (typeof value === "string") {
+      return true;
+    }
+    return Array.isArray(value) && typeof value[0] === "string";
   });
 
-  const departments = Array.from(new Set(studentsData.map(s => s.department)));
+  if (typeof firstFieldError === "string") {
+    return firstFieldError;
+  }
+
+  if (Array.isArray(firstFieldError) && typeof firstFieldError[0] === "string") {
+    return firstFieldError[0];
+  }
+
+  return null;
+}
+
+export function AdminStudents() {
+  const navigate = useNavigate();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [students, setStudents] = useState<AdminStudentRow[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [isViewOpen, setIsViewOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<AdminStudentDetails | null>(null);
+  const [viewError, setViewError] = useState("");
+
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editSuccess, setEditSuccess] = useState("");
+  const [editStudentId, setEditStudentId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    student_id: "",
+    department: "",
+  });
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const handleUnauthorized = useCallback(() => {
+    authStorage.clearSession();
+    navigate("/login", { replace: true });
+  }, [navigate]);
+
+  const fetchStudents = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params: { search?: string; department?: string } = {};
+      const trimmedSearch = searchTerm.trim();
+      if (trimmedSearch) {
+        params.search = trimmedSearch;
+      }
+      if (departmentFilter !== "all") {
+        params.department = departmentFilter;
+      }
+
+      const response = await adminStudentsApi.getStudents(params);
+      setStudents(response.data);
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setError(extracted ?? "Unable to fetch students. Please try again.");
+      } else {
+        setError("Unable to fetch students. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [departmentFilter, handleUnauthorized, searchTerm]);
+
+  const fetchDepartments = useCallback(async () => {
+    try {
+      const response = await adminStudentsApi.getStudents();
+      const uniqueDepartments = Array.from(
+        new Set(
+          response.data
+            .map((student) => student.department)
+            .filter((department) => Boolean(department?.trim()))
+        )
+      );
+      setDepartments(uniqueDepartments.sort((a, b) => a.localeCompare(b)));
+    } catch {
+      setDepartments([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchDepartments();
+  }, [fetchDepartments]);
+
+  useEffect(() => {
+    const debounceTimer = setTimeout(() => {
+      void fetchStudents();
+    }, 300);
+
+    return () => {
+      clearTimeout(debounceTimer);
+    };
+  }, [fetchStudents]);
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return "text-green-600";
     if (score >= 75) return "text-blue-600";
     if (score >= 60) return "text-yellow-600";
     return "text-red-600";
+  };
+
+  const averagePerformance = useMemo(() => {
+    const scores = students
+      .map((student) => student.average_score)
+      .filter((score): score is number => typeof score === "number");
+
+    if (!scores.length) {
+      return "0.0";
+    }
+
+    const average = scores.reduce((acc, score) => acc + score, 0) / scores.length;
+    return average.toFixed(1);
+  }, [students]);
+
+  const totalExams = useMemo(
+    () => students.reduce((acc, student) => acc + student.number_of_exams, 0),
+    [students]
+  );
+
+  const handleViewStudent = async (studentId: number) => {
+    setIsViewOpen(true);
+    setViewLoading(true);
+    setViewError("");
+    setSelectedStudent(null);
+    try {
+      const response = await adminStudentsApi.getStudentById(studentId);
+      setSelectedStudent(response.data);
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setViewError(extracted ?? "Unable to fetch student details.");
+      } else {
+        setViewError("Unable to fetch student details.");
+      }
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const handleEditStudent = async (studentId: number) => {
+    setIsEditOpen(true);
+    setEditLoading(true);
+    setEditError("");
+    setEditSuccess("");
+    setEditStudentId(studentId);
+    try {
+      const response = await adminStudentsApi.getStudentById(studentId);
+      const details = response.data;
+      setEditForm({
+        first_name: details.first_name || "",
+        last_name: details.last_name || "",
+        email: details.email || "",
+        student_id: details.roll_number || "",
+        department: details.department || "",
+      });
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setEditError(extracted ?? "Unable to fetch student details for editing.");
+      } else {
+        setEditError("Unable to fetch student details for editing.");
+      }
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    setEditError("");
+    setEditSuccess("");
+
+    if (!editStudentId) {
+      setEditError("Student id is missing.");
+      return;
+    }
+
+    const payload = {
+      first_name: editForm.first_name.trim(),
+      last_name: editForm.last_name.trim(),
+      email: editForm.email.trim(),
+    };
+
+    if (!payload.first_name || !payload.last_name || !payload.email) {
+      setEditError("All fields are required.");
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      await adminStudentsApi.updateStudent(editStudentId, payload);
+      setEditSuccess("Student updated successfully.");
+      await Promise.all([fetchStudents(), fetchDepartments()]);
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setEditError(extracted ?? "Unable to update student.");
+      } else {
+        setEditError("Unable to update student.");
+      }
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteStudent = async (student: AdminStudentRow) => {
+    const shouldDelete = window.confirm(`Delete ${student.full_name}? This action cannot be undone.`);
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingId(student.id);
+    setError("");
+    try {
+      await adminStudentsApi.deleteStudent(student.id);
+      await Promise.all([fetchStudents(), fetchDepartments()]);
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setError(extracted ?? "Unable to delete student.");
+      } else {
+        setError("Unable to delete student.");
+      }
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
@@ -108,25 +314,19 @@ export function AdminStudents() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
             <p className="text-sm text-muted-foreground mb-1">Total Students</p>
-            <p className="text-3xl font-bold text-foreground">{studentsData.length}</p>
+            <p className="text-3xl font-bold text-foreground">{students.length}</p>
           </div>
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
             <p className="text-sm text-muted-foreground mb-1">Active Students</p>
-            <p className="text-3xl font-bold text-green-600">
-              {studentsData.filter(s => s.status === "Active").length}
-            </p>
+            <p className="text-3xl font-bold text-green-600">{students.length}</p>
           </div>
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
             <p className="text-sm text-muted-foreground mb-1">Avg Performance</p>
-            <p className="text-3xl font-bold text-foreground">
-              {(studentsData.reduce((acc, s) => acc + s.avgScore, 0) / studentsData.length).toFixed(1)}%
-            </p>
+            <p className="text-3xl font-bold text-foreground">{averagePerformance}%</p>
           </div>
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
             <p className="text-sm text-muted-foreground mb-1">Total Exams</p>
-            <p className="text-3xl font-bold text-foreground">
-              {studentsData.reduce((acc, s) => acc + s.examsTaken, 0)}
-            </p>
+            <p className="text-3xl font-bold text-foreground">{totalExams}</p>
           </div>
         </div>
 
@@ -157,6 +357,7 @@ export function AdminStudents() {
               </select>
             </div>
           </div>
+          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         </div>
 
         {/* Students Table */}
@@ -175,51 +376,236 @@ export function AdminStudents() {
                 </tr>
               </thead>
               <tbody>
-                {filteredStudents.map((student) => (
-                  <tr key={student.id} className="border-t border-border hover:bg-muted/30 transition-colors">
-                    <td className="px-6 py-4">
-                      <div>
-                        <p className="font-medium text-foreground">{student.name}</p>
-                        <p className="text-sm text-muted-foreground">{student.email}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm">{student.rollNo}</td>
-                    <td className="px-6 py-4 text-sm">{student.department}</td>
-                    <td className="px-6 py-4 text-sm">{student.year}</td>
-                    <td className="px-6 py-4 text-sm">{student.examsTaken}</td>
-                    <td className="px-6 py-4">
-                      <span className={`font-semibold ${getScoreColor(student.avgScore)}`}>
-                        {student.avgScore}%
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button className="p-1.5 rounded hover:bg-muted transition-colors" title="View Profile">
-                          <Eye className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                        <button className="p-1.5 rounded hover:bg-muted transition-colors" title="Edit">
-                          <Edit className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                        <button className="p-1.5 rounded hover:bg-muted transition-colors" title="Email">
-                          <Mail className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                        <button className="p-1.5 rounded hover:bg-red-50 transition-colors" title="Delete">
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
-                      </div>
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
+                      Loading students...
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  students.map((student) => (
+                    <tr key={student.id} className="border-t border-border hover:bg-muted/30 transition-colors">
+                      <td className="px-6 py-4">
+                        <div>
+                          <p className="font-medium text-foreground">{student.full_name}</p>
+                          <p className="text-sm text-muted-foreground">{student.email}</p>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm">{student.roll_number || "-"}</td>
+                      <td className="px-6 py-4 text-sm">{student.department || "-"}</td>
+                      <td className="px-6 py-4 text-sm">{student.year || "-"}</td>
+                      <td className="px-6 py-4 text-sm">{student.number_of_exams}</td>
+                      <td className="px-6 py-4">
+                        {typeof student.average_score === "number" ? (
+                          <span className={`font-semibold ${getScoreColor(student.average_score)}`}>
+                            {student.average_score.toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="p-1.5 rounded hover:bg-muted transition-colors"
+                            title="View Profile"
+                            onClick={() => void handleViewStudent(student.id)}
+                          >
+                            <Eye className="w-4 h-4 text-muted-foreground" />
+                          </button>
+                          <button
+                            className="p-1.5 rounded hover:bg-muted transition-colors"
+                            title="Edit"
+                            onClick={() => void handleEditStudent(student.id)}
+                          >
+                            <Edit className="w-4 h-4 text-muted-foreground" />
+                          </button>
+                          <a
+                            className="p-1.5 rounded hover:bg-muted transition-colors"
+                            title="Email"
+                            href={`mailto:${student.email}`}
+                          >
+                            <Mail className="w-4 h-4 text-muted-foreground" />
+                          </a>
+                          <button
+                            className="p-1.5 rounded hover:bg-red-50 transition-colors disabled:opacity-60"
+                            title="Delete"
+                            onClick={() => void handleDeleteStudent(student)}
+                            disabled={deletingId === student.id}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-600" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {filteredStudents.length === 0 && (
+        {!loading && students.length === 0 && (
           <div className="text-center py-12">
             <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-            <p className="text-lg font-medium text-foreground mb-2">No students found</p>
+            <p className="text-lg font-medium text-foreground mb-2">No Students Found</p>
             <p className="text-muted-foreground">Try adjusting your search or filters</p>
+          </div>
+        )}
+
+        {isViewOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-white rounded-xl shadow-xl border border-border">
+              <div className="flex items-center justify-between p-6 border-b border-border">
+                <h3 className="text-xl font-semibold">Student Details</h3>
+                <button
+                  className="px-3 py-1.5 rounded border border-border hover:bg-muted"
+                  onClick={() => setIsViewOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="p-6">
+                {viewLoading ? (
+                  <p className="text-muted-foreground">Loading student details...</p>
+                ) : viewError ? (
+                  <p className="text-destructive text-sm">{viewError}</p>
+                ) : selectedStudent ? (
+                  <div className="grid sm:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Full Name</p>
+                      <p className="font-medium text-foreground">{selectedStudent.full_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Email</p>
+                      <p className="font-medium text-foreground">{selectedStudent.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Roll Number / Student ID</p>
+                      <p className="font-medium text-foreground">{selectedStudent.roll_number || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Department</p>
+                      <p className="font-medium text-foreground">{selectedStudent.department || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Year</p>
+                      <p className="font-medium text-foreground">{selectedStudent.year || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Number of Exams</p>
+                      <p className="font-medium text-foreground">{selectedStudent.number_of_exams}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Average Score</p>
+                      <p className="font-medium text-foreground">
+                        {typeof selectedStudent.average_score === "number"
+                          ? `${selectedStudent.average_score.toFixed(1)}%`
+                          : "-"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Institution</p>
+                      <p className="font-medium text-foreground">
+                        {selectedStudent.institution?.institution_name || "-"}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isEditOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-white rounded-xl shadow-xl border border-border">
+              <div className="flex items-center justify-between p-6 border-b border-border">
+                <h3 className="text-xl font-semibold">Edit Student</h3>
+                <button
+                  className="px-3 py-1.5 rounded border border-border hover:bg-muted"
+                  onClick={() => {
+                    setIsEditOpen(false);
+                    setEditError("");
+                    setEditSuccess("");
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                {editLoading ? (
+                  <p className="text-muted-foreground">Loading edit form...</p>
+                ) : (
+                  <>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">First Name</label>
+                        <input
+                          type="text"
+                          value={editForm.first_name}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Last Name</label>
+                        <input
+                          type="text"
+                          value={editForm.last_name}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Email</label>
+                        <input
+                          type="email"
+                          value={editForm.email}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Roll Number / Student ID</label>
+                        <input
+                          type="text"
+                          value={editForm.student_id}
+                          disabled
+                          className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm text-muted-foreground mb-2">Department</label>
+                      <input
+                        type="text"
+                        value={editForm.department}
+                        disabled
+                        className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
+                      />
+                    </div>
+
+                    {editError && <p className="text-sm text-destructive">{editError}</p>}
+                    {editSuccess && <p className="text-sm text-green-600">{editSuccess}</p>}
+
+                    <div className="pt-2">
+                      <button
+                        onClick={() => void handleSaveEdit()}
+                        disabled={savingEdit}
+                        className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {savingEdit ? "Saving..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
