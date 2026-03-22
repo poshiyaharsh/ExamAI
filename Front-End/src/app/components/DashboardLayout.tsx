@@ -1,5 +1,5 @@
 import { useState, ReactNode } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Brain,
@@ -11,6 +11,7 @@ import {
   User,
   ChevronLeft
 } from "lucide-react";
+import { authStorage } from "../../services/auth";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -25,6 +26,20 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children, menuItems, userRole }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const location = useLocation();
+  const navigate = useNavigate();
+  const session = authStorage.getSession();
+
+  const fullName = [session?.user.first_name, session?.user.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const displayName = fullName || session?.user.email?.split("@")[0] || "User";
+  const displayEmail = session?.user.email || "";
+
+  const handleLogout = () => {
+    authStorage.clearSession();
+    navigate("/", { replace: true });
+  };
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -75,15 +90,23 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
 
               {/* User Section */}
               <div className="p-4 border-t border-sidebar-border">
-                <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-sidebar-accent/50 cursor-pointer transition-colors">
+                <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-sidebar-accent/50 transition-colors">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
                     <User className="w-4 h-4 text-white" />
                   </div>
                   <div className="flex-1 text-sm">
-                    <div className="font-medium text-sidebar-foreground">User Name</div>
-                    <div className="text-xs text-muted-foreground">user@example.com</div>
+                    <div className="font-medium text-sidebar-foreground">{displayName}</div>
+                    <div className="text-xs text-muted-foreground">{displayEmail}</div>
                   </div>
-                  <LogOut className="w-4 h-4 text-muted-foreground" />
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-xs font-medium text-sidebar-foreground hover:bg-sidebar-accent"
+                    aria-label="Logout"
+                    title="Logout"
+                  >
+                    <LogOut className="w-4 h-4 text-muted-foreground" />
+                  </button>
                 </div>
               </div>
             </div>

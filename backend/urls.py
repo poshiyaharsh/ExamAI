@@ -22,6 +22,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
     path('api/students/', include('students.urls')),
+    path('api/student/', include('students.urls')),
     path('api/faculty/', include('faculty.urls')),
     path('api/admins/', include('admins.urls')),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),

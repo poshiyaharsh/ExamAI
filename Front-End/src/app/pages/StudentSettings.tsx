@@ -1,6 +1,10 @@
-import { useState } from "react";
+import axios from "axios";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, TrendingUp, Settings, User, Bell, Lock, Globe } from "lucide-react";
+import { LayoutDashboard, FileText, TrendingUp, Settings, User, Bell, Lock } from "lucide-react";
+import { studentProfileApi } from "../../services/api";
+import { authStorage } from "../../services/auth";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/student" },
@@ -9,10 +13,148 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/student/settings" }
 ];
 
+const departmentOptions = [
+  "Computer Science",
+  "Information Technology",
+  "Electronics and Communication",
+  "Mechanical Engineering",
+  "Civil Engineering",
+  "Electrical Engineering",
+  "Business Administration",
+  "Commerce",
+  "Mathematics",
+  "Physics",
+  "Chemistry",
+];
+
+function extractApiErrorMessage(apiError: unknown): string | null {
+  if (!apiError || typeof apiError !== "object") {
+    return null;
+  }
+
+  const record = apiError as Record<string, unknown>;
+
+  if (typeof record.detail === "string") {
+    return record.detail;
+  }
+
+  if (typeof record.message === "string") {
+    return record.message;
+  }
+
+  const firstFieldError = Object.values(record).find((value) => {
+    if (typeof value === "string") {
+      return true;
+    }
+    return Array.isArray(value) && typeof value[0] === "string";
+  });
+
+  if (typeof firstFieldError === "string") {
+    return firstFieldError;
+  }
+
+  if (Array.isArray(firstFieldError) && typeof firstFieldError[0] === "string") {
+    return firstFieldError[0];
+  }
+
+  return null;
+}
+
 export function StudentSettings() {
+  const navigate = useNavigate();
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileSuccess, setProfileSuccess] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [department, setDepartment] = useState("");
+
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [examReminders, setExamReminders] = useState(true);
   const [resultNotifications, setResultNotifications] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadProfile = async () => {
+      setProfileLoading(true);
+      setProfileError("");
+
+      try {
+        const response = await studentProfileApi.getProfile();
+        if (!isMounted) {
+          return;
+        }
+
+        setFullName(response.data.full_name || "");
+        setEmail(response.data.email || "");
+        setStudentId(response.data.student_id || "");
+        setDepartment(response.data.department || "");
+      } catch (requestError) {
+        if (!isMounted) {
+          return;
+        }
+
+        if (axios.isAxiosError(requestError)) {
+          if (requestError.response?.status === 401) {
+            authStorage.clearSession();
+            navigate("/login", { replace: true });
+            return;
+          }
+
+          const extracted = extractApiErrorMessage(requestError.response?.data);
+          setProfileError(extracted ?? "Unable to fetch profile. Please try again.");
+        } else {
+          setProfileError("Unable to fetch profile. Please try again.");
+        }
+      } finally {
+        if (isMounted) {
+          setProfileLoading(false);
+        }
+      }
+    };
+
+    void loadProfile();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
+
+  const handleProfileSave = async () => {
+    setProfileError("");
+    setProfileSuccess("");
+
+    const cleanedDepartment = department.trim();
+    if (!cleanedDepartment) {
+      setProfileError("Department must not be empty.");
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const response = await studentProfileApi.updateProfile(cleanedDepartment);
+      setDepartment(response.data.department || cleanedDepartment);
+      setProfileSuccess(response.message || "Department updated successfully.");
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          authStorage.clearSession();
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setProfileError(extracted ?? "Unable to update department. Please try again.");
+      } else {
+        setProfileError("Unable to update department. Please try again.");
+      }
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Student">
@@ -37,16 +179,18 @@ export function StudentSettings() {
                 <label className="block text-sm text-muted-foreground mb-2">Full Name</label>
                 <input
                   type="text"
-                  defaultValue="John Doe"
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={profileLoading ? "Loading..." : fullName}
+                  disabled
+                  className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
                 />
               </div>
               <div>
                 <label className="block text-sm text-muted-foreground mb-2">Email</label>
                 <input
                   type="email"
-                  defaultValue="john.doe@university.edu"
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={profileLoading ? "Loading..." : email}
+                  disabled
+                  className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
                 />
               </div>
             </div>
@@ -55,24 +199,37 @@ export function StudentSettings() {
                 <label className="block text-sm text-muted-foreground mb-2">Student ID</label>
                 <input
                   type="text"
-                  defaultValue="STU-2023-1234"
+                  value={profileLoading ? "Loading..." : studentId}
                   disabled
                   className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
                 />
               </div>
               <div>
                 <label className="block text-sm text-muted-foreground mb-2">Department</label>
-                <input
-                  type="text"
-                  defaultValue="Computer Science"
-                  disabled
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
-                />
+                <select
+                  value={department}
+                  onChange={(event) => setDepartment(event.target.value)}
+                  disabled={profileLoading || savingProfile}
+                  className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
+                >
+                  <option value="">Select Department</option>
+                  {departmentOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
+            {profileError && <p className="text-sm text-destructive">{profileError}</p>}
+            {profileSuccess && <p className="text-sm text-green-600">{profileSuccess}</p>}
             <div className="pt-4">
-              <button className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity">
-                Save Changes
+              <button
+                onClick={handleProfileSave}
+                disabled={profileLoading || savingProfile}
+                className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingProfile ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>
@@ -189,35 +346,6 @@ export function StudentSettings() {
           </div>
         </div>
 
-        {/* Preferences */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <Globe className="w-5 h-5 text-white" />
-            </div>
-            <h3 className="font-semibold">Preferences</h3>
-          </div>
-          <div className="p-6 space-y-4">
-            <div>
-              <label className="block text-sm text-muted-foreground mb-2">Language</label>
-              <select className="w-full md:w-64 px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring">
-                <option>English</option>
-                <option>Spanish</option>
-                <option>French</option>
-                <option>German</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm text-muted-foreground mb-2">Time Zone</label>
-              <select className="w-full md:w-64 px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring">
-                <option>UTC-05:00 (Eastern Time)</option>
-                <option>UTC-06:00 (Central Time)</option>
-                <option>UTC-07:00 (Mountain Time)</option>
-                <option>UTC-08:00 (Pacific Time)</option>
-              </select>
-            </div>
-          </div>
-        </div>
       </div>
     </DashboardLayout>
   );

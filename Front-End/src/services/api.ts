@@ -46,7 +46,22 @@ export type AuthResponse = {
   };
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+export type StudentProfileData = {
+  full_name: string;
+  email: string;
+  student_id: string;
+  department: string;
+};
+
+export type StudentProfileResponse = {
+  status: string;
+  message: string;
+  data: StudentProfileData;
+};
+
+const API_BASE_URL =
+  (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
+  "http://127.0.0.1:8000";
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -171,6 +186,19 @@ export const authApi = {
   },
   login: async (role: UserRole, payload: AuthPayload): Promise<AuthResponse> => {
     const response = await apiClient.post<AuthResponse>(`${authPathByRole[role]}/login/`, payload);
+    return response.data;
+  },
+};
+
+export const studentProfileApi = {
+  getProfile: async (): Promise<StudentProfileResponse> => {
+    const response = await apiClient.get<StudentProfileResponse>("/api/student/profile");
+    return response.data;
+  },
+  updateProfile: async (department: string): Promise<StudentProfileResponse> => {
+    const response = await apiClient.put<StudentProfileResponse>("/api/student/profile", {
+      department,
+    });
     return response.data;
   },
 };
