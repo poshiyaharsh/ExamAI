@@ -7,6 +7,51 @@ import axios from "axios";
 import { authApi, type UserRole } from "../../services/api";
 import { authStorage } from "../../services/auth";
 
+function extractApiErrorMessage(apiError: unknown): string | null {
+  if (!apiError) {
+    return null;
+  }
+
+  if (typeof apiError === "string") {
+    return apiError;
+  }
+
+  if (typeof apiError !== "object") {
+    return null;
+  }
+
+  const record = apiError as Record<string, unknown>;
+
+  if (typeof record.detail === "string") {
+    return record.detail;
+  }
+
+  if (typeof record.message === "string") {
+    return record.message;
+  }
+
+  if (Array.isArray(record.non_field_errors) && typeof record.non_field_errors[0] === "string") {
+    return record.non_field_errors[0];
+  }
+
+  const firstFieldError = Object.values(record).find((value) => {
+    if (typeof value === "string") {
+      return true;
+    }
+    return Array.isArray(value) && typeof value[0] === "string";
+  });
+
+  if (typeof firstFieldError === "string") {
+    return firstFieldError;
+  }
+
+  if (Array.isArray(firstFieldError) && typeof firstFieldError[0] === "string") {
+    return firstFieldError[0];
+  }
+
+  return null;
+}
+
 export function Login() {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
@@ -97,18 +142,14 @@ export function Login() {
       }
     } catch (requestError) {
       if (axios.isAxiosError(requestError)) {
-        const apiError = requestError.response?.data;
-        if (typeof apiError?.detail === "string") {
-          setError(apiError.detail);
-        } else if (typeof apiError?.message === "string") {
-          setError(apiError.message);
-        } else if (typeof apiError?.non_field_errors?.[0] === "string") {
-          setError(apiError.non_field_errors[0]);
-        } else if (typeof apiError?.email?.[0] === "string") {
-          setError(apiError.email[0]);
-        } else {
-          setError("Authentication failed. Please try again.");
+        if (!requestError.response) {
+          setError("Cannot connect to backend server. Start Django on http://127.0.0.1:8000 and try again.");
+          return;
         }
+
+        const apiError = requestError.response?.data;
+        const extracted = extractApiErrorMessage(apiError);
+        setError(extracted ?? "Authentication failed. Please try again.");
       } else {
         setError("Something went wrong. Please try again.");
       }

@@ -76,7 +76,13 @@ function rejectQueuedRequests(error: unknown) {
 
 apiClient.interceptors.request.use((config) => {
   const session = authStorage.getSession();
-  if (session?.access) {
+  const requestUrl = config.url ?? "";
+  const isPublicAuthCall =
+    requestUrl.includes("/login/") ||
+    requestUrl.includes("/signup/") ||
+    requestUrl.includes("/api/token/refresh/");
+
+  if (session?.access && !isPublicAuthCall) {
     config.headers.Authorization = `Bearer ${session.access}`;
   }
   return config;

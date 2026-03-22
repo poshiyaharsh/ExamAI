@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
+from django.db import OperationalError, transaction
 from rest_framework import serializers
 
 from .models import StudentProfile
@@ -19,15 +20,21 @@ class StudentSignupSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         email = validated_data['email']
-        user = User.objects.create_user(
-            username=email,
-            email=email,
-            first_name=validated_data['first_name'].strip(),
-            last_name=validated_data['last_name'].strip(),
-            password=validated_data['password'],
-        )
-        StudentProfile.objects.create(user=user)
-        return user
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=email,
+                    email=email,
+                    first_name=validated_data['first_name'].strip(),
+                    last_name=validated_data['last_name'].strip(),
+                    password=validated_data['password'],
+                )
+                StudentProfile.objects.create(user=user)
+                return user
+        except OperationalError as exc:
+            raise serializers.ValidationError(
+                'Database setup is incomplete. Run migrations using: python manage.py migrate'
+            ) from exc
 
 
 class StudentLoginSerializer(serializers.Serializer):
