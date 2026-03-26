@@ -1,0 +1,341 @@
+1. Title Page
+
+PROJECT TITLE: ExamAI - Smart Examination and Academic Management System
+Submitted By: [Your Name]
+Enrollment No.: [Your Enrollment Number]
+Program: Master of Computer Applications (MCA)
+Semester: [Semester]
+Institute: Faculty of Computer Applications & Information Technology, GLS University
+Academic Year: 2025-26
+Submitted To: [Guide Name / Project Mentor]
+
+2. College Certificate (Not For You)
+
+(As per college-provided format. Keep this page reserved for official certificate, signature, and seal.)
+
+3. Acknowledgement
+
+I express my sincere gratitude to the Faculty of Computer Applications & Information Technology, GLS University, for providing me the opportunity to undertake and complete this MCA mini project titled "ExamAI - Smart Examination and Academic Management System."
+
+I would like to thank my project guide, faculty members, and all teaching staff for their valuable guidance, motivation, and continuous support throughout the project development lifecycle.
+
+I am also thankful to my classmates and friends for their suggestions and feedback during design and implementation. Finally, I thank my family for their encouragement and support, which helped me complete this project successfully.
+
+4. Index
+
+1. Title Page
+2. College Certificate (Not For You)
+3. Acknowledgement
+4. Index
+5. Introduction
+6. Project Definition
+7. Project Profile
+8. Tools and Technology
+9. Feasibility Study
+10. Modules of the System
+11. Features of the System
+12. Users of the System
+13. Architecture Diagram
+14. UML Diagrams (Class, Use Case, Sequence, Activity)
+15. Database Design (Data Dictionary)
+16. GUI Design (Mock Screens)
+17. MIS Reports Design
+18. Conclusion
+
+5. Introduction
+
+The education sector has rapidly moved toward digital-first operations. Traditional examination management methods are often fragmented, time-consuming, and error-prone. Academic institutions need a reliable platform to handle role-based user management, authentication, student data administration, and academic workflow automation.
+
+ExamAI is a web-based full-stack application developed to support modern exam administration and profile management in a role-based educational environment. The system is built with a Django REST API backend and a React + Vite frontend, supporting three main users: Admin, Faculty, and Student.
+
+The project focuses on practical institution-level needs:
+- Secure registration/login for different academic roles.
+- Institution configuration and department structure handling.
+- Student master management by admin.
+- Self-service profile management for students and faculty.
+- Password security features with OTP-based reset flow.
+
+The project architecture is modular, scalable, and suitable as a foundation for advanced features such as question bank management, exam generation, evaluation, and analytics.
+
+6. Project Definition
+
+6.1 Problem Statement
+Educational institutions often face challenges in handling user onboarding, role segregation, and academic record administration across admin, faculty, and student actors. Manual methods create delays, data inconsistency, and weak security controls.
+
+6.2 Proposed Solution
+Develop a role-based examination management platform, ExamAI, that provides:
+- Centralized and secure user authentication.
+- Institution and department setup for academic governance.
+- Admin-controlled student lifecycle management (create/read/update/delete).
+- Profile interfaces for students and faculty.
+- Secure password change and OTP-driven password recovery.
+
+6.3 Project Objectives
+- Build a secure and scalable full-stack academic web app.
+- Implement role-based API authorization and frontend route protection.
+- Reduce manual processing in student administration.
+- Ensure maintainable code structure and reusable API contracts.
+
+6.4 Scope
+In Scope:
+- Admin, faculty, and student authentication.
+- Institution information management.
+- Department listing and synchronization.
+- Student data management by admin.
+- Password reset using OTP and reset token.
+
+Future Scope:
+- Exam creation and scheduling workflow.
+- AI-based question generation and proctoring.
+- Marks entry and report card automation.
+- Advanced dashboard analytics and downloadable reports.
+
+7. Project Profile
+
+7.1 Project Name
+ExamAI - Smart Examination and Academic Management System
+
+7.2 Domain
+EdTech / Academic Information Management / Examination Automation
+
+7.3 Type
+Full-Stack Web Application (REST API + SPA Frontend)
+
+7.4 Development Methodology
+Iterative and module-based development with role-wise implementation:
+1. Backend API design and role models.
+2. Authentication and authorization.
+3. Frontend integration with API services.
+4. Testing, validation, and UI refinement.
+
+7.5 Project Highlights
+- JWT-based authentication with token refresh.
+- Custom role permissions (Admin/Faculty/Student).
+- Dynamic institution and department handling.
+- Structured app-wise backend modules (api, admins, faculty, students).
+- Responsive frontend pages for each role.
+
+8. Tools and Technology
+
+8.1 Backend
+- Python 3.x
+- Django 6.0.3
+- Django REST Framework 3.17.0
+- Simple JWT 5.5.1
+- django-cors-headers 4.9.0
+- SQLite (development database)
+
+8.2 Frontend
+- React 18
+- TypeScript
+- Vite 6
+- React Router 7
+- Axios (HTTP client)
+- TailwindCSS + component libraries
+
+8.3 Development Environment
+- VS Code
+- Git/GitHub
+- Postman/Browser API testing
+
+8.4 Architecture Style
+- Client-Server architecture
+- RESTful API communication
+- Token-based stateless authentication
+
+9. Feasibility Study
+
+9.1 Technical Feasibility
+The chosen technology stack is widely adopted, open source, and suitable for educational applications. Django REST Framework supports rapid API development and robust security patterns. React + Vite provides fast frontend development and responsive UI behavior.
+
+9.2 Economic Feasibility
+The project uses free/open-source technologies. Hardware and software requirements are minimal. Deployment can start at low cost using cloud or institutional servers.
+
+9.3 Operational Feasibility
+The system offers role-specific dashboards and simple forms, reducing training time. Admins can perform core management tasks quickly, improving process efficiency.
+
+9.4 Schedule Feasibility
+The project can be completed in staged sprints:
+- Week 1-2: Requirement analysis and design
+- Week 3-5: Backend module development
+- Week 6-8: Frontend module integration
+- Week 9-10: Testing, bug fixing, documentation
+
+9.5 Legal and Security Feasibility
+The system enforces authentication, role-based API access, password policies, and OTP reset flow. Sensitive data (OTP/reset token) is hash-protected in storage.
+
+10. Modules of the System
+
+10.1 Authentication Module
+- User signup/login for admin, faculty, student
+- JWT access and refresh token handling
+- Role included in token payload
+- Authenticated user identity endpoint (auth/me)
+
+10.2 Admin Module
+- Admin profile creation and validation
+- Institution details create/view/update
+- Department catalog loading
+- Student management (list/search/filter/create/update/delete)
+
+10.3 Faculty Module
+- Faculty signup/login
+- Faculty profile generation and viewing
+- Employee ID auto-generation (FAC-YYYY-XXX)
+- Department update by faculty user
+
+10.4 Student Module
+- Student signup/login
+- Student profile generation and viewing
+- Student ID auto-generation (STU-YYYY-XXXX)
+- Department update by student user
+
+10.5 Password Management Module
+- Change password (authenticated flow)
+- Forgot password (email + OTP)
+- OTP verification and reset session token
+- Password reset with validation and secure expiry
+
+10.6 Frontend Access Control Module
+- Role-based protected routes
+- Automatic session sync via auth/me
+- Token refresh interceptor and request retry
+
+11. Features of the System
+
+1. Multi-role authentication (Admin/Faculty/Student).
+2. JWT-based secure API access.
+3. Role-specific dashboard routing.
+4. Admin institution profile with unique institution code.
+5. Auto-generated IDs for student and faculty records.
+6. Department management and synchronization.
+7. Student listing with search and department filters.
+8. Student CRUD operations by admin.
+9. Password change with validation rules.
+10. OTP-based forgot password flow.
+11. Reset token expiry and one-time use security.
+12. Frontend-backend integration with reusable service layer.
+13. CORS handling and cross-origin API consumption.
+14. Responsive and modern user interface.
+
+12. Users of the System
+
+12.1 Admin
+Responsibilities:
+- Register/login as institution admin.
+- Create/update institution information.
+- Manage student records.
+- View department-wise student data.
+
+Permissions:
+- Full access to admin endpoints.
+- Access to department and student management APIs.
+
+12.2 Faculty
+Responsibilities:
+- Register/login as faculty.
+- Maintain own profile and department.
+- Access faculty dashboard pages.
+
+Permissions:
+- Faculty-only profile APIs.
+- No admin-level student CRUD privileges.
+
+12.3 Student
+Responsibilities:
+- Register/login as student.
+- Maintain profile and department.
+- Access student dashboard pages.
+
+Permissions:
+- Student-only profile APIs.
+- No faculty/admin privileged actions.
+
+12.4 System Actor (Mail Service)
+- Sends OTP for forgot password flow.
+- Uses SMTP or console backend based on environment.
+
+13. Architecture Diagram
+
+High-Level Architecture:
+User Browser -> React Frontend (Vite) -> Django REST Backend -> SQLite DB
+Django REST Backend -> Email Service/Console Backend
+
+14. UML Diagrams
+
+Use Case:
+- Admin: Sign up/login, manage institution, manage students, change password, forgot password
+- Faculty: Sign up/login, manage profile, change password, forgot password
+- Student: Sign up/login, manage profile, change password, forgot password
+
+Class Entities:
+- User
+- AdminProfile
+- AdminInstitution
+- AdminDepartment
+- StudentProfile
+- FacultyProfile
+- PasswordResetOTP
+
+Sequence (Student Login):
+Student -> Login UI -> POST /api/students/login -> DB auth -> JWT -> Redirect /student
+
+Activity (Forgot Password):
+Enter Email -> Generate OTP -> Verify OTP -> Generate Reset Token -> Reset Password -> Success
+
+15. Database Design (Data Dictionary)
+
+Main tables:
+- auth_user
+- admins_adminprofile
+- admins_admininstitution
+- admins_admindepartment
+- students_studentprofile
+- faculty_facultyprofile
+- api_passwordresetotp
+
+Key IDs:
+- institution_code format: INST-YYYY-XXX
+- student_id format: STU-YYYY-XXXX
+- employee_id format: FAC-YYYY-XXX
+
+16. GUI Design (Mock Screens)
+
+Public:
+- Landing
+- Login/Signup
+- Forgot Password (request/verify/reset)
+
+Admin:
+- Dashboard
+- Students list
+- Add/Edit/View student forms
+- Settings
+
+Faculty:
+- Dashboard
+- Generate paper
+- History
+- Settings
+
+Student:
+- Dashboard
+- Exams
+- Performance
+- Settings
+- Exam interface
+- Result page
+
+17. MIS Reports Design
+
+1. Department-wise Student Count
+2. Student Master Register
+3. New Registrations Summary
+4. Institution Profile Report
+5. Password Reset Audit
+
+Suggested output: On-screen table + CSV/PDF in future.
+
+18. Conclusion
+
+ExamAI successfully demonstrates a secure role-based academic management platform using Django REST + React. It provides authentication, institution setup, student management, profile flows, and OTP-based password reset. The architecture is modular and extensible for future features like exam scheduling, question bank automation, and analytics.
