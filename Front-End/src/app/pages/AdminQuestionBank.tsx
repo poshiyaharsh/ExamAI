@@ -1,20 +1,12 @@
 import { useState } from "react";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, Database, History, Settings, Plus, Search, Upload, X } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
-
-const facultyMenu = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },
-  { icon: FileText, label: "Generate Paper", path: "/faculty/generate" },
-  { icon: Database, label: "Question Bank", path: "/question-bank" },
-  { icon: History, label: "Exam History", path: "/faculty/history" },
-  { icon: Settings, label: "Settings", path: "/faculty/settings" },
-];
+import { LayoutDashboard, FileText, Database, History, Settings, Plus, Search, Upload, X, Users } from "lucide-react";
 
 const adminMenu = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
   { icon: FileText, label: "Exams", path: "/admin/exams" },
   { icon: Database, label: "Question Bank", path: "/admin/question-bank" },
+  { icon: Users, label: "Faculty", path: "/admin/faculty" },
   { icon: History, label: "Students", path: "/admin/students" },
   { icon: Settings, label: "Settings", path: "/admin/settings" },
 ];
@@ -57,24 +49,20 @@ const sampleQuestions = [
   }
 ];
 
-export function QuestionBank() {
+export function AdminQuestionBank() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterDifficulty, setFilterDifficulty] = useState("all");
   const [filterBloom, setFilterBloom] = useState("all");
-  const { session } = useAuth();
-  const role = session?.role ?? "faculty";
-  const menuItems = role === "admin" ? adminMenu : facultyMenu;
-  const userRole = role === "admin" ? "Admin" : "Faculty";
 
   return (
-    <DashboardLayout menuItems={menuItems} userRole={userRole}>
+    <DashboardLayout menuItems={adminMenu} userRole="Admin">
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-2">Question Bank Management</h1>
-            <p className="text-muted-foreground">Organize and manage your question repository</p>
+            <p className="text-muted-foreground">Manage the institution question repository</p>
           </div>
           <div className="flex gap-3">
             <button className="px-6 py-3 rounded-lg border border-border text-foreground hover:bg-accent transition-colors flex items-center gap-2">

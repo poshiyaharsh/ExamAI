@@ -239,31 +239,9 @@ export function FacultySettings() {
           <p className="text-muted-foreground">Manage your account and preferences</p>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Sidebar Navigation */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl p-4 shadow-sm border border-border sticky top-6">
-              <nav className="space-y-1">
-                {[
-                  { icon: User, label: "Profile", id: "profile" },
-                  { icon: Bell, label: "Notifications", id: "notifications" },
-                  { icon: Settings, label: "Preferences", id: "preferences" },
-                  { icon: Lock, label: "Security", id: "security" }
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted transition-colors text-left"
-                  >
-                    <item.icon className="w-5 h-5 text-muted-foreground" />
-                    <span className="font-medium">{item.label}</span>
-                  </button>
-                ))}
-              </nav>
-            </div>
-          </div>
-
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid gap-6">
+          {/* Main Content - Full Width */}
+          <div className="space-y-6">
             {/* Profile Section */}
             <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
               <div className="flex items-center gap-3 mb-6">

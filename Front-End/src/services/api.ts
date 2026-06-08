@@ -425,6 +425,38 @@ export const adminStudentsApi = {
   },
 };
 
+export type AdminFacultyRow = {
+  id: number;
+  full_name: string;
+  email: string;
+  employee_id?: string;
+  department?: string;
+  institution?: InstitutionOption | null;
+};
+
+export type AdminFacultyListResponse = {
+  status: string;
+  message: string;
+  data: AdminFacultyRow[];
+};
+
+export type AdminFacultyDetailResponse = {
+  status: string;
+  message: string;
+  data: AdminFacultyRow & { first_name?: string; last_name?: string };
+};
+
+export const adminFacultyApi = {
+  getFaculty: async (params?: { search?: string; department?: string }) => {
+    const response = await apiClient.get<AdminFacultyListResponse>('/api/admin/faculty', { params });
+    return response.data;
+  },
+  getFacultyById: async (facultyId: number) => {
+    const response = await apiClient.get<AdminFacultyDetailResponse>(`/api/admin/faculty/${facultyId}`);
+    return response.data;
+  },
+};
+
 export const authAccountApi = {
   changePassword: async (payload: {
     current_password: string;

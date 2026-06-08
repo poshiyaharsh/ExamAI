@@ -21,7 +21,10 @@ from .serializers import (
     AdminInstitutionUpdateSerializer,
     AdminLoginSerializer,
     AdminSignupSerializer,
+    AdminFacultyListSerializer,
+    AdminFacultyDetailSerializer,
 )
+from faculty.models import FacultyProfile
 
 
 def _build_token_payload(user):
@@ -394,6 +397,144 @@ class AdminStudentDetailAPIView(APIView):
                 {
                     'status': 'success',
                     'message': 'Student deleted successfully.',
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class AdminFacultyAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            institution = _get_admin_institution(request.user)
+            if not institution:
+                return Response(
+                    {
+                        'status': 'success',
+                        'message': 'Institution information not created yet.',
+                        'data': [],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            queryset = FacultyProfile.objects.select_related('user').filter(institution=institution)
+
+            search_query = request.query_params.get('search', '').strip()
+            if search_query:
+                queryset = queryset.filter(
+                    Q(user__first_name__icontains=search_query)
+                    | Q(user__last_name__icontains=search_query)
+                    | Q(user__email__icontains=search_query)
+                    | Q(employee_id__icontains=search_query)
+                )
+
+            department = request.query_params.get('department', '').strip()
+            if department:
+                queryset = queryset.filter(department__iexact=department)
+
+            faculty = queryset.order_by('user__first_name', 'user__last_name', 'id')
+            serializer = AdminFacultyListSerializer(faculty, many=True)
+
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Faculty fetched successfully.',
+                    'data': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class AdminFacultyDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def _get_faculty_for_admin(self, request, faculty_id):
+        if not _ensure_admin_user(request.user):
+            return None, Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        institution = _get_admin_institution(request.user)
+        if not institution:
+            return None, Response(
+                {'status': 'error', 'message': 'Admin institution not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        faculty = (
+            FacultyProfile.objects.select_related('user', 'institution')
+            .filter(id=faculty_id, institution=institution)
+            .first()
+        )
+        if not faculty:
+            return None, Response(
+                {'status': 'error', 'message': 'Faculty not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return faculty, None
+
+    def get(self, request, faculty_id):
+        try:
+            faculty, error_response = self._get_faculty_for_admin(request, faculty_id)
+            if error_response:
+                return error_response
+
+            serializer = AdminFacultyDetailSerializer(faculty)
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Faculty details fetched successfully.',
+                    'data': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def delete(self, request, faculty_id):
+        try:
+            faculty, error_response = self._get_faculty_for_admin(request, faculty_id)
+            if error_response:
+                return error_response
+
+            with transaction.atomic():
+                faculty.user.delete()
+
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Faculty deleted successfully.',
                 },
                 status=status.HTTP_200_OK,
             )

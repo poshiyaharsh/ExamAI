@@ -6,7 +6,8 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
   { icon: FileText, label: "Exams", path: "/admin/exams" },
   { icon: Users, label: "Students", path: "/admin/students" },
-  { icon: Database, label: "Question Bank", path: "/question-bank" },
+  { icon: Users, label: "Faculty", path: "/admin/faculty" },
+  { icon: Database, label: "Question Bank", path: "/admin/question-bank" },
   { icon: Settings, label: "Settings", path: "/admin/settings" }
 ];
 

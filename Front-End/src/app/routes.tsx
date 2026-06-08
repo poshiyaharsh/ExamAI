@@ -11,6 +11,8 @@ import { FacultyGeneratePaper } from "./pages/FacultyGeneratePaper";
 import { FacultyExamHistory } from "./pages/FacultyExamHistory";
 import { FacultySettings } from "./pages/FacultySettings";
 import { QuestionBank } from "./pages/QuestionBank";
+import { AdminQuestionBank } from "./pages/AdminQuestionBank";
+import { AdminFaculty } from "./pages/AdminFaculty";
 import { StudentDashboard } from "./pages/StudentDashboard";
 import { StudentExams } from "./pages/StudentExams";
 import { StudentPerformance } from "./pages/StudentPerformance";
@@ -73,6 +75,22 @@ export const router = createBrowserRouter([
     Component: () => (
       <AdminOnly>
         <AdminSettings />
+      </AdminOnly>
+    ),
+  },
+  {
+    path: "/admin/question-bank",
+    Component: () => (
+      <AdminOnly>
+        <AdminQuestionBank />
+      </AdminOnly>
+    ),
+  },
+  {
+    path: "/admin/faculty",
+    Component: () => (
+      <AdminOnly>
+        <AdminFaculty />
       </AdminOnly>
     ),
   },

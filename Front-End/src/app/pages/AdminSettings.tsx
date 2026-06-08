@@ -10,7 +10,8 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
   { icon: FileText, label: "Exams", path: "/admin/exams" },
   { icon: Users, label: "Students", path: "/admin/students" },
-  { icon: Database, label: "Question Bank", path: "/question-bank" },
+  { icon: Users, label: "Faculty", path: "/admin/faculty" },
+  { icon: Database, label: "Question Bank", path: "/admin/question-bank" },
   { icon: Settings, label: "Settings", path: "/admin/settings" }
 ];
 
@@ -184,31 +185,9 @@ export function AdminSettings() {
           <p className="text-muted-foreground">Manage institution and system settings</p>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Sidebar Navigation */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl p-4 shadow-sm border border-border sticky top-6">
-              <nav className="space-y-1">
-                {[
-                  { icon: Building, label: "Institution", id: "institution" },
-                  { icon: FileText, label: "Exam Settings", id: "exam" },
-                  { icon: Bell, label: "Notifications", id: "notifications" },
-                  { icon: Shield, label: "Security", id: "security" }
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted transition-colors text-left"
-                  >
-                    <item.icon className="w-5 h-5 text-muted-foreground" />
-                    <span className="font-medium">{item.label}</span>
-                  </button>
-                ))}
-              </nav>
-            </div>
-          </div>
-
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid gap-6">
+          {/* Main Content - full width (removed left settings submenu) */}
+          <div className="space-y-6">
             {/* Institution Settings */}
             <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
               <div className="flex items-center gap-3 mb-6">

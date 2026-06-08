@@ -9,6 +9,7 @@ from rest_framework import serializers
 
 from .models import AdminDepartment, AdminInstitution, AdminProfile
 from students.models import StudentProfile
+from faculty.models import FacultyProfile
 
 
 class AdminSignupSerializer(serializers.Serializer):
@@ -316,3 +317,58 @@ class AdminStudentCreateSerializer(serializers.Serializer):
             )
             profile.ensure_student_id()
             return profile
+
+
+class AdminFacultyListSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    email = serializers.EmailField(source='user.email', read_only=True)
+    employee_id = serializers.CharField(source='employee_id', read_only=True)
+
+    class Meta:
+        model = FacultyProfile
+        fields = (
+            'id',
+            'full_name',
+            'email',
+            'employee_id',
+            'department',
+        )
+
+    def get_full_name(self, obj):
+        full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return full_name or obj.user.username
+
+
+class AdminFacultyDetailSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    email = serializers.EmailField(source='user.email', read_only=True)
+    employee_id = serializers.CharField(source='employee_id', read_only=True)
+    institution = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FacultyProfile
+        fields = (
+            'id',
+            'full_name',
+            'first_name',
+            'last_name',
+            'email',
+            'employee_id',
+            'department',
+            'institution',
+        )
+
+    def get_full_name(self, obj):
+        full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return full_name or obj.user.username
+
+    def get_institution(self, obj):
+        if not obj.institution:
+            return None
+        return {
+            'id': obj.institution.id,
+            'institution_name': obj.institution.institution_name,
+            'institution_code': obj.institution.institution_code,
+        }
