@@ -16,6 +16,7 @@ class FacultyProfile(models.Model):
     )
     employee_id = models.CharField(max_length=12, unique=True, blank=True, null=True)
     department = models.CharField(max_length=120, blank=True, default='')
+    designation = models.CharField(max_length=120, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     @staticmethod

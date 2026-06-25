@@ -322,7 +322,10 @@ class AdminStudentCreateSerializer(serializers.Serializer):
 class AdminFacultyListSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)
-    employee_id = serializers.CharField(source='employee_id', read_only=True)
+    employee_id = serializers.CharField(read_only=True)
+    designation = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyProfile
@@ -332,11 +335,17 @@ class AdminFacultyListSerializer(serializers.ModelSerializer):
             'email',
             'employee_id',
             'department',
+            'designation',
+            'is_active',
+            'status',
         )
 
     def get_full_name(self, obj):
         full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
         return full_name or obj.user.username
+
+    def get_status(self, obj):
+        return 'Active' if obj.user.is_active else 'Inactive'
 
 
 class AdminFacultyDetailSerializer(serializers.ModelSerializer):
@@ -344,7 +353,10 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
-    employee_id = serializers.CharField(source='employee_id', read_only=True)
+    employee_id = serializers.CharField(read_only=True)
+    designation = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField(source='user.is_active', read_only=True)
+    status = serializers.SerializerMethodField()
     institution = serializers.SerializerMethodField()
 
     class Meta:
@@ -357,6 +369,9 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
             'email',
             'employee_id',
             'department',
+            'designation',
+            'is_active',
+            'status',
             'institution',
         )
 
@@ -372,3 +387,58 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
             'institution_name': obj.institution.institution_name,
             'institution_code': obj.institution.institution_code,
         }
+
+    def get_status(self, obj):
+        return 'Active' if obj.user.is_active else 'Inactive'
+
+
+class AdminFacultyUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    employee_id = serializers.CharField(allow_blank=True, required=False)
+    department = serializers.CharField(max_length=120, allow_blank=True, required=False)
+    designation = serializers.CharField(max_length=120, allow_blank=True, required=False)
+    is_active = serializers.BooleanField(required=False)
+
+    def validate_email(self, value):
+        normalized = value.lower().strip()
+        faculty = self.context.get('faculty')
+        if faculty and User.objects.filter(username=normalized).exclude(id=faculty.user.id).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return normalized
+
+    def validate_employee_id(self, value):
+        cleaned = value.strip()
+        if not cleaned:
+            return ''
+
+        faculty = self.context.get('faculty')
+        if faculty and FacultyProfile.objects.filter(employee_id=cleaned).exclude(id=faculty.id).exists():
+            raise serializers.ValidationError('Employee ID already exists.')
+        return cleaned
+
+    def update(self, instance, validated_data):
+        user = instance.user
+        user.first_name = validated_data['first_name'].strip()
+        user.last_name = validated_data['last_name'].strip()
+        user.email = validated_data['email']
+        user.username = validated_data['email']
+
+        if 'is_active' in validated_data:
+            user.is_active = validated_data['is_active']
+
+        user.save(update_fields=['first_name', 'last_name', 'email', 'username', 'is_active'])
+
+        if 'employee_id' in validated_data:
+            instance.employee_id = validated_data['employee_id'] or None
+
+        if 'department' in validated_data:
+            instance.department = validated_data['department'].strip()
+
+        if 'designation' in validated_data:
+            instance.designation = validated_data['designation'].strip()
+
+        instance.save(update_fields=['employee_id', 'department', 'designation'])
+        instance.refresh_from_db()
+        return instance

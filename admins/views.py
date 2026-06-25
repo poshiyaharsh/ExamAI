@@ -2,6 +2,7 @@ from rest_framework import status
 from django.db import OperationalError
 from django.db import transaction
 from django.db.models import Q
+import logging
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -23,8 +24,12 @@ from .serializers import (
     AdminSignupSerializer,
     AdminFacultyListSerializer,
     AdminFacultyDetailSerializer,
+    AdminFacultyUpdateSerializer,
 )
 from faculty.models import FacultyProfile
+
+
+logger = logging.getLogger(__name__)
 
 
 def _build_token_payload(user):
@@ -422,17 +427,27 @@ class AdminFacultyAPIView(APIView):
 
         try:
             institution = _get_admin_institution(request.user)
+            logger.debug(
+                "Admin faculty list request user_id=%s username=%s institution_id=%s",
+                request.user.id,
+                request.user.username,
+                getattr(institution, 'id', None),
+            )
             if not institution:
+                logger.debug("Admin faculty list missing institution for user_id=%s", request.user.id)
                 return Response(
                     {
                         'status': 'success',
                         'message': 'Institution information not created yet.',
                         'data': [],
+                        'total_faculty': 0,
+                        'active_faculty': 0,
+                        'total_departments': 0,
                     },
                     status=status.HTTP_200_OK,
                 )
 
-            queryset = FacultyProfile.objects.select_related('user').filter(institution=institution)
+            queryset = FacultyProfile.objects.select_related('user', 'institution').filter(institution=institution)
 
             search_query = request.query_params.get('search', '').strip()
             if search_query:
@@ -447,14 +462,32 @@ class AdminFacultyAPIView(APIView):
             if department:
                 queryset = queryset.filter(department__iexact=department)
 
+            status_filter = request.query_params.get('status', '').strip().lower()
+            if status_filter == 'active':
+                queryset = queryset.filter(user__is_active=True)
+            elif status_filter == 'inactive':
+                queryset = queryset.filter(user__is_active=False)
+
             faculty = queryset.order_by('user__first_name', 'user__last_name', 'id')
             serializer = AdminFacultyListSerializer(faculty, many=True)
+            total_faculty = faculty.count()
+            active_faculty = faculty.filter(user__is_active=True).count()
+            total_departments = faculty.exclude(department__exact='').values('department').distinct().count()
+            logger.debug(
+                "Admin faculty list queryset_count=%s active_count=%s serializer_data=%s",
+                total_faculty,
+                active_faculty,
+                serializer.data,
+            )
 
             return Response(
                 {
                     'status': 'success',
                     'message': 'Faculty fetched successfully.',
                     'data': serializer.data,
+                    'total_faculty': total_faculty,
+                    'active_faculty': active_faculty,
+                    'total_departments': total_departments,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -505,11 +538,55 @@ class AdminFacultyDetailAPIView(APIView):
                 return error_response
 
             serializer = AdminFacultyDetailSerializer(faculty)
+            logger.debug(
+                "Admin faculty detail request user_id=%s faculty_id=%s serializer_data=%s",
+                request.user.id,
+                faculty_id,
+                serializer.data,
+            )
             return Response(
                 {
                     'status': 'success',
                     'message': 'Faculty details fetched successfully.',
                     'data': serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except OperationalError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def put(self, request, faculty_id):
+        try:
+            faculty, error_response = self._get_faculty_for_admin(request, faculty_id)
+            if error_response:
+                return error_response
+
+            serializer = AdminFacultyUpdateSerializer(
+                faculty,
+                data=request.data,
+                context={'faculty': faculty},
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            response_serializer = AdminFacultyDetailSerializer(faculty)
+            logger.debug(
+                "Admin faculty update request user_id=%s faculty_id=%s serializer_data=%s",
+                request.user.id,
+                faculty_id,
+                response_serializer.data,
+            )
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Faculty information updated successfully.',
+                    'data': response_serializer.data,
                 },
                 status=status.HTTP_200_OK,
             )

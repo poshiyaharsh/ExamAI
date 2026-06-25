@@ -1,15 +1,6 @@
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, Users, Database, Settings, Plus } from "lucide-react";
+import { FileText, Users, Database, Plus } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-
-const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
-  { icon: FileText, label: "Exams", path: "/admin/exams" },
-  { icon: Users, label: "Students", path: "/admin/students" },
-  { icon: Users, label: "Faculty", path: "/admin/faculty" },
-  { icon: Database, label: "Question Bank", path: "/admin/question-bank" },
-  { icon: Settings, label: "Settings", path: "/admin/settings" }
-];
 
 const performanceData = [
   { month: "Jan", score: 75 },
@@ -29,7 +20,7 @@ const recentExams = [
 
 export function AdminDashboard() {
   return (
-    <DashboardLayout menuItems={menuItems} userRole="Admin">
+    <DashboardLayout userRole="Admin">
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">

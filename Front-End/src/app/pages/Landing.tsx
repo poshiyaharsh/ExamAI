@@ -99,16 +99,16 @@ export function Landing() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
-        className="max-w-7xl mx-auto px-6 py-20"
+        className="max-w-[1280px] mx-auto px-6 py-6 lg:py-8 lg:min-h-[calc(100vh-80px)] flex items-center"
       >
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
-          <div>
+        <div className="grid w-full grid-cols-1 md:grid-cols-[1.15fr_0.85fr] gap-10 lg:gap-16 xl:gap-20 items-center">
+          <div className="max-w-2xl self-center">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <span className="inline-block px-4 py-1 rounded-full bg-accent text-accent-foreground mb-6">
+              <span className="inline-block px-4 py-1 rounded-full bg-accent text-accent-foreground mb-4 lg:mb-6">
                 AI-Powered Exam Platform
               </span>
             </motion.div>
@@ -116,7 +116,7 @@ export function Landing() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="text-5xl font-bold text-foreground mb-6 leading-tight"
+              className="text-4xl lg:text-5xl font-bold text-foreground mb-4 lg:mb-6 leading-tight max-w-xl"
             >
               Transform Exam Creation with AI
             </motion.h1>
@@ -124,7 +124,7 @@ export function Landing() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="text-xl text-muted-foreground mb-8"
+              className="text-lg lg:text-xl text-muted-foreground mb-6 lg:mb-8 max-w-xl leading-relaxed"
             >
               Generate, manage, and analyze exams effortlessly. Our AI-powered platform helps educators create better assessments in minutes.
             </motion.p>
@@ -132,7 +132,7 @@ export function Landing() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5 }}
-              className="flex gap-4"
+              className="flex flex-col sm:flex-row gap-4"
             >
               <Link to="/login">
                 <button className="px-8 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity">
@@ -147,14 +147,15 @@ export function Landing() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.6 }}
-            className="relative"
+            transition={{ delay: 0.6, type: "spring", stiffness: 120, damping: 18 }}
+            whileHover={{ y: -4 }}
+            className="relative w-[280px] h-[280px] sm:w-[340px] sm:h-[340px] lg:w-[420px] lg:h-[420px] mx-auto md:justify-self-end md:self-center"
           >
-            <div className="rounded-2xl overflow-hidden shadow-2xl">
+            <div className="flex h-full w-full items-center justify-center rounded-[24px] border border-border bg-white p-5 sm:p-6 lg:p-6 shadow-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl">
               <ImageWithFallback 
                 src="https://images.unsplash.com/photo-1749006590639-e749e6b7d84c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxhcnRpZmljaWFsJTIwaW50ZWxsaWdlbmNlJTIwdGVjaG5vbG9neSUyMGFic3RyYWN0fGVufDF8fHx8MTc3MjU2MDY5MHww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral"
                 alt="AI Technology"
-                className="w-full h-auto"
+                className="max-h-full max-w-full object-contain"
               />
             </div>
           </motion.div>

@@ -1,15 +1,6 @@
 import { useState } from "react";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, Database, History, Settings, Plus, Search, Upload, X, Users } from "lucide-react";
-
-const adminMenu = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
-  { icon: FileText, label: "Exams", path: "/admin/exams" },
-  { icon: Database, label: "Question Bank", path: "/admin/question-bank" },
-  { icon: Users, label: "Faculty", path: "/admin/faculty" },
-  { icon: History, label: "Students", path: "/admin/students" },
-  { icon: Settings, label: "Settings", path: "/admin/settings" },
-];
+import { Plus, Search, Upload, X } from "lucide-react";
 
 const bloomLevels = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
 const difficultyLevels = ["Easy", "Medium", "Hard"];
@@ -56,7 +47,7 @@ export function AdminQuestionBank() {
   const [filterBloom, setFilterBloom] = useState("all");
 
   return (
-    <DashboardLayout menuItems={adminMenu} userRole="Admin">
+    <DashboardLayout userRole="Admin">
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">

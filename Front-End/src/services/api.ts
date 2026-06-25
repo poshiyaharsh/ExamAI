@@ -431,6 +431,9 @@ export type AdminFacultyRow = {
   email: string;
   employee_id?: string;
   department?: string;
+  designation?: string;
+  status?: string;
+  is_active?: boolean;
   institution?: InstitutionOption | null;
 };
 
@@ -438,6 +441,10 @@ export type AdminFacultyListResponse = {
   status: string;
   message: string;
   data: AdminFacultyRow[];
+  total_faculty?: number;
+  active_faculty?: number;
+  inactive_faculty?: number;
+  total_departments?: number;
 };
 
 export type AdminFacultyDetailResponse = {
@@ -446,13 +453,31 @@ export type AdminFacultyDetailResponse = {
   data: AdminFacultyRow & { first_name?: string; last_name?: string };
 };
 
+export type AdminFacultyUpdatePayload = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  employee_id?: string;
+  department?: string;
+  designation?: string;
+  is_active?: boolean;
+};
+
 export const adminFacultyApi = {
-  getFaculty: async (params?: { search?: string; department?: string }) => {
+  getFaculty: async (params?: { search?: string; department?: string; status?: string }): Promise<AdminFacultyListResponse> => {
     const response = await apiClient.get<AdminFacultyListResponse>('/api/admin/faculty', { params });
     return response.data;
   },
-  getFacultyById: async (facultyId: number) => {
+  getFacultyById: async (facultyId: number): Promise<AdminFacultyDetailResponse> => {
     const response = await apiClient.get<AdminFacultyDetailResponse>(`/api/admin/faculty/${facultyId}`);
+    return response.data;
+  },
+  updateFaculty: async (facultyId: number, payload: AdminFacultyUpdatePayload): Promise<AdminFacultyDetailResponse> => {
+    const response = await apiClient.put<AdminFacultyDetailResponse>(`/api/admin/faculty/${facultyId}`, payload);
+    return response.data;
+  },
+  deleteFaculty: async (facultyId: number): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.delete<{ status: string; message: string }>(`/api/admin/faculty/${facultyId}`);
     return response.data;
   },
 };

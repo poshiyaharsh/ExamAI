@@ -2,18 +2,9 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, Users, Database, Settings, Building, Bell, Shield, Globe } from "lucide-react";
+import { Building, Bell, Shield, Globe, FileText } from "lucide-react";
 import { adminInstitutionApi } from "../../services/api";
 import { authStorage } from "../../services/auth";
-
-const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
-  { icon: FileText, label: "Exams", path: "/admin/exams" },
-  { icon: Users, label: "Students", path: "/admin/students" },
-  { icon: Users, label: "Faculty", path: "/admin/faculty" },
-  { icon: Database, label: "Question Bank", path: "/admin/question-bank" },
-  { icon: Settings, label: "Settings", path: "/admin/settings" }
-];
 
 export function AdminSettings() {
   const navigate = useNavigate();
@@ -177,7 +168,7 @@ export function AdminSettings() {
   };
 
   return (
-    <DashboardLayout menuItems={menuItems} userRole="Admin">
+    <DashboardLayout userRole="Admin">
       <div className="space-y-6">
         {/* Header */}
         <div>
