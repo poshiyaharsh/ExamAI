@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { Search, Filter, Plus, Edit, Trash2, Eye, Mail } from "lucide-react";
+import { Combobox } from "../components/ui/combobox";
 import {
   adminStudentsApi,
   departmentsApi,
@@ -60,6 +61,9 @@ export function AdminStudents() {
   const [selectedStudent, setSelectedStudent] = useState<AdminStudentDetails | null>(null);
   const [viewError, setViewError] = useState("");
 
+  const [editStudentDetails, setEditStudentDetails] = useState<AdminStudentDetails | null>(null);
+  const [editDepartments, setEditDepartments] = useState<DepartmentOption[]>([]);
+
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -71,7 +75,7 @@ export function AdminStudents() {
     last_name: "",
     email: "",
     student_id: "",
-    department: "",
+    department_id: "",
   });
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
@@ -138,6 +142,18 @@ export function AdminStudents() {
     }
   }, []);
 
+  const fetchEditDepartments = useCallback(async () => {
+    try {
+      const response = await departmentsApi.getDepartments();
+      const departmentsList = (response.data || [])
+        .slice()
+        .sort((left, right) => left.department_name.localeCompare(right.department_name));
+      setEditDepartments(departmentsList);
+    } catch {
+      setEditDepartments([]);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchDepartments();
   }, [fetchDepartments]);
@@ -151,6 +167,28 @@ export function AdminStudents() {
       clearTimeout(debounceTimer);
     };
   }, [fetchStudents]);
+
+  useEffect(() => {
+    if (!isEditOpen) {
+      return;
+    }
+    void fetchEditDepartments();
+  }, [fetchEditDepartments, isEditOpen]);
+
+  useEffect(() => {
+    if (!isEditOpen || !editStudentDetails || editDepartments.length === 0) {
+      return;
+    }
+
+    const currentDepartmentId = editDepartments.find(
+      (department) => department.department_name === editStudentDetails.department
+    )?.id;
+
+    setEditForm((prev) => ({
+      ...prev,
+      department_id: currentDepartmentId ? String(currentDepartmentId) : "",
+    }));
+  }, [editDepartments, editStudentDetails, isEditOpen]);
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return "text-green-600";
@@ -207,15 +245,17 @@ export function AdminStudents() {
     setEditError("");
     setEditSuccess("");
     setEditStudentId(studentId);
+    setEditStudentDetails(null);
     try {
       const response = await adminStudentsApi.getStudentById(studentId);
       const details = response.data;
+      setEditStudentDetails(details);
       setEditForm({
         first_name: details.first_name || "",
         last_name: details.last_name || "",
         email: details.email || "",
         student_id: details.roll_number || "",
-        department: details.department || "",
+        department_id: "",
       });
     } catch (requestError) {
       if (axios.isAxiosError(requestError)) {
@@ -246,10 +286,17 @@ export function AdminStudents() {
       first_name: editForm.first_name.trim(),
       last_name: editForm.last_name.trim(),
       email: editForm.email.trim(),
+      student_id: editForm.student_id.trim(),
+      department_id: Number(editForm.department_id),
     };
 
-    if (!payload.first_name || !payload.last_name || !payload.email) {
+    if (!payload.first_name || !payload.last_name || !payload.email || !payload.student_id || !editForm.department_id) {
       setEditError("All fields are required.");
+      return;
+    }
+
+    if (!Number.isFinite(payload.department_id) || payload.department_id <= 0) {
+      setEditError("Please select a valid department.");
       return;
     }
 
@@ -258,6 +305,23 @@ export function AdminStudents() {
       await adminStudentsApi.updateStudent(editStudentId, payload);
       setEditSuccess("Student updated successfully.");
       await Promise.all([fetchStudents(), fetchDepartments()]);
+      if (selectedStudent?.id === editStudentId) {
+        setSelectedStudent((prev) =>
+          prev
+            ? {
+                ...prev,
+                first_name: editForm.first_name.trim(),
+                last_name: editForm.last_name.trim(),
+                full_name: `${editForm.first_name.trim()} ${editForm.last_name.trim()}`.trim(),
+                email: editForm.email.trim(),
+                roll_number: editForm.student_id.trim(),
+                department:
+                  editDepartments.find((department) => department.id === Number(editForm.department_id))
+                    ?.department_name ?? prev.department,
+              }
+            : prev
+        );
+      }
     } catch (requestError) {
       if (axios.isAxiosError(requestError)) {
         if (requestError.response?.status === 401) {
@@ -686,25 +750,18 @@ export function AdminStudents() {
                   </div>
                   <div>
                     <label className="block text-sm text-muted-foreground mb-2">Department</label>
-                    <select
+                    <Combobox
                       value={createForm.department_id}
-                      onChange={(e) => setCreateForm((prev) => ({ ...prev, department_id: e.target.value }))}
+                      onValueChange={(value) => setCreateForm((prev) => ({ ...prev, department_id: value }))}
                       disabled={creatingStudent || createDepartmentsLoading || createDepartments.length === 0}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                    >
-                      {createDepartmentsLoading ? (
-                        <option value="">Loading departments...</option>
-                      ) : createDepartments.length === 0 ? (
-                        <option value="">No departments available</option>
-                      ) : (
-                        <option value="">Select Department</option>
-                      )}
-                      {createDepartments.map((department) => (
-                        <option key={department.id} value={department.id}>
-                          {department.department_name}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder={createDepartmentsLoading ? "Loading departments..." : "Select Department"}
+                      searchPlaceholder="Type to filter departments..."
+                      emptyText={createDepartmentsLoading ? "Loading departments..." : "No departments available"}
+                      options={createDepartments.map((department) => ({
+                        value: String(department.id),
+                        label: department.department_name,
+                      }))}
+                    />
                   </div>
                 </div>
 
@@ -805,21 +862,65 @@ export function AdminStudents() {
                         <input
                           type="text"
                           value={editForm.student_id}
-                          disabled
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, student_id: e.target.value }))}
+                          className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Department</label>
+                        <Combobox
+                          value={editForm.department_id}
+                          onValueChange={(value) => setEditForm((prev) => ({ ...prev, department_id: value }))}
+                          disabled={editLoading || editDepartments.length === 0}
+                          placeholder={editDepartments.length ? "Select department" : "Loading departments..."}
+                          searchPlaceholder="Type to filter departments..."
+                          emptyText={editDepartments.length ? "No departments found." : "Loading departments..."}
+                          options={editDepartments.map((department) => ({
+                            value: String(department.id),
+                            label: department.department_name,
+                          }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Year</label>
+                        <input
+                          type="text"
+                          value={editStudentDetails?.year || "-"}
+                          readOnly
                           className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
                         />
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-sm text-muted-foreground mb-2">Department</label>
-                      <input
-                        type="text"
-                        value={editForm.department}
-                        disabled
-                        className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
-                      />
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Exams</label>
+                        <input
+                          type="text"
+                          value={editStudentDetails ? String(editStudentDetails.number_of_exams) : "0"}
+                          readOnly
+                          className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-muted-foreground mb-2">Avg Score</label>
+                        <input
+                          type="text"
+                          value={editStudentDetails && typeof editStudentDetails.average_score === "number"
+                            ? `${editStudentDetails.average_score.toFixed(1)}%`
+                            : "-"}
+                          readOnly
+                          className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
+                        />
+                      </div>
                     </div>
+
+                    {!editForm.department_id && (
+                      <p className="text-sm text-destructive">Department is required.</p>
+                    )}
 
                     {editError && <p className="text-sm text-destructive">{editError}</p>}
                     {editSuccess && <p className="text-sm text-green-600">{editSuccess}</p>}

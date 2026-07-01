@@ -414,6 +414,8 @@ export const adminStudentsApi = {
       first_name: string;
       last_name: string;
       email: string;
+      student_id: string;
+      department_id: number;
     }
   ): Promise<AdminStudentDetailResponse> => {
     const response = await apiClient.put<AdminStudentDetailResponse>(`/api/admin/students/${studentId}`, payload);

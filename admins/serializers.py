@@ -7,6 +7,7 @@ from django.contrib.auth.models import User
 from django.db import OperationalError, ProgrammingError, transaction
 from django.db import IntegrityError
 from django.core.validators import RegexValidator
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import AdminDepartment, AdminInstitution, AdminProfile
@@ -157,13 +158,21 @@ class AdminStudentListSerializer(serializers.ModelSerializer):
         return full_name or obj.user.username
 
     def get_year(self, obj):
+        student_id = getattr(obj, 'student_id', '') or ''
+        parts = student_id.split('-')
+        if len(parts) >= 3 and parts[1].isdigit():
+            return parts[1]
+        created_at = getattr(obj, 'created_at', None)
+        if created_at:
+            return timezone.localtime(created_at).strftime('%Y')
         return ''
 
     def get_number_of_exams(self, obj):
-        return 0
+        return int(getattr(obj, 'number_of_exams', 0) or 0)
 
     def get_average_score(self, obj):
-        return None
+        average_score = getattr(obj, 'average_score', None)
+        return average_score if isinstance(average_score, (int, float)) else None
 
 
 class AdminStudentDetailSerializer(serializers.ModelSerializer):
@@ -198,13 +207,21 @@ class AdminStudentDetailSerializer(serializers.ModelSerializer):
         return full_name or obj.user.username
 
     def get_year(self, obj):
+        student_id = getattr(obj, 'student_id', '') or ''
+        parts = student_id.split('-')
+        if len(parts) >= 3 and parts[1].isdigit():
+            return parts[1]
+        created_at = getattr(obj, 'created_at', None)
+        if created_at:
+            return timezone.localtime(created_at).strftime('%Y')
         return ''
 
     def get_number_of_exams(self, obj):
-        return 0
+        return int(getattr(obj, 'number_of_exams', 0) or 0)
 
     def get_average_score(self, obj):
-        return None
+        average_score = getattr(obj, 'average_score', None)
+        return average_score if isinstance(average_score, (int, float)) else None
 
     def get_institution(self, obj):
         if not obj.institution:
@@ -222,6 +239,7 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
     email = serializers.EmailField()
     student_id = serializers.CharField(max_length=13, required=False)
     department = serializers.CharField(max_length=120, allow_blank=False, trim_whitespace=True, required=False)
+    department_id = serializers.IntegerField(required=False)
 
     def validate_email(self, value):
         normalized = value.lower().strip()
@@ -252,6 +270,18 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError('Department must not be empty.')
         return cleaned
 
+    def validate_department_id(self, value):
+        profile = self.context.get('student_profile')
+        if not profile or not profile.institution:
+            raise serializers.ValidationError('Student institution not found.')
+
+        department = AdminDepartment.objects.filter(id=value, institution=profile.institution).first()
+        if not department:
+            raise serializers.ValidationError('Please select a valid department.')
+
+        self.context['department'] = department
+        return value
+
     def update(self, instance, validated_data):
         user = instance.user
         user.first_name = validated_data['first_name'].strip()
@@ -265,9 +295,17 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
             instance.student_id = validated_data['student_id']
             update_fields.append('student_id')
 
-        if 'department' in validated_data:
+        department = self.context.get('department')
+        if department:
+            instance.department = department.department_name
+            update_fields.append('department')
+        elif 'department' in validated_data:
             instance.department = validated_data['department']
             update_fields.append('department')
+
+        if 'department' in validated_data:
+            # handled above
+            pass
 
         if update_fields:
             instance.save(update_fields=update_fields)
