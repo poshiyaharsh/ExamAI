@@ -445,6 +445,13 @@ export type AdminFacultyListResponse = {
   active_faculty?: number;
   inactive_faculty?: number;
   total_departments?: number;
+  success?: boolean;
+  statistics?: {
+    total_faculty: number;
+    active_faculty: number;
+    inactive_faculty: number;
+    total_departments: number;
+  };
 };
 
 export type AdminFacultyDetailResponse = {

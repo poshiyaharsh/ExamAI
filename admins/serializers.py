@@ -1,8 +1,10 @@
 import re
+import logging
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
-from django.db import OperationalError, transaction
+from django.db import OperationalError, ProgrammingError, transaction
 from django.db import IntegrityError
 from django.core.validators import RegexValidator
 from rest_framework import serializers
@@ -10,6 +12,16 @@ from rest_framework import serializers
 from .models import AdminDepartment, AdminInstitution, AdminProfile
 from students.models import StudentProfile
 from faculty.models import FacultyProfile
+
+
+logger = logging.getLogger(__name__)
+
+
+def _validation_message(exc, fallback_message):
+    message = str(exc).strip()
+    if settings.DEBUG and message:
+        return message
+    return fallback_message
 
 
 class AdminSignupSerializer(serializers.Serializer):
@@ -37,9 +49,14 @@ class AdminSignupSerializer(serializers.Serializer):
                 )
                 AdminProfile.objects.create(user=user)
                 return user
-        except OperationalError as exc:
+        except (OperationalError, ProgrammingError) as exc:
             raise serializers.ValidationError(
-                'Database setup is incomplete. Run migrations using: python manage.py migrate'
+                _validation_message(exc, 'Database schema issue detected. Please run migrations.')
+            ) from exc
+        except Exception as exc:
+            logger.exception('Unexpected admin signup error')
+            raise serializers.ValidationError(
+                _validation_message(exc, 'Unable to create admin account.')
             ) from exc
 
 

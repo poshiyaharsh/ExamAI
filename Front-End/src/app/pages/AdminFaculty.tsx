@@ -14,6 +14,7 @@ type FacultyStatusFilter = "all" | "active" | "inactive";
 type FacultyStats = {
   total_faculty: number;
   active_faculty: number;
+  inactive_faculty: number;
   total_departments: number;
 };
 
@@ -51,6 +52,7 @@ export function AdminFaculty() {
   const [stats, setStats] = useState<FacultyStats>({
     total_faculty: 0,
     active_faculty: 0,
+    inactive_faculty: 0,
     total_departments: 0,
   });
   const [loading, setLoading] = useState(true);
@@ -106,17 +108,31 @@ export function AdminFaculty() {
       ).sort((a, b) => a.localeCompare(b));
       setDepartments(uniqueDepartments);
 
-      const activeCount = typeof response.active_faculty === "number"
-        ? response.active_faculty
-        : rows.filter(isFacultyActive).length;
+      const statistics = response.statistics;
+      const totalFaculty = typeof statistics?.total_faculty === "number"
+        ? statistics.total_faculty
+        : response.total_faculty ?? rows.length;
+      const activeCount = typeof statistics?.active_faculty === "number"
+        ? statistics.active_faculty
+        : typeof response.active_faculty === "number"
+          ? response.active_faculty
+          : rows.filter(isFacultyActive).length;
+      const inactiveCount = typeof statistics?.inactive_faculty === "number"
+        ? statistics.inactive_faculty
+        : typeof response.inactive_faculty === "number"
+          ? response.inactive_faculty
+          : Math.max(totalFaculty - activeCount, 0);
 
       setStats({
-        total_faculty: response.total_faculty ?? rows.length,
+        total_faculty: totalFaculty,
         active_faculty: activeCount,
-        total_departments: response.total_departments ?? uniqueDepartments.length,
+        inactive_faculty: inactiveCount,
+        total_departments: statistics?.total_departments ?? response.total_departments ?? uniqueDepartments.length,
       });
     } catch (requestError) {
+      console.error("Admin faculty API error", requestError);
       if (axios.isAxiosError(requestError)) {
+        console.error("Admin faculty API error response", requestError.response?.data);
         if (requestError.response?.status === 401) {
           handleUnauthorized();
           return;
@@ -136,7 +152,7 @@ export function AdminFaculty() {
     return () => clearTimeout(timer);
   }, [fetchFaculty]);
 
-  const inactiveFaculty = useMemo(() => Math.max(stats.total_faculty - stats.active_faculty, 0), [stats]);
+  const inactiveFaculty = useMemo(() => stats.inactive_faculty, [stats.inactive_faculty]);
 
   const handleViewFaculty = async (facultyId: number) => {
     setIsViewOpen(true);

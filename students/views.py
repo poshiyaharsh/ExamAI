@@ -1,5 +1,8 @@
+import logging
+
+from django.conf import settings
+from django.db import OperationalError, ProgrammingError
 from rest_framework import status
-from django.db import OperationalError
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -15,6 +18,26 @@ from .serializers import (
     StudentProfileSerializer,
     StudentSignupSerializer,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _error_response(exc, log_message, fallback_message):
+    logger.exception(log_message)
+    message = str(exc).strip()
+    if settings.DEBUG and message:
+        response_message = message
+    else:
+        response_message = fallback_message
+
+    return Response(
+        {
+            'status': 'error',
+            'message': response_message,
+        },
+        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
 
 
 def _build_token_payload(user):
@@ -97,13 +120,17 @@ class StudentProfileAPIView(APIView):
     def get(self, request):
         try:
             profile = _get_or_create_student_profile(request.user)
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Student profile fetch database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected student profile fetch error for user_id={request.user.id}',
+                'Unable to fetch student profile.',
             )
         serializer = StudentProfileSerializer(profile)
         return Response(
@@ -118,13 +145,17 @@ class StudentProfileAPIView(APIView):
     def put(self, request):
         try:
             profile = _get_or_create_student_profile(request.user)
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Student profile update database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected student profile update error for user_id={request.user.id}',
+                'Unable to update student profile.',
             )
         serializer = StudentProfileDepartmentUpdateSerializer(profile, data=request.data)
         serializer.is_valid(raise_exception=True)

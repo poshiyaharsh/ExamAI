@@ -1,10 +1,23 @@
+import logging
+
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
-from django.db import OperationalError, transaction
+from django.db import OperationalError, ProgrammingError, transaction
 from rest_framework import serializers
 
 from admins.models import AdminInstitution
 from .models import FacultyProfile
+
+
+logger = logging.getLogger(__name__)
+
+
+def _validation_message(exc, fallback_message):
+    message = str(exc).strip()
+    if settings.DEBUG and message:
+        return message
+    return fallback_message
 
 
 class FacultySignupSerializer(serializers.Serializer):
@@ -37,9 +50,14 @@ class FacultySignupSerializer(serializers.Serializer):
                 )
                 FacultyProfile.objects.create(user=user, institution=institution)
                 return user
-        except OperationalError as exc:
+        except (OperationalError, ProgrammingError) as exc:
             raise serializers.ValidationError(
-                'Database setup is incomplete. Run migrations using: python manage.py migrate'
+                _validation_message(exc, 'Database schema issue detected. Please run migrations.')
+            ) from exc
+        except Exception as exc:
+            logger.exception('Unexpected faculty signup error')
+            raise serializers.ValidationError(
+                _validation_message(exc, 'Unable to create faculty account.')
             ) from exc
 
 

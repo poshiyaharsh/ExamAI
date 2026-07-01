@@ -1,5 +1,6 @@
 from rest_framework import status
-from django.db import OperationalError
+from django.conf import settings
+from django.db import OperationalError, ProgrammingError
 from django.db import transaction
 from django.db.models import Q
 import logging
@@ -30,6 +31,23 @@ from faculty.models import FacultyProfile
 
 
 logger = logging.getLogger(__name__)
+
+
+def _error_response(exc, log_message, fallback_message):
+    logger.exception(log_message)
+    message = str(exc).strip()
+    if settings.DEBUG and message:
+        response_message = message
+    else:
+        response_message = fallback_message
+
+    return Response(
+        {
+            'status': 'error',
+            'message': response_message,
+        },
+        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
 
 
 def _build_token_payload(user):
@@ -109,13 +127,17 @@ class AdminInstitutionAPIView(APIView):
     def get(self, request):
         try:
             institution = AdminInstitution.objects.filter(admin=request.user).first()
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin institution database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin institution error for user_id={request.user.id}',
+                'Unable to fetch institution information.',
             )
 
         if not institution:
@@ -246,13 +268,17 @@ class AdminStudentsAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin students list database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin students list error for user_id={request.user.id}',
+                'Unable to fetch students.',
             )
 
     def post(self, request):
@@ -293,13 +319,17 @@ class AdminStudentsAPIView(APIView):
                 },
                 status=status.HTTP_201_CREATED,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin student create database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin student create error for user_id={request.user.id}',
+                'Unable to create student.',
             )
 
 
@@ -348,13 +378,17 @@ class AdminStudentDetailAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin student detail database error for user_id={request.user.id} student_id={student_id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin student detail error for user_id={request.user.id} student_id={student_id}',
+                'Unable to fetch student details.',
             )
 
     def put(self, request, student_id):
@@ -380,13 +414,17 @@ class AdminStudentDetailAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin student update database error for user_id={request.user.id} student_id={student_id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin student update error for user_id={request.user.id} student_id={student_id}',
+                'Unable to update student information.',
             )
 
     def delete(self, request, student_id):
@@ -405,13 +443,17 @@ class AdminStudentDetailAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin student delete database error for user_id={request.user.id} student_id={student_id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin student delete error for user_id={request.user.id} student_id={student_id}',
+                'Unable to delete student.',
             )
 
 
@@ -487,17 +529,29 @@ class AdminFacultyAPIView(APIView):
                     'data': serializer.data,
                     'total_faculty': total_faculty,
                     'active_faculty': active_faculty,
+                    'inactive_faculty': max(total_faculty - active_faculty, 0),
                     'total_departments': total_departments,
+                    'statistics': {
+                        'total_faculty': total_faculty,
+                        'active_faculty': active_faculty,
+                        'inactive_faculty': max(total_faculty - active_faculty, 0),
+                        'total_departments': total_departments,
+                    },
+                    'success': True,
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin faculty list database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin faculty list error for user_id={request.user.id}',
+                'Unable to fetch faculty.',
             )
 
 
@@ -552,13 +606,17 @@ class AdminFacultyDetailAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin faculty detail database error for user_id={request.user.id} faculty_id={faculty_id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin faculty detail error for user_id={request.user.id} faculty_id={faculty_id}',
+                'Unable to fetch faculty details.',
             )
 
     def put(self, request, faculty_id):
@@ -590,13 +648,17 @@ class AdminFacultyDetailAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin faculty update database error for user_id={request.user.id} faculty_id={faculty_id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin faculty update error for user_id={request.user.id} faculty_id={faculty_id}',
+                'Unable to update faculty information.',
             )
 
     def delete(self, request, faculty_id):
@@ -615,11 +677,15 @@ class AdminFacultyDetailAPIView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        except OperationalError:
-            return Response(
-                {
-                    'status': 'error',
-                    'message': 'Database setup is incomplete. Run migrations using: python manage.py migrate',
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin faculty delete database error for user_id={request.user.id} faculty_id={faculty_id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin faculty delete error for user_id={request.user.id} faculty_id={faculty_id}',
+                'Unable to delete faculty.',
             )
