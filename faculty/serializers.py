@@ -7,7 +7,7 @@ from django.db import OperationalError, ProgrammingError, transaction
 from rest_framework import serializers
 
 from admins.models import AdminInstitution
-from .models import FacultyProfile
+from .models import FacultyProfile, Paper, PaperQuestion, SyllabusUpload
 
 
 logger = logging.getLogger(__name__)
@@ -116,3 +116,123 @@ class FacultyProfileDepartmentUpdateSerializer(serializers.ModelSerializer):
         if not cleaned:
             raise serializers.ValidationError('Department must not be empty.')
         return cleaned
+
+
+ALLOWED_AI_MODELS = ('GPT-4', 'GPT-3.5', 'Claude 3', 'Gemini Pro')
+ALLOWED_QUESTION_TYPES = ('MCQ', 'Subjective', 'True/False', 'Fill in the Blanks')
+ALLOWED_DIFFICULTIES = ('Easy', 'Medium', 'Hard')
+
+
+class SyllabusUploadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SyllabusUpload
+        fields = ('id', 'original_filename', 'extracted_text', 'created_at')
+
+
+class PaperQuestionSerializer(serializers.ModelSerializer):
+    type = serializers.CharField(source='question_type')
+
+    class Meta:
+        model = PaperQuestion
+        fields = ('question_number', 'type', 'difficulty', 'marks', 'question', 'options', 'answer')
+
+
+class PaperSerializer(serializers.ModelSerializer):
+    model = serializers.CharField(source='ai_model')
+    questions = PaperQuestionSerializer(many=True)
+    institution = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Paper
+        fields = (
+            'id',
+            'title',
+            'duration',
+            'total_marks',
+            'model',
+            'topics',
+            'question_types',
+            'difficulty_distribution',
+            'questions',
+            'institution',
+            'created_at',
+        )
+
+    def get_institution(self, obj):
+        return {
+            'id': obj.institution_id,
+            'institution_name': obj.institution.institution_name,
+            'institution_code': obj.institution.institution_code,
+        }
+
+
+class PaperHistorySerializer(serializers.ModelSerializer):
+    questions = serializers.SerializerMethodField()
+    difficulty = serializers.SerializerMethodField()
+    model = serializers.CharField(source='ai_model')
+
+    class Meta:
+        model = Paper
+        fields = ('id', 'title', 'duration', 'total_marks', 'model', 'questions', 'difficulty', 'created_at')
+
+    def get_questions(self, obj):
+        return obj.questions.count()
+
+    def get_difficulty(self, obj):
+        distribution = obj.difficulty_distribution or {}
+        if not distribution:
+            return 'Medium'
+        return max(distribution.items(), key=lambda item: item[1])[0]
+
+
+class GeneratePaperSerializer(serializers.Serializer):
+    syllabus_upload_id = serializers.IntegerField()
+    title = serializers.CharField(max_length=255)
+    duration = serializers.IntegerField(min_value=1)
+    total_marks = serializers.IntegerField(min_value=1)
+    model = serializers.ChoiceField(choices=ALLOWED_AI_MODELS)
+    topics = serializers.ListField(child=serializers.CharField(max_length=120), allow_empty=False)
+    question_types = serializers.ListField(child=serializers.ChoiceField(choices=ALLOWED_QUESTION_TYPES), allow_empty=False)
+    difficulty_distribution = serializers.DictField(child=serializers.IntegerField(min_value=0, max_value=100))
+
+    def validate_title(self, value):
+        cleaned = value.strip()
+        if not cleaned:
+            raise serializers.ValidationError('Exam Title is required.')
+        return cleaned
+
+    def validate_topics(self, value):
+        topics = [topic.strip() for topic in value if topic.strip()]
+        if not topics:
+            raise serializers.ValidationError('At least one topic is required.')
+        return topics
+
+    def validate_question_types(self, value):
+        unique_types = []
+        for question_type in value:
+            if question_type not in unique_types:
+                unique_types.append(question_type)
+        if not unique_types:
+            raise serializers.ValidationError('At least one question type is required.')
+        return unique_types
+
+    def validate_difficulty_distribution(self, value):
+        normalized = {difficulty: int(value.get(difficulty, 0)) for difficulty in ALLOWED_DIFFICULTIES}
+        if sum(normalized.values()) != 100:
+            raise serializers.ValidationError('Difficulty percentages must equal exactly 100%.')
+        return normalized
+
+    def validate(self, attrs):
+        faculty = self.context['faculty']
+        upload = (
+            SyllabusUpload.objects.filter(
+                id=attrs['syllabus_upload_id'],
+                faculty=faculty,
+                institution=faculty.institution,
+            )
+            .first()
+        )
+        if not upload:
+            raise serializers.ValidationError({'syllabus_upload_id': 'Uploaded syllabus not found.'})
+        attrs['syllabus_upload'] = upload
+        return attrs

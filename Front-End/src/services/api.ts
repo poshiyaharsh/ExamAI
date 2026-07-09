@@ -110,6 +110,81 @@ export type FacultyProfileResponse = {
   data: FacultyProfileData;
 };
 
+export type AiModel = "GPT-4" | "GPT-3.5" | "Claude 3" | "Gemini Pro";
+export type PaperQuestionType = "MCQ" | "Subjective" | "True/False" | "Fill in the Blanks";
+export type PaperDifficulty = "Easy" | "Medium" | "Hard";
+
+export type SyllabusUploadData = {
+  id: number;
+  original_filename: string;
+  extracted_text: string;
+  created_at: string;
+};
+
+export type SyllabusUploadResponse = {
+  status: string;
+  message: string;
+  data: SyllabusUploadData;
+};
+
+export type PaperQuestion = {
+  question_number: number;
+  type: PaperQuestionType;
+  difficulty: PaperDifficulty;
+  marks: number;
+  question: string;
+  options: string[];
+  answer: string;
+};
+
+export type GeneratedPaper = {
+  id: number;
+  title: string;
+  duration: number;
+  total_marks: number;
+  model: AiModel;
+  topics: string[];
+  question_types: PaperQuestionType[];
+  difficulty_distribution: Record<PaperDifficulty, number>;
+  questions: PaperQuestion[];
+  institution: InstitutionOption;
+  created_at: string;
+};
+
+export type PaperHistoryRow = {
+  id: number;
+  title: string;
+  duration: number;
+  total_marks: number;
+  model: AiModel;
+  questions: number;
+  difficulty: PaperDifficulty;
+  created_at: string;
+};
+
+export type GeneratePaperPayload = {
+  syllabus_upload_id: number;
+  title: string;
+  duration: number;
+  total_marks: number;
+  model: AiModel;
+  topics: string[];
+  question_types: PaperQuestionType[];
+  difficulty_distribution: Record<PaperDifficulty, number>;
+};
+
+export type GeneratedPaperResponse = {
+  status: string;
+  message: string;
+  data: GeneratedPaper;
+};
+
+export type PaperHistoryResponse = {
+  status: string;
+  message: string;
+  data: PaperHistoryRow[];
+};
+
 export type AdminInstitutionData = {
   id: number;
   institution_name: string;
@@ -440,6 +515,47 @@ export type AdminFacultyRow = {
   institution?: InstitutionOption | null;
   institution_id?: number | null;
   institute_id?: number | null;
+};
+
+export const facultyPaperApi = {
+  uploadSyllabus: async (
+    file: File,
+    onUploadProgress?: (progress: number) => void
+  ): Promise<SyllabusUploadResponse> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await apiClient.post<SyllabusUploadResponse>("/api/faculty/upload-syllabus", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress: (event) => {
+        if (!event.total) return;
+        onUploadProgress?.(Math.round((event.loaded * 100) / event.total));
+      },
+    });
+    return response.data;
+  },
+  generatePaper: async (payload: GeneratePaperPayload): Promise<GeneratedPaperResponse> => {
+    const response = await apiClient.post<GeneratedPaperResponse>("/api/faculty/generate-paper", payload);
+    return response.data;
+  },
+  getHistory: async (): Promise<PaperHistoryResponse> => {
+    const response = await apiClient.get<PaperHistoryResponse>("/api/faculty/paper-history");
+    return response.data;
+  },
+  getPaper: async (paperId: number): Promise<GeneratedPaperResponse> => {
+    const response = await apiClient.get<GeneratedPaperResponse>(`/api/faculty/paper/${paperId}`);
+    return response.data;
+  },
+  deletePaper: async (paperId: number): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.delete<{ status: string; message: string }>(`/api/faculty/paper/${paperId}`);
+    return response.data;
+  },
+  exportPaper: async (paperId: number, format: "pdf" | "docx"): Promise<Blob> => {
+    const response = await apiClient.get(`/api/faculty/paper/${paperId}/export`, {
+      params: { format },
+      responseType: "blob",
+    });
+    return response.data;
+  },
 };
 
 export type AdminFacultyListResponse = {

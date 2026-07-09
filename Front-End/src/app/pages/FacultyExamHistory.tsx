@@ -1,6 +1,10 @@
-import { useState } from "react";
+import axios from "axios";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, History, Settings, Search, Download, Eye, Trash2, Filter } from "lucide-react";
+import { LayoutDashboard, FileText, History, Settings, Search, Download, Eye, Trash2, Filter, Copy } from "lucide-react";
+import { toast } from "sonner";
+import { facultyPaperApi, type GeneratedPaper, type PaperHistoryRow } from "../../services/api";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },
@@ -9,73 +13,62 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/faculty/settings" }
 ];
 
-const examHistory = [
-  { 
-    id: 1,
-    title: "Data Structures Midterm", 
-    date: "2026-02-28", 
-    questions: 25, 
-    difficulty: "Medium",
-    totalMarks: 100,
-    duration: 90,
-    students: 45,
-    avgScore: 72
-  },
-  { 
-    id: 2,
-    title: "Algorithms Final", 
-    date: "2026-02-15", 
-    questions: 30, 
-    difficulty: "Hard",
-    totalMarks: 150,
-    duration: 120,
-    students: 42,
-    avgScore: 65
-  },
-  { 
-    id: 3,
-    title: "Database Quiz", 
-    date: "2026-02-10", 
-    questions: 15, 
-    difficulty: "Easy",
-    totalMarks: 50,
-    duration: 45,
-    students: 48,
-    avgScore: 85
-  },
-  { 
-    id: 4,
-    title: "Networks Test", 
-    date: "2026-01-25", 
-    questions: 20, 
-    difficulty: "Medium",
-    totalMarks: 75,
-    duration: 60,
-    students: 44,
-    avgScore: 68
-  },
-  { 
-    id: 5,
-    title: "Operating Systems Quiz", 
-    date: "2026-01-15", 
-    questions: 18, 
-    difficulty: "Medium",
-    totalMarks: 60,
-    duration: 50,
-    students: 46,
-    avgScore: 71
+const draftKey = "faculty-paper-duplicate-draft";
+
+function extractApiErrorMessage(error: unknown, fallback: string) {
+  if (!axios.isAxiosError(error)) return fallback;
+  const data = error.response?.data;
+  if (data && typeof data === "object" && "message" in data && typeof data.message === "string") {
+    return data.message;
   }
-];
+  return fallback;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 export function FacultyExamHistory() {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [filterDifficulty, setFilterDifficulty] = useState("all");
+  const [examHistory, setExamHistory] = useState<PaperHistoryRow[]>([]);
+  const [selectedPaper, setSelectedPaper] = useState<GeneratedPaper | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  const filteredExams = examHistory.filter(exam => {
+  const fetchHistory = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await facultyPaperApi.getHistory();
+      setExamHistory(response.data || []);
+    } catch (requestError) {
+      const message = extractApiErrorMessage(requestError, "Unable to fetch paper history.");
+      setError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHistory();
+  }, [fetchHistory]);
+
+  const filteredExams = useMemo(() => examHistory.filter(exam => {
     const matchesSearch = exam.title.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesDifficulty = filterDifficulty === "all" || exam.difficulty.toLowerCase() === filterDifficulty;
     return matchesSearch && matchesDifficulty;
-  });
+  }), [examHistory, filterDifficulty, searchTerm]);
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty.toLowerCase()) {
@@ -86,16 +79,60 @@ export function FacultyExamHistory() {
     }
   };
 
+  const handleView = async (paperId: number) => {
+    try {
+      const response = await facultyPaperApi.getPaper(paperId);
+      setSelectedPaper(response.data);
+    } catch (requestError) {
+      toast.error(extractApiErrorMessage(requestError, "Unable to fetch paper."));
+    }
+  };
+
+  const handleExport = async (paperId: number, title: string, format: "pdf" | "docx") => {
+    try {
+      const blob = await facultyPaperApi.exportPaper(paperId, format);
+      downloadBlob(blob, `${title}.${format}`);
+    } catch (requestError) {
+      toast.error(extractApiErrorMessage(requestError, `Unable to download ${format.toUpperCase()}.`));
+    }
+  };
+
+  const handleDuplicate = async (paperId: number) => {
+    try {
+      const response = await facultyPaperApi.getPaper(paperId);
+      localStorage.setItem(draftKey, JSON.stringify(response.data));
+      navigate("/faculty/generate");
+    } catch (requestError) {
+      toast.error(extractApiErrorMessage(requestError, "Unable to duplicate paper."));
+    }
+  };
+
+  const handleDelete = async (paperId: number) => {
+    const shouldDelete = window.confirm("Delete this paper? This action cannot be undone.");
+    if (!shouldDelete) return;
+    setDeletingId(paperId);
+    try {
+      await facultyPaperApi.deletePaper(paperId);
+      setExamHistory((current) => current.filter((paper) => paper.id !== paperId));
+      if (selectedPaper?.id === paperId) setSelectedPaper(null);
+      toast.success("Paper deleted successfully.");
+    } catch (requestError) {
+      toast.error(extractApiErrorMessage(requestError, "Unable to delete paper."));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const totalQuestions = examHistory.reduce((acc, exam) => acc + exam.questions, 0);
+
   return (
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
       <div className="space-y-6">
-        {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">Exam History</h1>
           <p className="text-muted-foreground">View and manage all your created exams</p>
         </div>
 
-        {/* Stats */}
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
             <p className="text-sm text-muted-foreground mb-1">Total Exams</p>
@@ -103,25 +140,22 @@ export function FacultyExamHistory() {
           </div>
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
             <p className="text-sm text-muted-foreground mb-1">Total Questions</p>
+            <p className="text-3xl font-bold text-foreground">{totalQuestions}</p>
+          </div>
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
+            <p className="text-sm text-muted-foreground mb-1">Total Marks</p>
             <p className="text-3xl font-bold text-foreground">
-              {examHistory.reduce((acc, exam) => acc + exam.questions, 0)}
+              {examHistory.reduce((acc, exam) => acc + exam.total_marks, 0)}
             </p>
           </div>
           <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <p className="text-sm text-muted-foreground mb-1">Total Students</p>
+            <p className="text-sm text-muted-foreground mb-1">Avg Questions</p>
             <p className="text-3xl font-bold text-foreground">
-              {examHistory.reduce((acc, exam) => acc + exam.students, 0)}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <p className="text-sm text-muted-foreground mb-1">Avg Score</p>
-            <p className="text-3xl font-bold text-foreground">
-              {Math.round(examHistory.reduce((acc, exam) => acc + exam.avgScore, 0) / examHistory.length)}%
+              {examHistory.length ? Math.round(totalQuestions / examHistory.length) : 0}
             </p>
           </div>
         </div>
 
-        {/* Search and Filters */}
         <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1 relative">
@@ -148,11 +182,56 @@ export function FacultyExamHistory() {
               </select>
             </div>
           </div>
+          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         </div>
 
-        {/* Exam List */}
+        {selectedPaper && (
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <h3 className="font-semibold">Preview</h3>
+              <button className="px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors text-sm" onClick={() => setSelectedPaper(null)}>
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 text-sm">
+              <div className="text-center border-b border-border pb-4">
+                <p className="font-semibold text-lg">{selectedPaper.institution.institution_name}</p>
+                <p className="font-semibold">{selectedPaper.title}</p>
+                <p className="text-muted-foreground">Duration: {selectedPaper.duration} minutes | Total Marks: {selectedPaper.total_marks}</p>
+              </div>
+              <div>
+                <p className="font-medium">Instructions</p>
+                <p className="text-muted-foreground">Answer all questions. Marks are shown beside each question.</p>
+              </div>
+              {["MCQ", "Subjective", "True/False", "Fill in the Blanks"].map((type, sectionIndex) => {
+                const questions = selectedPaper.questions.filter((question) => question.type === type);
+                if (!questions.length) return null;
+                return (
+                  <div key={type}>
+                    <p className="font-semibold mb-2">Section {String.fromCharCode(65 + sectionIndex)}</p>
+                    <div className="space-y-3">
+                      {questions.map((question) => (
+                        <div key={question.question_number}>
+                          <p>{question.question_number}. {question.question} <span className="text-muted-foreground">[{question.marks} marks]</span></p>
+                          {question.options.length > 0 && (
+                            <ul className="mt-1 ml-5 list-disc text-muted-foreground">
+                              {question.options.map((option) => <li key={option}>{option}</li>)}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-4">
-          {filteredExams.map((exam) => (
+          {loading ? (
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-border text-muted-foreground">Loading exams...</div>
+          ) : filteredExams.map((exam) => (
             <div key={exam.id} className="bg-white rounded-xl p-6 shadow-sm border border-border hover:shadow-md transition-shadow">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div className="flex-1">
@@ -168,7 +247,7 @@ export function FacultyExamHistory() {
                       <span>Questions</span>
                     </div>
                     <div>
-                      <span className="block font-medium text-foreground">{exam.totalMarks}</span>
+                      <span className="block font-medium text-foreground">{exam.total_marks}</span>
                       <span>Marks</span>
                     </div>
                     <div>
@@ -176,34 +255,45 @@ export function FacultyExamHistory() {
                       <span>Duration</span>
                     </div>
                     <div>
-                      <span className="block font-medium text-foreground">{exam.students}</span>
-                      <span>Students</span>
+                      <span className="block font-medium text-foreground">{exam.model}</span>
+                      <span>AI Model</span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button className="px-4 py-2 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2">
+                  <button onClick={() => void handleView(exam.id)} className="px-4 py-2 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2">
                     <Eye className="w-4 h-4" />
                     View
                   </button>
-                  <button className="px-4 py-2 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2">
+                  <button onClick={() => void handleExport(exam.id, exam.title, "pdf")} className="px-4 py-2 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2">
                     <Download className="w-4 h-4" />
-                    Export
+                    PDF
                   </button>
-                  <button className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition-colors">
+                  <button onClick={() => void handleExport(exam.id, exam.title, "docx")} className="px-4 py-2 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2">
+                    <Download className="w-4 h-4" />
+                    DOCX
+                  </button>
+                  <button onClick={() => void handleDuplicate(exam.id)} className="p-2 rounded-lg hover:bg-muted transition-colors" title="Duplicate">
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    disabled={deletingId === exam.id}
+                    onClick={() => void handleDelete(exam.id)}
+                    className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition-colors disabled:opacity-60"
+                  >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
               <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Created: {exam.date}</span>
-                <span className="text-muted-foreground">Average Score: <span className="font-medium text-foreground">{exam.avgScore}%</span></span>
+                <span className="text-muted-foreground">Created: {new Date(exam.created_at).toLocaleDateString()}</span>
+                <span className="text-muted-foreground">Model: <span className="font-medium text-foreground">{exam.model}</span></span>
               </div>
             </div>
           ))}
         </div>
 
-        {filteredExams.length === 0 && (
+        {!loading && filteredExams.length === 0 && (
           <div className="text-center py-12">
             <History className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
             <p className="text-lg font-medium text-foreground mb-2">No exams found</p>
