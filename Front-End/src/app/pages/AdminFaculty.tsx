@@ -1,11 +1,16 @@
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { Search, Filter, Eye, Edit, Mail, Trash2, ShieldCheck } from "lucide-react";
+import { Search, Filter, Eye, Edit, Mail, Trash2, ShieldCheck, Plus } from "lucide-react";
+import { toast } from "sonner";
+import { Combobox } from "../components/ui/combobox";
 import {
   adminFacultyApi,
+  departmentsApi,
+  type AdminFacultyCreatePayload,
   type AdminFacultyRow,
   type AdminFacultyUpdatePayload,
+  type DepartmentOption,
 } from "../../services/api";
 import { authStorage } from "../../services/auth";
 
@@ -43,12 +48,28 @@ function isFacultyActive(faculty: AdminFacultyRow) {
   return getFacultyDisplayStatus(faculty).toLowerCase() === "active";
 }
 
+function buildNextFacultyEmployeeId(rows: AdminFacultyRow[]) {
+  const year = new Date().getFullYear();
+  const prefix = `FAC-${year}-`;
+
+  const nextSequence = rows
+    .map((facultyItem) => facultyItem.employee_id?.trim() ?? "")
+    .filter((employeeId) => employeeId.startsWith(prefix))
+    .map((employeeId) => Number(employeeId.split("-").at(-1)))
+    .filter((sequence) => Number.isFinite(sequence) && sequence > 0)
+    .reduce((highest, sequence) => Math.max(highest, sequence), 0) + 1;
+
+  return `${prefix}${String(nextSequence).padStart(3, "0")}`;
+}
+
 export function AdminFaculty() {
   const [searchTerm, setSearchTerm] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<FacultyStatusFilter>("all");
   const [faculty, setFaculty] = useState<AdminFacultyRow[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
+  const [createDepartments, setCreateDepartments] = useState<DepartmentOption[]>([]);
+  const [createDepartmentsLoading, setCreateDepartmentsLoading] = useState(false);
   const [stats, setStats] = useState<FacultyStats>({
     total_faculty: 0,
     active_faculty: 0,
@@ -60,6 +81,21 @@ export function AdminFaculty() {
   const [selectedFaculty, setSelectedFaculty] = useState<AdminFacultyRow | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [isViewOpen, setIsViewOpen] = useState(false);
+
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [creatingFaculty, setCreatingFaculty] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState("");
+  const [createForm, setCreateForm] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    employee_id: "",
+    department_id: "",
+    designation: "",
+    is_active: "active",
+    password: "",
+  });
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
@@ -147,12 +183,141 @@ export function AdminFaculty() {
     }
   }, [departmentFilter, handleUnauthorized, searchTerm, statusFilter]);
 
+  const fetchCreateDefaults = useCallback(async () => {
+    setCreateDepartmentsLoading(true);
+    setCreateError("");
+    try {
+      const [departmentsResponse, facultyResponse] = await Promise.all([
+        departmentsApi.getDepartments(),
+        adminFacultyApi.getFaculty(),
+      ]);
+
+      setCreateDepartments(departmentsResponse.data || []);
+      setCreateForm((prev) => ({
+        ...prev,
+        employee_id: buildNextFacultyEmployeeId(facultyResponse.data || []),
+      }));
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setCreateError(extracted ?? "Unable to fetch departments.");
+      } else {
+        setCreateError("Unable to fetch departments.");
+      }
+      setCreateDepartments([]);
+      setCreateForm((prev) => ({
+        ...prev,
+        employee_id: buildNextFacultyEmployeeId(faculty),
+      }));
+    } finally {
+      setCreateDepartmentsLoading(false);
+    }
+  }, [faculty, handleUnauthorized]);
+
   useEffect(() => {
     const timer = setTimeout(() => void fetchFaculty(), 300);
     return () => clearTimeout(timer);
   }, [fetchFaculty]);
 
   const inactiveFaculty = useMemo(() => stats.inactive_faculty, [stats.inactive_faculty]);
+
+  const resetCreateForm = useCallback(() => {
+    setCreateForm({
+      first_name: "",
+      last_name: "",
+      email: "",
+      employee_id: "",
+      department_id: "",
+      designation: "",
+      is_active: "active",
+      password: "",
+    });
+    setCreateError("");
+    setCreateSuccess("");
+  }, []);
+
+  const openCreateFacultyModal = () => {
+    setIsCreateOpen(true);
+    setCreateError("");
+    setCreateSuccess("");
+    void fetchCreateDefaults();
+  };
+
+  const handleCreateFaculty = async () => {
+    setCreateError("");
+    setCreateSuccess("");
+
+    setCreatingFaculty(true);
+    try {
+      const previewResponse = await adminFacultyApi.getFaculty();
+      const generatedEmployeeId = buildNextFacultyEmployeeId(previewResponse.data || []);
+      setCreateForm((prev) => ({ ...prev, employee_id: generatedEmployeeId }));
+
+      const departmentId = Number(createForm.department_id);
+      const payload: AdminFacultyCreatePayload = {
+        first_name: createForm.first_name.trim(),
+        last_name: createForm.last_name.trim(),
+        email: createForm.email.trim(),
+        employee_id: generatedEmployeeId,
+        department_id: departmentId,
+        designation: createForm.designation.trim(),
+        is_active: createForm.is_active === "active",
+        password: createForm.password,
+      };
+
+      if (
+        !payload.first_name ||
+        !payload.last_name ||
+        !payload.email ||
+        !createForm.department_id ||
+        !payload.designation ||
+        !payload.password
+      ) {
+        setCreateError("All fields are required.");
+        return;
+      }
+
+      if (!Number.isFinite(departmentId) || departmentId <= 0) {
+        setCreateError("Please select a valid department.");
+        return;
+      }
+
+      if (payload.password.length < 8) {
+        setCreateError("Password must be at least 8 characters long.");
+        return;
+      }
+
+      const hasLetter = /[A-Za-z]/.test(payload.password);
+      const hasNumber = /\d/.test(payload.password);
+      if (!hasLetter || !hasNumber) {
+        setCreateError("Password must include at least one letter and one number.");
+        return;
+      }
+
+      await adminFacultyApi.createFaculty(payload);
+      await fetchFaculty();
+      toast.success("Faculty Created Successfully");
+      setIsCreateOpen(false);
+      resetCreateForm();
+    } catch (requestError) {
+      if (axios.isAxiosError(requestError)) {
+        if (requestError.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const extracted = extractApiErrorMessage(requestError.response?.data);
+        setCreateError(extracted ?? "Unable to create faculty.");
+      } else {
+        setCreateError("Unable to create faculty.");
+      }
+    } finally {
+      setCreatingFaculty(false);
+    }
+  };
 
   const handleViewFaculty = async (facultyId: number) => {
     setIsViewOpen(true);
@@ -293,6 +458,13 @@ export function AdminFaculty() {
             <h1 className="text-3xl font-bold text-foreground mb-2">Faculty Management</h1>
             <p className="text-muted-foreground">Manage all faculty members</p>
           </div>
+          <button
+            className="px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center gap-2"
+            onClick={openCreateFacultyModal}
+          >
+            <Plus className="w-5 h-5" />
+            Add Faculty
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -615,6 +787,138 @@ export function AdminFaculty() {
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isCreateOpen && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-white rounded-xl shadow-xl border border-border">
+              <div className="flex items-center justify-between p-6 border-b border-border">
+                <h3 className="text-xl font-semibold">Add Faculty</h3>
+                <button
+                  className="px-3 py-1.5 rounded border border-border hover:bg-muted"
+                  onClick={() => {
+                    setIsCreateOpen(false);
+                    resetCreateForm();
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">First Name</label>
+                    <input
+                      type="text"
+                      value={createForm.first_name}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Last Name</label>
+                    <input
+                      type="text"
+                      value={createForm.last_name}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Email</label>
+                    <input
+                      type="email"
+                      value={createForm.email}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, email: e.target.value }))}
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Employee ID (Auto-generated)</label>
+                    <input
+                      type="text"
+                      value={createForm.employee_id}
+                      readOnly
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Department</label>
+                    <Combobox
+                      value={createForm.department_id}
+                      onValueChange={(value) => setCreateForm((prev) => ({ ...prev, department_id: value }))}
+                      disabled={creatingFaculty || createDepartmentsLoading || createDepartments.length === 0}
+                      placeholder={createDepartmentsLoading ? "Loading departments..." : "Select Department"}
+                      searchPlaceholder="Type to filter departments..."
+                      emptyText={createDepartmentsLoading ? "Loading departments..." : "No departments available"}
+                      options={createDepartments.map((department) => ({
+                        value: String(department.id),
+                        label: department.department_name,
+                      }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Designation</label>
+                    <input
+                      type="text"
+                      value={createForm.designation}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, designation: e.target.value }))}
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Status</label>
+                    <select
+                      value={createForm.is_active}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, is_active: e.target.value }))}
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    >
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted-foreground mb-2">Password</label>
+                    <input
+                      type="password"
+                      value={createForm.password}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))}
+                      disabled={creatingFaculty}
+                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    />
+                  </div>
+                </div>
+
+                {createError && <p className="text-sm text-destructive">{createError}</p>}
+                {createSuccess && <p className="text-sm text-green-600">{createSuccess}</p>}
+
+                <div className="pt-2">
+                  <button
+                    onClick={() => void handleCreateFaculty()}
+                    disabled={creatingFaculty}
+                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {creatingFaculty ? "Creating..." : "Create Faculty"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

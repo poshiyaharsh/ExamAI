@@ -374,6 +374,84 @@ class AdminStudentCreateSerializer(serializers.Serializer):
             return profile
 
 
+class AdminFacultyCreateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    employee_id = serializers.CharField(max_length=12, required=False, allow_blank=True)
+    department_id = serializers.IntegerField(write_only=True)
+    designation = serializers.CharField(max_length=120, allow_blank=True, required=False)
+    is_active = serializers.BooleanField(required=False, default=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_email(self, value):
+        normalized = value.lower().strip()
+        if User.objects.filter(username=normalized).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return normalized
+
+    def validate_employee_id(self, value):
+        cleaned = value.strip().upper()
+        if not cleaned:
+            return ''
+
+        if FacultyProfile.objects.filter(employee_id=cleaned).exists():
+            raise serializers.ValidationError('Employee ID already exists.')
+        return cleaned
+
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError('Password must be at least 8 characters long.')
+
+        has_letter = re.search(r'[A-Za-z]', value) is not None
+        has_number = re.search(r'\d', value) is not None
+        if not has_letter or not has_number:
+            raise serializers.ValidationError('Password must include at least one letter and one number.')
+
+        return value
+
+    def validate_department_id(self, value):
+        institution = self.context.get('institution')
+        if not institution:
+            raise serializers.ValidationError('Admin institution not found.')
+
+        department = AdminDepartment.objects.filter(id=value, institution=institution).first()
+        if not department:
+            raise serializers.ValidationError('Please select a valid department.')
+
+        self.context['department'] = department
+        return value
+
+    def create(self, validated_data):
+        institution = self.context.get('institution')
+        if not institution:
+            raise serializers.ValidationError({'institution_id': 'Admin institution not found.'})
+
+        department = self.context.get('department')
+        if not department:
+            raise serializers.ValidationError({'department_id': 'Please select a valid department.'})
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=validated_data['email'],
+                email=validated_data['email'],
+                first_name=validated_data['first_name'].strip(),
+                last_name=validated_data['last_name'].strip(),
+                password=validated_data['password'],
+                is_active=validated_data.get('is_active', True),
+            )
+            profile = FacultyProfile.objects.create(
+                user=user,
+                institution=institution,
+                employee_id=validated_data.get('employee_id', '').strip() or None,
+                department=department.department_name,
+                designation=validated_data.get('designation', '').strip(),
+            )
+            if not profile.employee_id:
+                profile.ensure_employee_id()
+            return profile
+
+
 class AdminFacultyListSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)

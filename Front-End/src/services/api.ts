@@ -472,9 +472,24 @@ export type AdminFacultyUpdatePayload = {
   is_active?: boolean;
 };
 
+export type AdminFacultyCreatePayload = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  employee_id: string;
+  department_id: number;
+  designation: string;
+  is_active: boolean;
+  password: string;
+};
+
 export const adminFacultyApi = {
   getFaculty: async (params?: { search?: string; department?: string; status?: string }): Promise<AdminFacultyListResponse> => {
     const response = await apiClient.get<AdminFacultyListResponse>('/api/admin/faculty', { params });
+    return response.data;
+  },
+  createFaculty: async (payload: AdminFacultyCreatePayload): Promise<AdminFacultyDetailResponse> => {
+    const response = await apiClient.post<AdminFacultyDetailResponse>('/api/admin/faculty', payload);
     return response.data;
   },
   getFacultyById: async (facultyId: number): Promise<AdminFacultyDetailResponse> => {

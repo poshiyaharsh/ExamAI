@@ -1,12 +1,17 @@
 import { RouterProvider } from 'react-router';
+import { ThemeProvider } from 'next-themes';
 import { router } from './routes';
 import { AuthProvider } from './context/AuthContext';
+import { Toaster } from './components/ui/sonner';
 
 function App() {
   return (
-    <AuthProvider>
-      <RouterProvider router={router} />
-    </AuthProvider>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+      <AuthProvider>
+        <RouterProvider router={router} />
+        <Toaster />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 

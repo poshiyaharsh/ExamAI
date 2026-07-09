@@ -23,6 +23,7 @@ from .serializers import (
     AdminInstitutionUpdateSerializer,
     AdminLoginSerializer,
     AdminSignupSerializer,
+    AdminFacultyCreateSerializer,
     AdminFacultyListSerializer,
     AdminFacultyDetailSerializer,
     AdminFacultyUpdateSerializer,
@@ -552,6 +553,53 @@ class AdminFacultyAPIView(APIView):
                 exc,
                 f'Unexpected admin faculty list error for user_id={request.user.id}',
                 'Unable to fetch faculty.',
+            )
+
+    def post(self, request):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            institution = _get_admin_institution(request.user)
+            if not institution:
+                return Response(
+                    {
+                        'status': 'error',
+                        'message': 'Institution information does not exist. Create it first.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            serializer = AdminFacultyCreateSerializer(
+                data=request.data,
+                context={'institution': institution},
+            )
+            serializer.is_valid(raise_exception=True)
+            faculty_profile = serializer.save()
+
+            response_serializer = AdminFacultyDetailSerializer(faculty_profile)
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Faculty Created Successfully',
+                    'data': response_serializer.data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Admin faculty create database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin faculty create error for user_id={request.user.id}',
+                'Unable to create faculty.',
             )
 
 
