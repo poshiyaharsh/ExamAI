@@ -111,6 +111,7 @@ export type FacultyProfileResponse = {
 };
 
 export type AdminInstitutionData = {
+  id: number;
   institution_name: string;
   institution_code: string;
   address: string;
@@ -437,6 +438,8 @@ export type AdminFacultyRow = {
   status?: string;
   is_active?: boolean;
   institution?: InstitutionOption | null;
+  institution_id?: number | null;
+  institute_id?: number | null;
 };
 
 export type AdminFacultyListResponse = {

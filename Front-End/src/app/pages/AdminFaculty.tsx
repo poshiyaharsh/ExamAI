@@ -5,12 +5,15 @@ import { Search, Filter, Eye, Edit, Mail, Trash2, ShieldCheck, Plus } from "luci
 import { toast } from "sonner";
 import { Combobox } from "../components/ui/combobox";
 import {
+  adminInstitutionApi,
   adminFacultyApi,
   departmentsApi,
+  institutionsApi,
   type AdminFacultyCreatePayload,
   type AdminFacultyRow,
   type AdminFacultyUpdatePayload,
   type DepartmentOption,
+  type InstitutionOption,
 } from "../../services/api";
 import { authStorage } from "../../services/auth";
 
@@ -111,6 +114,7 @@ export function AdminFaculty() {
     department: "",
     designation: "",
     is_active: true,
+    institutionName: "",
   });
 
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -342,9 +346,55 @@ export function AdminFaculty() {
     setEditError("");
     setEditSuccess("");
     setEditFacultyId(facultyId);
+    setSelectedFaculty(null);
     try {
       const response = await adminFacultyApi.getFacultyById(facultyId);
       const details = response.data;
+      let resolvedInstitution = details.institution ?? null;
+      let institutionName = resolvedInstitution?.institution_name || "";
+      const facultyInstitutionId = details.institution_id ?? details.institute_id ?? resolvedInstitution?.id ?? null;
+
+      if (!institutionName) {
+        try {
+          const adminInstitutionResponse = await adminInstitutionApi.getInstitution();
+          const adminInstitution = adminInstitutionResponse.data;
+          if (adminInstitution?.institution_name) {
+            institutionName = adminInstitution.institution_name;
+            resolvedInstitution = {
+              id: adminInstitution.id ?? facultyInstitutionId ?? 0,
+              institution_name: adminInstitution.institution_name,
+              institution_code: adminInstitution.institution_code,
+            };
+          }
+        } catch (institutionError) {
+          if (axios.isAxiosError(institutionError) && institutionError.response?.status === 401) {
+            handleUnauthorized();
+            return;
+          }
+        }
+      }
+
+      if (!institutionName && facultyInstitutionId) {
+        try {
+          const institutionsResponse = await institutionsApi.getInstitutions();
+          const facultyInstitution = institutionsResponse.data.find(
+            (institution) => institution.id === facultyInstitutionId
+          );
+          if (facultyInstitution) {
+            institutionName = facultyInstitution.institution_name;
+            resolvedInstitution = facultyInstitution;
+          }
+        } catch {
+          // The edit form can still load; the read-only Institution field will remain blank.
+        }
+      }
+
+      const facultyDetails: AdminFacultyRow & { first_name?: string; last_name?: string } = {
+        ...details,
+        institution: resolvedInstitution as InstitutionOption | null,
+      };
+
+      setSelectedFaculty(facultyDetails);
       setEditForm({
         first_name: details.first_name || "",
         last_name: details.last_name || "",
@@ -353,6 +403,7 @@ export function AdminFaculty() {
         department: details.department || "",
         designation: details.designation || "",
         is_active: typeof details.is_active === "boolean" ? details.is_active : getFacultyDisplayStatus(details).toLowerCase() === "active",
+        institutionName,
       });
     } catch (requestError) {
       if (axios.isAxiosError(requestError) && requestError.response?.status === 401) {
@@ -723,7 +774,7 @@ export function AdminFaculty() {
                         <input
                           type="text"
                           value={editForm.employee_id}
-                          onChange={(e) => setEditForm((prev) => ({ ...prev, employee_id: e.target.value }))}
+                          readOnly
                           className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
                         />
                       </div>
@@ -766,8 +817,9 @@ export function AdminFaculty() {
                         <label className="block text-sm text-muted-foreground mb-2">Institution</label>
                         <input
                           type="text"
+                          readOnly
                           disabled
-                          value={selectedFaculty?.institution?.institution_name || ""}
+                          value={editForm.institutionName}
                           className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted text-muted-foreground cursor-not-allowed"
                         />
                       </div>

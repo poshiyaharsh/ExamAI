@@ -85,8 +85,8 @@ class AdminInstitutionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AdminInstitution
-        fields = ('institution_name', 'institution_code', 'address', 'phone', 'email')
-        read_only_fields = ('institution_code', 'email')
+        fields = ('id', 'institution_name', 'institution_code', 'address', 'phone', 'email')
+        read_only_fields = ('id', 'institution_code', 'email')
 
 
 phone_validator = RegexValidator(
@@ -459,6 +459,8 @@ class AdminFacultyListSerializer(serializers.ModelSerializer):
     designation = serializers.CharField(read_only=True)
     is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     status = serializers.SerializerMethodField()
+    institution_id = serializers.IntegerField(read_only=True)
+    institute_id = serializers.IntegerField(source='institution_id', read_only=True)
 
     class Meta:
         model = FacultyProfile
@@ -471,6 +473,8 @@ class AdminFacultyListSerializer(serializers.ModelSerializer):
             'designation',
             'is_active',
             'status',
+            'institution_id',
+            'institute_id',
         )
 
     def get_full_name(self, obj):
@@ -491,6 +495,8 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
     is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     status = serializers.SerializerMethodField()
     institution = serializers.SerializerMethodField()
+    institution_id = serializers.IntegerField(read_only=True)
+    institute_id = serializers.IntegerField(source='institution_id', read_only=True)
 
     class Meta:
         model = FacultyProfile
@@ -506,6 +512,8 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
             'is_active',
             'status',
             'institution',
+            'institution_id',
+            'institute_id',
         )
 
     def get_full_name(self, obj):
