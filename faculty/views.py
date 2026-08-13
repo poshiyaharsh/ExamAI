@@ -34,14 +34,9 @@ from .serializers import (
 )
 
 
-logger = logging.getLogger(__name__)
+from backend.ai_config import ProviderError, get_ai_provider_manager
 
-MODEL_PROVIDER = {
-    'GPT-4': ('openai', 'gpt-4'),
-    'GPT-3.5': ('openai', 'gpt-3.5-turbo'),
-    'Claude 3': ('anthropic', 'claude-3-opus-20240229'),
-    'Gemini Pro': ('gemini', 'gemini-pro'),
-}
+logger = logging.getLogger(__name__)
 
 QUESTION_TYPE_LABELS = {
     'MCQ': 'MCQ',
@@ -193,74 +188,9 @@ def _paper_prompt(validated_data):
     )
 
 
-def _call_openai(validated_data):
-    api_key = os.getenv('OPENAI_API_KEY', '')
-    if not api_key:
-        raise PermissionError('OpenAI API key is missing. Set OPENAI_API_KEY.')
-    _, provider_model = MODEL_PROVIDER[validated_data['model']]
-    response = _json_request(
-        'https://api.openai.com/v1/chat/completions',
-        {
-            'model': provider_model,
-            'messages': [
-                {'role': 'system', 'content': 'You generate strict JSON exam papers.'},
-                {'role': 'user', 'content': _paper_prompt(validated_data)},
-            ],
-            'temperature': 0.2,
-        },
-        {'Authorization': f'Bearer {api_key}'},
-    )
-    return response['choices'][0]['message']['content']
-
-
-def _call_anthropic(validated_data):
-    api_key = os.getenv('ANTHROPIC_API_KEY', '')
-    if not api_key:
-        raise PermissionError('Anthropic API key is missing. Set ANTHROPIC_API_KEY.')
-    _, provider_model = MODEL_PROVIDER[validated_data['model']]
-    response = _json_request(
-        'https://api.anthropic.com/v1/messages',
-        {
-            'model': provider_model,
-            'max_tokens': 4096,
-            'messages': [{'role': 'user', 'content': _paper_prompt(validated_data)}],
-        },
-        {'x-api-key': api_key, 'anthropic-version': '2023-06-01'},
-    )
-    return ''.join(item.get('text', '') for item in response.get('content', []))
-
-
-def _call_gemini(validated_data):
-    api_key = os.getenv('GEMINI_API_KEY', '')
-    if not api_key:
-        raise PermissionError('Google Gemini API key is missing. Set GEMINI_API_KEY.')
-    response = _json_request(
-        f'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}',
-        {'contents': [{'parts': [{'text': _paper_prompt(validated_data)}]}]},
-        {},
-    )
-    candidates = response.get('candidates') or []
-    parts = candidates[0].get('content', {}).get('parts', []) if candidates else []
-    return ''.join(part.get('text', '') for part in parts)
-
-
 def _generate_with_provider(validated_data):
-    provider, _ = MODEL_PROVIDER[validated_data['model']]
-    if provider == 'openai':
-        raw_content = _call_openai(validated_data)
-    elif provider == 'anthropic':
-        raw_content = _call_anthropic(validated_data)
-    else:
-        raw_content = _call_gemini(validated_data)
-
-    cleaned = raw_content.strip()
-    if cleaned.startswith('```'):
-        cleaned = cleaned.strip('`')
-        cleaned = cleaned.removeprefix('json').strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise ValueError('AI provider returned invalid JSON. Please try again.') from exc
+    manager = get_ai_provider_manager()
+    return manager.generate(validated_data['model'], _paper_prompt(validated_data))
 
 
 def _validate_generated_paper(generated, validated_data):
@@ -610,28 +540,75 @@ class GeneratePaperAPIView(APIView):
         serializer = GeneratePaperSerializer(data=request.data, context={'faculty': faculty})
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
+        upload = validated_data['syllabus_upload']
+        if not upload.original_file or not upload.original_file.name or not upload.original_file.storage.exists(upload.original_file.name):
+            return Response(
+                {
+                    'success': False,
+                    'provider': None,
+                    'error_code': 'syllabus_not_found',
+                    'message': 'The uploaded syllabus file is no longer available. Please upload it again.',
+                    'fallback_attempted': False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            generated = _generate_with_provider(validated_data)
+            generated, provider, provider_model, failures = _generate_with_provider(validated_data)
             generated = _validate_generated_paper(generated, validated_data)
             paper = _save_generated_paper(faculty, validated_data, generated)
-        except PermissionError as exc:
-            return Response({'status': 'error', 'message': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except TimeoutError as exc:
-            return Response({'status': 'error', 'message': str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except ProviderError as exc:
+            if exc.provider == 'all':
+                try:
+                    failures = json.loads(exc.reason)
+                except json.JSONDecodeError:
+                    failures = []
+                final_failure = failures[-1] if failures else {}
+                return Response(
+                    {
+                        'success': False,
+                        'status': 'error',
+                        'provider': final_failure.get('provider'),
+                        'error_code': 'all_providers_failed',
+                        'message': 'No configured AI provider could generate the paper. Review the provider report below.',
+                        'fallback_attempted': len(failures) > 1,
+                        'failures': failures,
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            return Response(
+                {
+                    'success': False,
+                    'status': 'error',
+                    'provider': exc.provider,
+                    'error_code': exc.code,
+                    'message': exc.reason,
+                    'fallback_attempted': False,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except ValueError as exc:
-            return Response({'status': 'error', 'message': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except RuntimeError as exc:
-            return Response({'status': 'error', 'message': f'AI provider failed: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response({'success': False, 'status': 'error', 'message': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except (BrokenPipeError, ConnectionAbortedError):
+            logger.info('Client disconnected while generating a paper; generation response was discarded.')
+            return Response(status=status.HTTP_204_NO_CONTENT)
         except Exception as exc:
             return _error_response(exc, 'Unexpected paper generation error', 'Unable to generate paper.')
 
+        response_data = {
+            'success': True,
+            'status': 'success',
+            'message': 'Paper generated successfully.',
+            'provider': provider,
+            'model': provider_model,
+            'paper': PaperSerializer(paper).data,
+            'data': PaperSerializer(paper).data,
+        }
+        if failures:
+            response_data['warning'] = 'The selected provider was unavailable; a fallback provider generated this paper.'
+
         return Response(
-            {
-                'status': 'success',
-                'message': 'Paper generated successfully.',
-                'data': PaperSerializer(paper).data,
-            },
+            response_data,
             status=status.HTTP_201_CREATED,
         )
 

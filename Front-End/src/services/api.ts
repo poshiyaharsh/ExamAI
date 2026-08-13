@@ -174,8 +174,12 @@ export type GeneratePaperPayload = {
 };
 
 export type GeneratedPaperResponse = {
+  success: boolean;
   status: string;
   message: string;
+  provider: string;
+  model: string;
+  paper: GeneratedPaper;
   data: GeneratedPaper;
 };
 
