@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { LayoutDashboard, FileText, Database, History, Settings, Plus, Search, Upload, X } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 const facultyMenu = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },

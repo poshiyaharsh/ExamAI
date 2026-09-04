@@ -118,7 +118,7 @@ class FacultyProfileDepartmentUpdateSerializer(serializers.ModelSerializer):
         return cleaned
 
 
-ALLOWED_AI_MODELS = ('GPT-4', 'GPT-3.5', 'Claude 3', 'Gemini Pro')
+ALLOWED_AI_MODELS = ('ollama-qwen2.5-3b', 'ollama-llama3.2-3b', 'ollama-phi3-mini')
 ALLOWED_QUESTION_TYPES = ('MCQ', 'Subjective', 'True/False', 'Fill in the Blanks')
 ALLOWED_DIFFICULTIES = ('Easy', 'Medium', 'Hard')
 

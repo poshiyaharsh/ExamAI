@@ -110,7 +110,7 @@ export type FacultyProfileResponse = {
   data: FacultyProfileData;
 };
 
-export type AiModel = "GPT-4" | "GPT-3.5" | "Claude 3" | "Gemini Pro";
+export type AiModel = "ollama-qwen2.5-3b" | "ollama-llama3.2-3b" | "ollama-phi3-mini";
 export type PaperQuestionType = "MCQ" | "Subjective" | "True/False" | "Fill in the Blanks";
 export type PaperDifficulty = "Easy" | "Medium" | "Hard";
 
@@ -171,6 +171,14 @@ export type GeneratePaperPayload = {
   topics: string[];
   question_types: PaperQuestionType[];
   difficulty_distribution: Record<PaperDifficulty, number>;
+};
+
+export type OllamaStatusResponse = {
+  status: string;
+  connected: boolean;
+  model_installed: boolean;
+  message: string;
+  models?: string[];
 };
 
 export type GeneratedPaperResponse = {
@@ -434,6 +442,21 @@ export const studentProfileApi = {
   },
 };
 
+export const studentExamApi = {
+  getExams: async (): Promise<StudentExamListResponse> => {
+    const response = await apiClient.get<StudentExamListResponse>('/api/student/exams/');
+    return response.data;
+  },
+  startExam: async (paperId: number): Promise<StudentExamStartResponse> => {
+    const response = await apiClient.post<StudentExamStartResponse>(`/api/student/exams/${paperId}/start/`, {});
+    return response.data;
+  },
+  submitExam: async (paperId: number, answers: Record<number, string>): Promise<StudentExamSubmitResponse> => {
+    const response = await apiClient.post<StudentExamSubmitResponse>(`/api/student/exams/${paperId}/submit/`, { answers });
+    return response.data;
+  },
+};
+
 export const facultyProfileApi = {
   getProfile: async (): Promise<FacultyProfileResponse> => {
     const response = await apiClient.get<FacultyProfileResponse>("/api/faculty/profile");
@@ -538,7 +561,13 @@ export const facultyPaperApi = {
     return response.data;
   },
   generatePaper: async (payload: GeneratePaperPayload): Promise<GeneratedPaperResponse> => {
-    const response = await apiClient.post<GeneratedPaperResponse>("/api/faculty/generate-paper", payload);
+    const response = await apiClient.post<GeneratedPaperResponse>("/api/faculty/generate-paper", payload, {
+      timeout: 190000,
+    });
+    return response.data;
+  },
+  getOllamaStatus: async (): Promise<OllamaStatusResponse> => {
+    const response = await apiClient.get<OllamaStatusResponse>("/api/faculty/ollama-status");
     return response.data;
   },
   getHistory: async (): Promise<PaperHistoryResponse> => {

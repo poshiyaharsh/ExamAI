@@ -21,6 +21,15 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.permissions import IsFacultyUser
 
 from admins.models import AdminInstitution
+from backend.services.ollama_service import (
+    OllamaConnectionError,
+    OllamaInvalidResponseError,
+    OllamaModelNotInstalledError,
+    OllamaService,
+    OllamaServiceError,
+    OllamaTimeoutError,
+)
+from backend.services.document_extractor import extract_document_text
 from .models import FacultyProfile, Paper, PaperQuestion, SyllabusUpload
 from .serializers import (
     GeneratePaperSerializer,
@@ -32,11 +41,11 @@ from .serializers import (
     FacultySignupSerializer,
     SyllabusUploadSerializer,
 )
-
-
-from backend.ai_config import ProviderError, get_ai_provider_manager
-
 logger = logging.getLogger(__name__)
+
+OLLAMA_UI_MODEL = 'ollama-qwen2.5-3b'
+VALID_QUESTION_TYPES = {'Multiple Choice', 'True/False', 'Subjective', 'Fill in the Blanks'}
+VALID_DIFFICULTIES = {'Easy', 'Medium', 'Hard'}
 
 QUESTION_TYPE_LABELS = {
     'MCQ': 'MCQ',
@@ -129,91 +138,207 @@ def _extract_docx_text(path):
 
 
 def _extract_syllabus_text(uploaded_file):
-    extension = os.path.splitext(uploaded_file.name or '')[1].lower()
-    suffix = extension if extension in ('.pdf', '.docx') else ''
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-        for chunk in uploaded_file.chunks():
-            temp_file.write(chunk)
-        temp_path = temp_file.name
-
-    try:
-        if extension == '.pdf':
-            text = _extract_pdf_text(temp_path)
-        elif extension == '.docx':
-            text = _extract_docx_text(temp_path)
-        else:
-            raise ValueError('Only PDF and DOCX syllabus files are supported.')
-    finally:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-
-    if not text:
-        raise ValueError('No readable text was found in the syllabus file.')
-    return text
-
-
-def _json_request(url, payload, headers, timeout=60):
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode('utf-8'),
-        headers={**headers, 'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode('utf-8'))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode('utf-8', errors='ignore')
-        raise RuntimeError(detail or f'Provider returned HTTP {exc.code}.') from exc
-    except urllib.error.URLError as exc:
-        raise TimeoutError('AI provider request timed out or could not be reached.') from exc
+    return extract_document_text(uploaded_file)
 
 
 def _paper_prompt(validated_data):
+    question_plan = _build_question_plan(validated_data)
+    question_plan_text = '\n'.join(
+        f"- Question {item['id']}: type={item['type']}, difficulty={item['difficulty']}, marks={item['marks']}"
+        for item in question_plan
+    )
     return (
-        'Generate an exam paper using ONLY the syllabus text below. '
-        'Return JSON only with keys: title, duration, total_marks, model, questions. '
-        'Each question must include type, difficulty, marks, question, options, answer. '
-        'MCQ questions must include options. Do not include markdown.\n\n'
-        f"Title: {validated_data['title']}\n"
+        'You are generating an academic examination paper strictly from the uploaded source material and selected topics. '
+        'Return ONLY valid JSON with keys: exam_title, duration, total_marks, questions. '
+        'The JSON MUST contain a non-empty questions array. Do not return markdown, code fences, commentary, or extra text.\n\n'
+        f"Exam title: {validated_data['title']}\n"
         f"Duration: {validated_data['duration']}\n"
         f"Total marks: {validated_data['total_marks']}\n"
-        f"Model: {validated_data['model']}\n"
         f"Topics: {', '.join(validated_data['topics'])}\n"
         f"Question types: {', '.join(validated_data['question_types'])}\n"
-        f"Difficulty distribution: {validated_data['difficulty_distribution']}\n\n"
-        f"Syllabus:\n{validated_data['syllabus_upload'].extracted_text[:18000]}"
+        f"Easy: {validated_data['difficulty_distribution']['Easy']}%\n"
+        f"Medium: {validated_data['difficulty_distribution']['Medium']}%\n"
+        f"Hard: {validated_data['difficulty_distribution']['Hard']}%\n\n"
+        'Generate exactly these questions in the same order and use the same type, difficulty, and marks for each item. '
+        'Do not copy this plan into the output; it is only guidance for generation.\n'
+        f"{question_plan_text}\n\n"
+        'Each question object must use this schema exactly: '
+        '{"id": 1, "type": "MCQ", "difficulty": "Easy", "question": "", "options": ["", "", "", ""], "answer": "", "marks": 30}. '
+        'For MCQ, use exactly 4 options and set answer to the exact option text. '
+        'For True/False, use a meaningful statement and set answer to True or False. '
+        'For Fill in the Blanks, use ___ in the question and provide the exact answer. '
+        'For Subjective, provide a 2-4 sentence model answer in answer.\n\n'
+        'Rules:\n'
+        '- Use only the syllabus content and selected topics.\n'
+        '- Multiple Choice questions must have exactly 4 options and exactly 1 correct answer.\n'
+        '- True/False questions must be meaningful statements with a clear true or false answer.\n'
+        '- Fill in the Blanks questions must use ___.\n'
+        '- Subjective questions must require reasoning and include a 2-4 sentence model answer.\n'
+        '- Total marks of all questions must equal Total Marks exactly.\n'
+        '- Follow the requested difficulty distribution as closely as mathematically possible.\n\n'
+        'Use this syllabus text:\n'
+        f"{validated_data['syllabus_upload'].extracted_text[:18000]}"
     )
 
 
-def _generate_with_provider(validated_data):
-    manager = get_ai_provider_manager()
-    return manager.generate(validated_data['model'], _paper_prompt(validated_data))
+def _correction_prompt(validated_data, issues):
+    return (
+        'The previous JSON was invalid for the exam paper requirements. '
+        'Regenerate the entire paper as valid JSON only. No markdown or extra text. '
+        'Make sure every question includes question_text, options, correct_answer, and marks.\n\n'
+        f"Validation issues: {issues}\n\n"
+        f"{_paper_prompt(validated_data)}"
+    )
+
+
+def _build_question_plan(validated_data):
+    question_types = list(validated_data['question_types']) or ['MCQ']
+    marks_by_difficulty = {}
+    allocated_marks = 0
+    for difficulty in ('Easy', 'Medium'):
+        marks = round(validated_data['total_marks'] * validated_data['difficulty_distribution'][difficulty] / 100)
+        marks_by_difficulty[difficulty] = marks
+        allocated_marks += marks
+    marks_by_difficulty['Hard'] = validated_data['total_marks'] - allocated_marks
+
+    plan = []
+    for index, difficulty in enumerate(('Easy', 'Medium', 'Hard')):
+        marks = marks_by_difficulty[difficulty]
+        if marks <= 0:
+            continue
+        plan.append({
+            'id': index + 1,
+            'type': question_types[index % len(question_types)],
+            'difficulty': difficulty,
+            'marks': marks,
+        })
+    return plan
+
+
+def _sentence_count(text):
+    fragments = [fragment.strip() for fragment in text.replace('?', '.').replace('!', '.').split('.')]
+    return sum(1 for fragment in fragments if fragment)
+
+
+def _normalize_question_type(question_type):
+    mapping = {
+        'mcq': 'MCQ',
+        'mcqs': 'MCQ',
+        'multiple choice': 'MCQ',
+        'multiple_choice': 'MCQ',
+        'true/false': 'True/False',
+        'true false': 'True/False',
+        'true_false': 'True/False',
+        'subjective': 'Subjective',
+        'subjective question': 'Subjective',
+        'long answer': 'Subjective',
+        'fill in blank': 'Fill in the Blanks',
+        'fill in the blank': 'Fill in the Blanks',
+        'fill in the blanks': 'Fill in the Blanks',
+        'fill in blanks': 'Fill in the Blanks',
+    }
+    cleaned = str(question_type or '').strip()
+    return mapping.get(cleaned.lower(), cleaned)
+
+
+def _clean_option_text(option):
+    cleaned = str(option or '').strip()
+    if len(cleaned) > 2 and cleaned[0].isalpha() and cleaned[1] in {')', '.', ':', '-'}:
+        cleaned = cleaned[2:].strip()
+    if len(cleaned) > 2 and cleaned[0].isdigit() and cleaned[1] in {')', '.', ':', '-'}:
+        cleaned = cleaned[2:].strip()
+    return cleaned
+
+
+def _normalize_options(question):
+    options = question.get('options')
+    if options is None:
+        options = question.get('choices', [])
+    if isinstance(options, dict):
+        options = [options[key] for key in ('A', 'B', 'C', 'D') if options.get(key) is not None]
+    if not isinstance(options, list):
+        return []
+    return [_clean_option_text(option) for option in options]
 
 
 def _validate_generated_paper(generated, validated_data):
+    if not isinstance(generated, dict):
+        raise ValueError('AI provider returned invalid JSON.')
+
     questions = generated.get('questions')
     if not isinstance(questions, list) or not questions:
         raise ValueError('AI provider did not return any questions.')
 
+    question_plan = _build_question_plan(validated_data)
+    if len(questions) != len(question_plan):
+        raise ValueError('AI provider returned the wrong number of questions.')
+
     allowed_types = set(validated_data['question_types'])
-    allowed_difficulties = {'Easy', 'Medium', 'Hard'}
     total_marks = 0
     marks_by_difficulty = {'Easy': 0, 'Medium': 0, 'Hard': 0}
     normalized_questions = []
+    seen_questions = set()
+
     for index, question in enumerate(questions, start=1):
-        question_type = question.get('type')
-        difficulty = question.get('difficulty')
-        marks = int(question.get('marks') or 0)
-        text = str(question.get('question') or '').strip()
+        if not isinstance(question, dict):
+            raise ValueError('AI generated invalid question data.')
+
+        planned_question = question_plan[index - 1]
+
+        question_type = _normalize_question_type(question.get('type') or planned_question['type'])
+        difficulty = str(question.get('difficulty') or planned_question['difficulty']).strip().title()
+        marks = int(question.get('marks') or planned_question['marks'] or 0)
+        text = str(question.get('question') or question.get('question_text') or question.get('text') or '').strip()
+        answer = str(
+            question.get('answer')
+            or question.get('correct_answer')
+            or question.get('correct_option')
+            or question.get('solution')
+            or ''
+        ).strip()
+        options = _normalize_options(question)
+
         if question_type not in allowed_types:
             raise ValueError('AI generated a question type that was not selected.')
-        if difficulty not in allowed_difficulties:
+        if difficulty not in VALID_DIFFICULTIES:
             raise ValueError('AI generated an invalid difficulty level.')
-        if marks <= 0 or not text:
+        if marks <= 0:
+            raise ValueError('AI generated invalid question marks.')
+        if not text:
             raise ValueError('AI generated an invalid question.')
+        normalized_key = text.casefold()
+        if normalized_key in seen_questions:
+            raise ValueError('AI generated duplicate questions.')
+        seen_questions.add(normalized_key)
+
+        if question_type == 'MCQ':
+            if len(options) != 4:
+                raise ValueError('MCQ questions must include exactly 4 options.')
+            cleaned_options = options
+            if any(not option for option in cleaned_options):
+                raise ValueError('MCQ questions must include exactly 4 options.')
+            cleaned_answer = _clean_option_text(answer)
+            if cleaned_answer in {'A', 'B', 'C', 'D'}:
+                cleaned_answer = cleaned_options[ord(cleaned_answer.upper()) - 65]
+            if cleaned_answer not in cleaned_options:
+                normalized_answer = next((option for option in cleaned_options if option.casefold() == cleaned_answer.casefold()), '')
+                cleaned_answer = normalized_answer
+            if not cleaned_answer:
+                raise ValueError('MCQ questions must include exactly one correct answer.')
+            answer = cleaned_answer
+        else:
+            cleaned_options = []
+
+        if question_type == 'Fill in the Blanks' and '___' not in text:
+            raise ValueError('Fill in the Blanks questions must use ___.')
+        if question_type == 'True/False' and answer.lower() not in {'true', 'false'}:
+            raise ValueError('True/False questions must have a true or false answer.')
+        if question_type == 'Subjective':
+            if not answer:
+                raise ValueError('Subjective questions must include a model answer.')
+            if not 2 <= _sentence_count(answer) <= 4:
+                raise ValueError('Subjective model answers must be 2 to 4 sentences long.')
+
         total_marks += marks
         marks_by_difficulty[difficulty] += marks
         normalized_questions.append({
@@ -222,8 +347,8 @@ def _validate_generated_paper(generated, validated_data):
             'difficulty': difficulty,
             'marks': marks,
             'question': text,
-            'options': question.get('options') if isinstance(question.get('options'), list) else [],
-            'answer': str(question.get('answer') or '').strip(),
+            'options': cleaned_options,
+            'answer': answer,
         })
 
     if total_marks != validated_data['total_marks']:
@@ -231,22 +356,38 @@ def _validate_generated_paper(generated, validated_data):
 
     expected_marks = {}
     allocated_marks = 0
-    difficulties = ['Easy', 'Medium', 'Hard']
-    for difficulty in difficulties[:-1]:
+    for difficulty in ('Easy', 'Medium'):
         marks = round(validated_data['total_marks'] * validated_data['difficulty_distribution'][difficulty] / 100)
         expected_marks[difficulty] = marks
         allocated_marks += marks
-    expected_marks[difficulties[-1]] = validated_data['total_marks'] - allocated_marks
+    expected_marks['Hard'] = validated_data['total_marks'] - allocated_marks
 
     if marks_by_difficulty != expected_marks:
         raise ValueError('Generated question difficulty marks do not match the requested distribution.')
 
     generated['questions'] = normalized_questions
-    generated['title'] = validated_data['title']
+    generated['exam_title'] = validated_data['title']
     generated['duration'] = validated_data['duration']
     generated['total_marks'] = validated_data['total_marks']
-    generated['model'] = validated_data['model']
     return generated
+
+
+def _generate_with_ollama(validated_data):
+    service = OllamaService()
+    prompt = _paper_prompt(validated_data)
+    try:
+        generated = service.generate(OLLAMA_UI_MODEL, prompt)
+        return _validate_generated_paper(generated, validated_data)
+    except (OllamaConnectionError, OllamaTimeoutError, OllamaModelNotInstalledError) as exc:
+        raise exc
+    except (OllamaInvalidResponseError, OllamaServiceError, ValueError) as exc:
+        corrected = service.generate(OLLAMA_UI_MODEL, _correction_prompt(validated_data, str(exc)))
+        try:
+            return _validate_generated_paper(corrected, validated_data)
+        except (OllamaInvalidResponseError, OllamaServiceError, ValueError) as second_exc:
+            raise OllamaInvalidResponseError(
+                f'Ollama returned an unusable exam paper. {second_exc}'
+            ) from second_exc
 
 
 def _save_generated_paper(faculty, validated_data, generated):
@@ -266,6 +407,7 @@ def _save_generated_paper(faculty, validated_data, generated):
             duration=validated_data['duration'],
             total_marks=validated_data['total_marks'],
             generated_questions=generated['questions'],
+            is_published=True,
         )
         paper.syllabus_file.save(upload.original_filename, ContentFile(upload.original_file.read()), save=True)
 
@@ -370,6 +512,23 @@ def _export_docx(paper):
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         f'{paper.title}.docx',
     )
+
+
+class OllamaStatusAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def get(self, request):
+        service = OllamaService()
+        status_data = service.get_status(OLLAMA_UI_MODEL, timeout=5)
+        return Response(
+            {
+                'status': 'success',
+                'connected': status_data['connected'],
+                'model_installed': status_data['model_installed'],
+                'message': status_data['message'],
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class FacultySignupAPIView(APIView):
@@ -533,14 +692,18 @@ class GeneratePaperAPIView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
 
     def post(self, request):
+        logger.info('[GeneratePaper] POST request received')
         faculty, error_response = _faculty_or_error(request)
         if error_response:
             return error_response
+        logger.info('[GeneratePaper] User authenticated; faculty identified')
 
         serializer = GeneratePaperSerializer(data=request.data, context={'faculty': faculty})
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
+        logger.info('[GeneratePaper] Request data parsed; institution identified')
         upload = validated_data['syllabus_upload']
+        logger.info('[GeneratePaper] Syllabus resolved; extracted text length: %s', len(upload.extracted_text or ''))
         if not upload.original_file or not upload.original_file.name or not upload.original_file.storage.exists(upload.original_file.name):
             return Response(
                 {
@@ -552,40 +715,74 @@ class GeneratePaperAPIView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        try:
-            generated, provider, provider_model, failures = _generate_with_provider(validated_data)
-            generated = _validate_generated_paper(generated, validated_data)
-            paper = _save_generated_paper(faculty, validated_data, generated)
-        except ProviderError as exc:
-            if exc.provider == 'all':
-                try:
-                    failures = json.loads(exc.reason)
-                except json.JSONDecodeError:
-                    failures = []
-                final_failure = failures[-1] if failures else {}
-                return Response(
-                    {
-                        'success': False,
-                        'status': 'error',
-                        'provider': final_failure.get('provider'),
-                        'error_code': 'all_providers_failed',
-                        'message': 'No configured AI provider could generate the paper. Review the provider report below.',
-                        'fallback_attempted': len(failures) > 1,
-                        'failures': failures,
-                    },
-                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                )
+        if not str(upload.extracted_text or '').strip():
             return Response(
                 {
                     'success': False,
                     'status': 'error',
-                    'provider': exc.provider,
-                    'error_code': exc.code,
-                    'message': exc.reason,
+                    'provider': 'Ollama',
+                    'error_code': 'empty_syllabus',
+                    'message': 'Unable to generate paper. Syllabus content is empty.',
+                    'fallback_attempted': False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            logger.info('[GeneratePaper] Model selected: %s', OllamaService().model_for(validated_data['model']))
+            logger.info('[GeneratePaper] Calling Ollama')
+            generated = _generate_with_ollama(validated_data)
+            logger.info('[GeneratePaper] Ollama response received; validation passed; marks validation passed')
+            logger.info('[GeneratePaper] Saving paper')
+            paper = _save_generated_paper(faculty, validated_data, generated)
+            logger.info('[GeneratePaper] Paper saved')
+        except OllamaModelNotInstalledError:
+            return Response(
+                {
+                    'success': False,
+                    'status': 'error',
+                    'provider': 'Ollama',
+                    'error_code': 'model_not_found',
+                    'message': f'Selected model is not installed. Run: ollama pull {OllamaService().model_for(validated_data["model"]) }',
                     'fallback_attempted': False,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except OllamaConnectionError:
+            return Response(
+                {
+                    'success': False,
+                    'status': 'error',
+                    'provider': 'Ollama',
+                    'error_code': 'connection_error',
+                    'message': 'Ollama is not running. Please start Ollama and try again.',
+                    'fallback_attempted': False,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except OllamaTimeoutError:
+            return Response(
+                {
+                    'success': False,
+                    'status': 'error',
+                    'provider': 'Ollama',
+                    'error_code': 'timeout',
+                    'message': 'Ollama generation timed out. Please try again.',
+                    'fallback_attempted': False,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except OllamaInvalidResponseError as exc:
+            return Response(
+                {
+                    'success': False,
+                    'status': 'error',
+                    'provider': 'Ollama',
+                    'error_code': 'invalid_ai_response',
+                    'error': str(exc),
+                    'message': str(exc),
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
             )
         except ValueError as exc:
             return Response({'success': False, 'status': 'error', 'message': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -595,21 +792,24 @@ class GeneratePaperAPIView(APIView):
         except Exception as exc:
             return _error_response(exc, 'Unexpected paper generation error', 'Unable to generate paper.')
 
+        paper_data = PaperSerializer(paper).data
         response_data = {
             'success': True,
             'status': 'success',
             'message': 'Paper generated successfully.',
-            'provider': provider,
-            'model': provider_model,
-            'paper': PaperSerializer(paper).data,
-            'data': PaperSerializer(paper).data,
+            'provider': 'Ollama',
+            'model': OllamaService().model_for(validated_data['model']),
+            'exam_title': paper.title,
+            'duration': paper.duration,
+            'total_marks': paper.total_marks,
+            'questions': paper_data['questions'],
+            'paper': paper_data,
+            'data': paper_data,
         }
-        if failures:
-            response_data['warning'] = 'The selected provider was unavailable; a fallback provider generated this paper.'
 
         return Response(
             response_data,
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_200_OK,
         )
 
 

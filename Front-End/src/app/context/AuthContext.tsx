@@ -1,18 +1,9 @@
 import axios from "axios";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { authApi, type UserRole } from "../../services/api";
 import { AUTH_SESSION_CHANGED_EVENT, authStorage, type AuthSession } from "../../services/auth";
-
-type AuthContextValue = {
-  session: AuthSession | null;
-  isLoading: boolean;
-  setAuthenticatedSession: (session: AuthSession) => void;
-  clearAuthenticatedSession: () => void;
-  getDashboardPathByRole: (role: UserRole) => string;
-};
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+import { AuthContext, type AuthContextValue } from "./authContextValue";
 
 function getDashboardPathByRole(role: UserRole): string {
   switch (role) {
@@ -103,10 +94,3 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
-}

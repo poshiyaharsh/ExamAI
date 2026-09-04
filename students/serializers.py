@@ -7,7 +7,8 @@ from django.db import OperationalError, ProgrammingError, transaction
 from rest_framework import serializers
 
 from admins.models import AdminInstitution
-from .models import StudentProfile
+from faculty.models import Paper
+from .models import ExamAttempt, StudentProfile
 
 
 logger = logging.getLogger(__name__)
@@ -116,3 +117,50 @@ class StudentProfileDepartmentUpdateSerializer(serializers.ModelSerializer):
         if not cleaned:
             raise serializers.ValidationError('Department must not be empty.')
         return cleaned
+
+
+class StudentExamSummarySerializer(serializers.ModelSerializer):
+    faculty = serializers.SerializerMethodField()
+    question_count = serializers.SerializerMethodField()
+    published = serializers.BooleanField(source='is_published')
+
+    class Meta:
+        model = Paper
+        fields = ('id', 'title', 'faculty', 'duration', 'total_marks', 'question_count', 'published', 'created_at')
+
+    def get_faculty(self, obj):
+        return f'{obj.faculty.user.first_name} {obj.faculty.user.last_name}'.strip() or obj.faculty.user.username
+
+    def get_question_count(self, obj):
+        return obj.questions.count()
+
+
+class StudentExamDetailSerializer(serializers.ModelSerializer):
+    faculty = serializers.SerializerMethodField()
+    questions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Paper
+        fields = ('id', 'title', 'faculty', 'duration', 'total_marks', 'questions', 'created_at')
+
+    def get_faculty(self, obj):
+        return f'{obj.faculty.user.first_name} {obj.faculty.user.last_name}'.strip() or obj.faculty.user.username
+
+    def get_questions(self, obj):
+        return [
+            {
+                'question_number': question.question_number,
+                'type': question.question_type,
+                'difficulty': question.difficulty,
+                'marks': question.marks,
+                'question': question.question,
+                'options': question.options,
+            }
+            for question in obj.questions.all()
+        ]
+
+
+class ExamAttemptSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExamAttempt
+        fields = ('id', 'student', 'paper', 'answers', 'score', 'max_score', 'status', 'started_at', 'submitted_at')

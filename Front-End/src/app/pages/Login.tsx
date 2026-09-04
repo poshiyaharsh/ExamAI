@@ -5,7 +5,7 @@ import { Brain, Eye, EyeOff, User, Mail, Lock, Building2, GraduationCap, Briefca
 import axios from "axios";
 
 import { authApi, institutionsApi, type InstitutionOption, type UserRole } from "../../services/api";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function extractApiErrorMessage(apiError: unknown): string | null {
   if (!apiError) {

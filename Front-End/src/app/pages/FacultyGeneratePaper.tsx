@@ -18,7 +18,12 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/faculty/settings" }
 ];
 
-const aiModels: AiModel[] = ["GPT-4", "GPT-3.5", "Claude 3", "Gemini Pro"];
+const aiModels: AiModel[] = ["ollama-qwen2.5-3b", "ollama-llama3.2-3b", "ollama-phi3-mini"];
+const aiModelLabels: Record<AiModel, string> = {
+  "ollama-qwen2.5-3b": "Qwen 2.5 3B (Recommended - Local)",
+  "ollama-llama3.2-3b": "Llama 3.2 3B (Local)",
+  "ollama-phi3-mini": "Phi-3 Mini (Local)",
+};
 const draftKey = "faculty-paper-duplicate-draft";
 
 const questionTypeLabels: Record<string, PaperQuestionType> = {
@@ -70,7 +75,9 @@ export function FacultyGeneratePaper() {
     trueFalse: false,
     fillBlanks: false
   });
-  const [aiModel, setAiModel] = useState<AiModel>("GPT-4");
+  const [aiModel, setAiModel] = useState<AiModel>("ollama-qwen2.5-3b");
+  const [ollamaStatus, setOllamaStatus] = useState<"loading" | "connected" | "not-running" | "model-missing">("loading");
+  const [ollamaStatusMessage, setOllamaStatusMessage] = useState("Checking Ollama...");
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
   const [uploadedSyllabus, setUploadedSyllabus] = useState<SyllabusUploadData | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -89,7 +96,7 @@ export function FacultyGeneratePaper() {
       setExamTitle(draft.title || "");
       setDuration(String(draft.duration || 60));
       setTotalMarks(String(draft.total_marks || 100));
-      setAiModel((draft.model as AiModel) || "GPT-4");
+      setAiModel(aiModels.includes(draft.model as AiModel) ? draft.model as AiModel : "ollama-qwen2.5-3b");
       setTopics(draft.topics?.length ? draft.topics : [""]);
       if (draft.difficulty_distribution) {
         setDifficultyMix({
@@ -111,6 +118,34 @@ export function FacultyGeneratePaper() {
       localStorage.removeItem(draftKey);
     }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadOllamaStatus = async () => {
+      try {
+        const response = await facultyPaperApi.getOllamaStatus();
+        if (!cancelled) {
+          if (!response.connected) {
+            setOllamaStatus("not-running");
+          } else if (!response.model_installed) {
+            setOllamaStatus("model-missing");
+          } else {
+            setOllamaStatus("connected");
+          }
+          setOllamaStatusMessage(response.message);
+        }
+      } catch {
+        if (!cancelled) {
+          setOllamaStatus("not-running");
+          setOllamaStatusMessage("Ollama: Not Running");
+        }
+      }
+    };
+    void loadOllamaStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [aiModel]);
 
   const selectedQuestionTypes = useMemo(
     () => Object.entries(questionTypes)
@@ -172,13 +207,17 @@ export function FacultyGeneratePaper() {
   };
 
   const handleGenerate = async () => {
+    console.log("[GeneratePaper] Button clicked");
     if (activeRequestRef.current) return;
+    console.log("[GeneratePaper] Validation started");
     const validationMessage = validateForm();
     if (validationMessage) {
+      console.log("[GeneratePaper] Validation failed:", validationMessage);
       setError(validationMessage);
       toast.error(validationMessage);
       return;
     }
+    console.log("[GeneratePaper] Validation passed");
 
     setIsGenerating(true);
     activeRequestRef.current = true;
@@ -197,9 +236,10 @@ export function FacultyGeneratePaper() {
       if (!syllabus) {
         throw new Error("Please upload a syllabus file.");
       }
+      console.log("[GeneratePaper] Uploaded syllabus available", { uploadId: syllabus.id });
 
       setGenerationProgress(65);
-      const response = await facultyPaperApi.generatePaper({
+      const generationPayload = {
         syllabus_upload_id: syllabus.id,
         title: examTitle.trim(),
         duration: Number(duration),
@@ -208,7 +248,16 @@ export function FacultyGeneratePaper() {
         topics: cleanTopics,
         question_types: selectedQuestionTypes,
         difficulty_distribution: difficultyMix,
+      };
+      console.log("[GeneratePaper] Building generation request", {
+        uploadId: generationPayload.syllabus_upload_id,
+        model: generationPayload.model,
+        topicCount: generationPayload.topics.length,
+        questionTypeCount: generationPayload.question_types.length,
       });
+      console.log("[GeneratePaper] Sending POST /api/faculty/generate-paper");
+      const response = await facultyPaperApi.generatePaper(generationPayload);
+      console.log("[GeneratePaper] Response received", { status: response.status, paperId: response.paper?.id ?? response.data?.id });
       setGenerationProgress(100);
       setPreviewPaper(response.paper ?? response.data);
       setGenerationSource({ provider: response.provider, model: response.model });
@@ -452,9 +501,12 @@ export function FacultyGeneratePaper() {
                 className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
               >
                 {aiModels.map((model) => (
-                  <option key={model} value={model}>{model}{model === "GPT-4" ? " (Recommended)" : ""}</option>
+                  <option key={model} value={model}>{aiModelLabels[model]}</option>
                 ))}
               </select>
+              <p className={`mt-2 text-xs ${ollamaStatus === "connected" ? "text-emerald-600" : ollamaStatus === "model-missing" ? "text-amber-600" : "text-red-600"}`}>
+                {ollamaStatusMessage}
+              </p>
             </div>
 
             {isGenerating && (

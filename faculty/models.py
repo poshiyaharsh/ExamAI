@@ -88,6 +88,8 @@ class Paper(models.Model):
     duration = models.PositiveIntegerField()
     total_marks = models.PositiveIntegerField()
     generated_questions = models.JSONField(default=list)
+    is_published = models.BooleanField(default=True)
+    published_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

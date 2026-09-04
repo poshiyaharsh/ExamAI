@@ -10,7 +10,7 @@ import {
   User,
   ChevronLeft
 } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { ADMIN_SIDEBAR_ITEMS, AdminSidebar } from "./AdminSidebar";
 
 interface DashboardLayoutProps {

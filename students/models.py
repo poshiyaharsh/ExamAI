@@ -3,6 +3,7 @@ from django.db import models
 from django.utils import timezone
 
 from admins.models import AdminInstitution
+from faculty.models import Paper
 
 
 class StudentProfile(models.Model):
@@ -54,3 +55,25 @@ class StudentProfile(models.Model):
 
     def __str__(self):
         return f'Student: {self.user.username}'
+
+
+class ExamAttempt(models.Model):
+    STATUS_STARTED = 'started'
+    STATUS_SUBMITTED = 'submitted'
+    STATUS_CHOICES = (
+        (STATUS_STARTED, 'Started'),
+        (STATUS_SUBMITTED, 'Submitted'),
+    )
+
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name='exam_attempts')
+    paper = models.ForeignKey(Paper, on_delete=models.CASCADE, related_name='attempts')
+    answers = models.JSONField(default=dict)
+    score = models.PositiveIntegerField(default=0)
+    max_score = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_STARTED)
+    started_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+        indexes = [models.Index(fields=['student', 'paper', 'status'])]
