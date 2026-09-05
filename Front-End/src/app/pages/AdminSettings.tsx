@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { Building, Bell, Shield, Globe, FileText } from "lucide-react";
 import { adminInstitutionApi } from "../../services/api";

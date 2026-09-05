@@ -235,6 +235,97 @@ export type ResetPasswordResponse = {
   message: string;
 };
 
+export type ExamQuestion = {
+  id: number;
+  order: number;
+  question_type: "mcq" | "truefalse" | "fillblank" | "subjective";
+  difficulty: "easy" | "medium" | "hard";
+  text: string;
+  options: string[] | null;
+  correct_answer: string | number | boolean | null;
+  model_answer: string;
+  marks: number;
+  topic: string;
+};
+
+export type FacultyExam = {
+  id: number;
+  title: string;
+  duration_minutes: number;
+  total_marks: number;
+  topics: string[];
+  difficulty_distribution: Record<string, number>;
+  question_types: string[];
+  ai_model_used: string;
+  source_syllabus_text?: string;
+  status: "draft" | "published" | "closed";
+  starts_at: string | null;
+  ends_at: string | null;
+  created_at: string;
+  updated_at: string;
+  question_count?: number;
+  attempts_count?: number;
+  questions?: ExamQuestion[];
+};
+
+export type GenerateExamResponse = {
+  exam_id: number;
+  status: string;
+  question_count: number;
+  requested_total_marks: number;
+  actual_total_marks: number;
+  warning?: string;
+};
+
+export type StudentExam = {
+  id: number;
+  title: string;
+  duration_minutes: number;
+  total_marks: number;
+  topics: string[];
+  starts_at: string | null;
+  ends_at: string | null;
+  questions?: Array<Omit<ExamQuestion, "correct_answer" | "model_answer">>;
+};
+
+export type StudentExamSummary = {
+  exam: StudentExam;
+  completed: boolean;
+  attempt_id: number | null;
+  available: boolean;
+};
+
+export type StudentAttempt = {
+  id: number;
+  exam: number;
+  exam_title: string;
+  exam_total_marks: number;
+  started_at: string;
+  submitted_at: string | null;
+  status: "in_progress" | "submitted" | "auto_submitted" | "evaluated";
+  total_score: number;
+  answers: Array<{
+    question: number;
+    question_text: string;
+    question_type: "mcq" | "truefalse" | "fillblank" | "subjective";
+    correct_answer: string | number | boolean | null;
+    answer_text: string;
+    is_correct: boolean | null;
+    score_awarded: number | null;
+    ai_feedback: string;
+  }>;
+};
+
+export type StudentExamListResponse = StudentExamSummary[];
+export type StudentExamStartResponse = {
+  attempt_id: number;
+  exam: StudentExam;
+  started_at: string;
+  deadline: string;
+  created: boolean;
+};
+export type StudentAttemptResponse = StudentAttempt;
+
 export type AdminStudentRow = {
   id: number;
   full_name: string;
@@ -447,12 +538,23 @@ export const studentExamApi = {
     const response = await apiClient.get<StudentExamListResponse>('/api/student/exams/');
     return response.data;
   },
-  startExam: async (paperId: number): Promise<StudentExamStartResponse> => {
-    const response = await apiClient.post<StudentExamStartResponse>(`/api/student/exams/${paperId}/start/`, {});
+  startExam: async (examId: number): Promise<StudentExamStartResponse> => {
+    const response = await apiClient.post<StudentExamStartResponse>(`/api/student/exams/${examId}/start/`, {});
     return response.data;
   },
-  submitExam: async (paperId: number, answers: Record<number, string>): Promise<StudentExamSubmitResponse> => {
-    const response = await apiClient.post<StudentExamSubmitResponse>(`/api/student/exams/${paperId}/submit/`, { answers });
+  saveAnswer: async (attemptId: number, questionId: number, answerText: string): Promise<{ saved: boolean }> => {
+    const response = await apiClient.post<{ saved: boolean }>(`/api/student/attempts/${attemptId}/save/`, {
+      question_id: questionId,
+      answer_text: answerText,
+    });
+    return response.data;
+  },
+  submitAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
+    const response = await apiClient.post<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/submit/`, {});
+    return response.data;
+  },
+  getAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
+    const response = await apiClient.get<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/`);
     return response.data;
   },
 };
@@ -566,6 +668,36 @@ export const facultyPaperApi = {
     });
     return response.data;
   },
+  generateExam: async (payload: {
+    title: string;
+    durationMinutes: number;
+    totalMarks: number;
+    topics: string[];
+    questionTypes: string[];
+    difficultyDistribution: Record<string, number>;
+    aiModel: AiModel;
+    syllabus: File;
+  }): Promise<GenerateExamResponse> => {
+    const formData = new FormData();
+    formData.append("title", payload.title);
+    formData.append("duration_minutes", String(payload.durationMinutes));
+    formData.append("total_marks", String(payload.totalMarks));
+    payload.topics.forEach((topic) => formData.append("topics", topic));
+    payload.questionTypes.forEach((questionType) => formData.append("question_types", questionType));
+    formData.append("difficulty_distribution", JSON.stringify(payload.difficultyDistribution));
+    const modelMap: Record<AiModel, string> = {
+      "ollama-qwen2.5-3b": "qwen2.5-3b",
+      "ollama-llama3.2-3b": "llama3.2-3b",
+      "ollama-phi3-mini": "phi3-mini",
+    };
+    formData.append("ai_model", modelMap[payload.aiModel]);
+    formData.append("syllabus", payload.syllabus);
+    const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 190000,
+    });
+    return response.data;
+  },
   getOllamaStatus: async (): Promise<OllamaStatusResponse> => {
     const response = await apiClient.get<OllamaStatusResponse>("/api/faculty/ollama-status");
     return response.data;
@@ -587,6 +719,25 @@ export const facultyPaperApi = {
       params: { format },
       responseType: "blob",
     });
+    return response.data;
+  },
+};
+
+export const facultyExamApi = {
+  getExams: async (): Promise<FacultyExam[] | { results: FacultyExam[] }> => {
+    const response = await apiClient.get<FacultyExam[] | { results: FacultyExam[] }>("/api/faculty/exams/");
+    return response.data;
+  },
+  getExam: async (examId: number): Promise<FacultyExam> => {
+    const response = await apiClient.get<FacultyExam>(`/api/faculty/exams/${examId}/`);
+    return response.data;
+  },
+  updateQuestion: async (examId: number, questionId: number, question: Partial<ExamQuestion>): Promise<ExamQuestion> => {
+    const response = await apiClient.put<ExamQuestion>(`/api/faculty/exams/${examId}/questions/${questionId}/`, question);
+    return response.data;
+  },
+  publishExam: async (examId: number): Promise<FacultyExam> => {
+    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/publish/`, {});
     return response.data;
   },
 };

@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { LayoutDashboard, FileText, TrendingUp, Settings, User, Bell, Lock, Eye, EyeOff } from "lucide-react";
 import { authAccountApi, studentProfileApi } from "../../services/api";

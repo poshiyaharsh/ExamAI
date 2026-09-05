@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { Search, Filter, Plus, Edit, Trash2, Eye, Mail } from "lucide-react";
 import { Combobox } from "../components/ui/combobox";

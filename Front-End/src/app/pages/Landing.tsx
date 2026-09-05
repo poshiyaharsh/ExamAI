@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { Brain, FileText, TrendingUp, Users, Clock, CheckCircle, Star } from "lucide-react";
 import { ImageWithFallback } from "../components/figma/ImageWithFallback";

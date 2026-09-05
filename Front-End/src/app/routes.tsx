@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter } from "react-router-dom";
 import { Landing } from "./pages/Landing";
 import { Login } from "./pages/Login";
 import { ForgotPassword } from "./pages/ForgotPassword";
@@ -9,12 +9,15 @@ import { AdminSettings } from "./pages/AdminSettings";
 import { FacultyDashboard } from "./pages/FacultyDashboard";
 import { FacultyGeneratePaper } from "./pages/FacultyGeneratePaper";
 import { FacultyExamHistory } from "./pages/FacultyExamHistory";
+import { EditPaperPage } from "./pages/EditPaperPage";
 import { FacultySettings } from "./pages/FacultySettings";
 import { QuestionBank } from "./pages/QuestionBank";
 import { AdminQuestionBank } from "./pages/AdminQuestionBank";
 import { AdminFaculty } from "./pages/AdminFaculty";
 import { StudentDashboard } from "./pages/StudentDashboard";
-import { StudentExams } from "./pages/StudentExams";
+import { StudentExamsPage } from "./pages/StudentExamsPage";
+import { TakeExamPage } from "./pages/TakeExamPage";
+import { ResultsPage } from "./pages/ResultsPage";
 import { StudentPerformance } from "./pages/StudentPerformance";
 import { StudentSettings } from "./pages/StudentSettings";
 import { ExamInterface } from "./pages/ExamInterface";
@@ -119,6 +122,14 @@ export const router = createBrowserRouter([
     ),
   },
   {
+    path: "/faculty/exams/:id/edit",
+    Component: () => (
+      <FacultyOnly>
+        <EditPaperPage />
+      </FacultyOnly>
+    ),
+  },
+  {
     path: "/faculty/settings",
     Component: () => (
       <FacultyOnly>
@@ -142,7 +153,23 @@ export const router = createBrowserRouter([
     path: "/student/exams",
     Component: () => (
       <StudentOnly>
-        <StudentExams />
+        <StudentExamsPage />
+      </StudentOnly>
+    ),
+  },
+  {
+    path: "/student/exams/:id/take",
+    Component: () => (
+      <StudentOnly>
+        <TakeExamPage />
+      </StudentOnly>
+    ),
+  },
+  {
+    path: "/student/results/:id",
+    Component: () => (
+      <StudentOnly>
+        <ResultsPage />
       </StudentOnly>
     ),
   },

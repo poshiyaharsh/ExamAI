@@ -1,4 +1,4 @@
-import { Navigate, useLocation } from "react-router";
+import { Navigate, useLocation } from "react-router-dom";
 
 import type { UserRole } from "../../services/api";
 import { useAuth } from "../context/useAuth";

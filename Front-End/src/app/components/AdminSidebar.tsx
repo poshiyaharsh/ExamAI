@@ -1,4 +1,4 @@
-import { Link, NavLink } from "react-router";
+import { Link, NavLink } from "react-router-dom";
 import { motion } from "motion/react";
 import { LayoutDashboard, FileText, Users, Database, Settings, LogOut, User } from "lucide-react";
 

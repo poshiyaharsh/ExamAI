@@ -1,5 +1,6 @@
 import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { LayoutDashboard, FileText, History, Settings, Upload, Plus, Trash2, Sparkles, Download } from "lucide-react";
 import { toast } from "sonner";
@@ -64,6 +65,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function FacultyGeneratePaper() {
+  const navigate = useNavigate();
   const [examTitle, setExamTitle] = useState("");
   const [duration, setDuration] = useState("60");
   const [totalMarks, setTotalMarks] = useState("100");
@@ -154,6 +156,13 @@ export function FacultyGeneratePaper() {
     [questionTypes]
   );
 
+  const selectedQuestionTypeValues = useMemo(
+    () => Object.entries(questionTypes)
+      .filter(([, selected]) => selected)
+      .map(([key]) => ({ mcq: "mcq", subjective: "subjective", trueFalse: "truefalse", fillBlanks: "fillblank" }[key])),
+    [questionTypes]
+  );
+
   const cleanTopics = useMemo(() => topics.map((topic) => topic.trim()).filter(Boolean), [topics]);
 
   const handleAddTopic = () => {
@@ -179,7 +188,7 @@ export function FacultyGeneratePaper() {
     if (difficultyMix.Easy + difficultyMix.Medium + difficultyMix.Hard !== 100) {
       return "Difficulty percentages must equal exactly 100%.";
     }
-    if (!syllabusFile && !uploadedSyllabus) return "Please upload a syllabus file.";
+    if (!syllabusFile) return "Please upload a syllabus file.";
     if (syllabusFile) {
       const lowerName = syllabusFile.name.toLowerCase();
       if (!lowerName.endsWith(".pdf") && !lowerName.endsWith(".docx")) {
@@ -225,43 +234,31 @@ export function FacultyGeneratePaper() {
     setGenerationProgress(5);
 
     try {
-      let syllabus = uploadedSyllabus;
-      if (!syllabus && syllabusFile) {
-        setGenerationProgress(15);
-        syllabus = (await facultyPaperApi.uploadSyllabus(syllabusFile, setUploadProgress)).data;
-        setUploadedSyllabus(syllabus);
-        setGenerationProgress(45);
-      }
-
-      if (!syllabus) {
+      if (!syllabusFile) {
         throw new Error("Please upload a syllabus file.");
       }
-      console.log("[GeneratePaper] Uploaded syllabus available", { uploadId: syllabus.id });
-
-      setGenerationProgress(65);
-      const generationPayload = {
-        syllabus_upload_id: syllabus.id,
+      setGenerationProgress(25);
+      const response = await facultyPaperApi.generateExam({
         title: examTitle.trim(),
-        duration: Number(duration),
-        total_marks: Number(totalMarks),
-        model: aiModel,
+        durationMinutes: Number(duration),
+        totalMarks: Number(totalMarks),
         topics: cleanTopics,
-        question_types: selectedQuestionTypes,
-        difficulty_distribution: difficultyMix,
-      };
-      console.log("[GeneratePaper] Building generation request", {
-        uploadId: generationPayload.syllabus_upload_id,
-        model: generationPayload.model,
-        topicCount: generationPayload.topics.length,
-        questionTypeCount: generationPayload.question_types.length,
+        questionTypes: selectedQuestionTypeValues,
+        difficultyDistribution: {
+          easy: difficultyMix.Easy,
+          medium: difficultyMix.Medium,
+          hard: difficultyMix.Hard,
+        },
+        aiModel,
+        syllabus: syllabusFile,
       });
-      console.log("[GeneratePaper] Sending POST /api/faculty/generate-paper");
-      const response = await facultyPaperApi.generatePaper(generationPayload);
-      console.log("[GeneratePaper] Response received", { status: response.status, paperId: response.paper?.id ?? response.data?.id });
       setGenerationProgress(100);
-      setPreviewPaper(response.paper ?? response.data);
-      setGenerationSource({ provider: response.provider, model: response.model });
-      toast.success(`Paper generated with ${response.provider}.`);
+      if (response.warning) {
+        toast.warning(`${response.warning} Computed total: ${response.actual_total_marks} marks.`);
+      } else {
+        toast.success(`Exam paper generated: ${response.actual_total_marks} marks.`);
+      }
+      navigate(`/faculty/exams/${response.exam_id}/edit`);
     } catch (requestError) {
       const message = requestError instanceof Error && !axios.isAxiosError(requestError)
         ? requestError.message
@@ -529,7 +526,7 @@ export function FacultyGeneratePaper() {
               className="w-full px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Sparkles className="w-5 h-5" />
-              {isGenerating ? "Generating..." : "Generate Paper"}
+              {isGenerating ? `Generating with ${aiModel}… this can take up to a minute.` : "Generate Paper"}
             </button>
           </div>
         </div>

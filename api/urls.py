@@ -1,5 +1,14 @@
 from django.urls import path
 
+from .exam_management import ExamDetailView, ExamListView, PublishExamView, QuestionUpdateView
+from .generate_paper import GeneratePaperView
+from .student_exam import (
+    SaveAnswerView,
+    StartAttemptView,
+    StudentAttemptDetailView,
+    StudentExamListView,
+    SubmitAttemptView,
+)
 from .views import (
     AuthMeAPIView,
     ChangePasswordAPIView,
@@ -13,6 +22,16 @@ from .views import (
 
 urlpatterns = [
     path('test/', TestAPIView.as_view(), name='test-api'),
+    path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
+    path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
+    path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
+    path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
+    path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
+    path('student/exams/', StudentExamListView.as_view(), name='student-exam-list'),
+    path('student/exams/<int:exam_id>/start/', StartAttemptView.as_view(), name='student-exam-start'),
+    path('student/attempts/<int:attempt_id>/save/', SaveAnswerView.as_view(), name='student-answer-save'),
+    path('student/attempts/<int:attempt_id>/submit/', SubmitAttemptView.as_view(), name='student-attempt-submit'),
+    path('student/attempts/<int:attempt_id>/', StudentAttemptDetailView.as_view(), name='student-attempt-detail'),
     path('departments', DepartmentListAPIView.as_view(), name='department-list-no-slash'),
     path('departments/', DepartmentListAPIView.as_view(), name='department-list'),
     path('auth/me', AuthMeAPIView.as_view(), name='auth-me-no-slash'),

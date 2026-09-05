@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import { Calendar, CheckCircle, Clock, FileText, Filter, LayoutDashboard, Search, Settings, TrendingUp } from "lucide-react";
 import { studentExamApi, type StudentExamSummary } from "../../services/api";

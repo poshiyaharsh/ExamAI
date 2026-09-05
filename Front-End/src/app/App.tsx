@@ -1,4 +1,4 @@
-import { RouterProvider } from 'react-router';
+import { RouterProvider } from 'react-router-dom';
 import { ThemeProvider } from 'next-themes';
 import { router } from './routes';
 import { AuthProvider } from './context/AuthContext';

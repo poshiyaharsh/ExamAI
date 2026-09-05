@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { Brain, Eye, EyeOff, Lock, Mail, Shield } from "lucide-react";
 import axios from "axios";
