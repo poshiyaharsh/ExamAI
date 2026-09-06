@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 _request_payload_logged = False
 
 
-def call_ollama(model: str, prompt: str, timeout=180, temperature=0.4, num_predict=4096) -> str:
+def call_ollama(model: str, prompt: str, timeout=180, temperature=0.4, num_predict=2048) -> str:
     global _request_payload_logged
     logger.info('Calling Ollama model tag=%s url=%s', model, OLLAMA_GENERATE_URL)
     payload_data = {
@@ -18,7 +18,12 @@ def call_ollama(model: str, prompt: str, timeout=180, temperature=0.4, num_predi
         'prompt': prompt,
         'stream': False,
         'format': 'json',
-        'options': {'temperature': temperature, 'num_predict': num_predict},
+        'keep_alive': '30m',
+        'options': {
+            'temperature': temperature,
+            'num_predict': num_predict,
+            'num_ctx': 4096,
+        },
     }
     if not _request_payload_logged:
         logger.warning('Ollama request payload: %s', payload_data)

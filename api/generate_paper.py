@@ -88,7 +88,7 @@ def _call_type_batch(question_type, count, model_key, topics, difficulty_distrib
     for temperature in (0.4, 0.2):
         try:
             logger.info('Calling Ollama model key=%s tag=%s', model_key, model_tag)
-            raw_response = call_ollama(model_tag, prompt, temperature=temperature, num_predict=4096)
+            raw_response = call_ollama(model_tag, prompt, temperature=temperature, num_predict=2048)
             generated_data = parse_json_safely(raw_response)
             questions = _validated_type_questions(generated_data, question_type)
             logger.warning(
