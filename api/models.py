@@ -41,7 +41,9 @@ class PasswordResetOTP(models.Model):
 
 class Exam(models.Model):
 	class Status(models.TextChoices):
+		GENERATING = 'generating', 'Generating'
 		DRAFT = 'draft', 'Draft'
+		FAILED = 'failed', 'Failed'
 		PUBLISHED = 'published', 'Published'
 		CLOSED = 'closed', 'Closed'
 
@@ -55,6 +57,7 @@ class Exam(models.Model):
 	ai_model_used = models.CharField(max_length=100)
 	source_syllabus_text = models.TextField(blank=True, default='')
 	status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+	error_message = models.TextField(blank=True, default='')
 	starts_at = models.DateTimeField(null=True, blank=True)
 	ends_at = models.DateTimeField(null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)

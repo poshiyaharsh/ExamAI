@@ -8,6 +8,7 @@ import { AdminStudents } from "./pages/AdminStudents";
 import { AdminSettings } from "./pages/AdminSettings";
 import { FacultyDashboard } from "./pages/FacultyDashboard";
 import { FacultyGeneratePaper } from "./pages/FacultyGeneratePaper";
+import { FacultyGeneratingPaper } from "./pages/FacultyGeneratingPaper";
 import { FacultyExamHistory } from "./pages/FacultyExamHistory";
 import { EditPaperPage } from "./pages/EditPaperPage";
 import { FacultySettings } from "./pages/FacultySettings";
@@ -118,6 +119,14 @@ export const router = createBrowserRouter([
     Component: () => (
       <FacultyOnly>
         <FacultyExamHistory />
+      </FacultyOnly>
+    ),
+  },
+  {
+    path: "/faculty/exams/:id/generating",
+    Component: () => (
+      <FacultyOnly>
+        <FacultyGeneratingPaper />
       </FacultyOnly>
     ),
   },

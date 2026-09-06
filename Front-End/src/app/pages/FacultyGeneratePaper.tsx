@@ -19,11 +19,11 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/faculty/settings" }
 ];
 
-const aiModels: AiModel[] = ["ollama-qwen2.5-3b", "ollama-llama3.2-3b", "ollama-phi3-mini"];
+const aiModels: AiModel[] = ["qwen2.5-3b", "llama3.2-3b", "phi3-mini"];
 const aiModelLabels: Record<AiModel, string> = {
-  "ollama-qwen2.5-3b": "Qwen 2.5 3B (Recommended - Local)",
-  "ollama-llama3.2-3b": "Llama 3.2 3B (Local)",
-  "ollama-phi3-mini": "Phi-3 Mini (Local)",
+  "qwen2.5-3b": "Qwen 2.5 3B (Recommended - Local)",
+  "llama3.2-3b": "Llama 3.2 3B (Local)",
+  "phi3-mini": "Phi-3 Mini (Local)",
 };
 const draftKey = "faculty-paper-duplicate-draft";
 
@@ -33,6 +33,8 @@ const questionTypeLabels: Record<string, PaperQuestionType> = {
   trueFalse: "True/False",
   fillBlanks: "Fill in the Blanks",
 };
+const difficultyKeys = ["Easy", "Medium", "Hard"] as const;
+type DifficultyKey = typeof difficultyKeys[number];
 
 function extractApiErrorMessage(error: unknown, fallback: string) {
   if (!axios.isAxiosError(error)) return fallback;
@@ -77,7 +79,7 @@ export function FacultyGeneratePaper() {
     trueFalse: false,
     fillBlanks: false
   });
-  const [aiModel, setAiModel] = useState<AiModel>("ollama-qwen2.5-3b");
+  const [aiModel, setAiModel] = useState<AiModel>("qwen2.5-3b");
   const [ollamaStatus, setOllamaStatus] = useState<"loading" | "connected" | "not-running" | "model-missing">("loading");
   const [ollamaStatusMessage, setOllamaStatusMessage] = useState("Checking Ollama...");
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
@@ -98,7 +100,7 @@ export function FacultyGeneratePaper() {
       setExamTitle(draft.title || "");
       setDuration(String(draft.duration || 60));
       setTotalMarks(String(draft.total_marks || 100));
-      setAiModel(aiModels.includes(draft.model as AiModel) ? draft.model as AiModel : "ollama-qwen2.5-3b");
+      setAiModel(aiModels.includes(draft.model as AiModel) ? draft.model as AiModel : "qwen2.5-3b");
       setTopics(draft.topics?.length ? draft.topics : [""]);
       if (draft.difficulty_distribution) {
         setDifficultyMix({
@@ -179,6 +181,23 @@ export function FacultyGeneratePaper() {
     setTopics(newTopics);
   };
 
+  const handleDifficultyChange = (level: DifficultyKey, rawValue: string) => {
+    const value = Math.max(0, Math.min(100, Number.parseInt(rawValue, 10) || 0));
+    const otherLevels = difficultyKeys.filter((difficulty) => difficulty !== level);
+    const otherTotal = otherLevels.reduce((sum, difficulty) => sum + difficultyMix[difficulty], 0);
+    const remaining = 100 - value;
+    const nextMix = { ...difficultyMix, [level]: value };
+
+    if (otherTotal === 0) {
+      nextMix[otherLevels[0]] = Math.floor(remaining / 2);
+      nextMix[otherLevels[1]] = remaining - nextMix[otherLevels[0]];
+    } else {
+      nextMix[otherLevels[0]] = Math.round(remaining * difficultyMix[otherLevels[0]] / otherTotal);
+      nextMix[otherLevels[1]] = remaining - nextMix[otherLevels[0]];
+    }
+    setDifficultyMix(nextMix);
+  };
+
   const validateForm = () => {
     if (!examTitle.trim()) return "Exam Title is required.";
     if (Number(duration) <= 0) return "Duration must be greater than 0.";
@@ -238,6 +257,21 @@ export function FacultyGeneratePaper() {
         throw new Error("Please upload a syllabus file.");
       }
       setGenerationProgress(25);
+      const payloadSummary = {
+        title: examTitle.trim(),
+        duration_minutes: Number(duration),
+        total_marks: Number(totalMarks),
+        topics: cleanTopics,
+        question_types: selectedQuestionTypeValues,
+        difficulty_distribution: {
+          easy: difficultyMix.Easy,
+          medium: difficultyMix.Medium,
+          hard: difficultyMix.Hard,
+        },
+        ai_model: aiModel,
+        syllabus: syllabusFile.name,
+      };
+      console.log("[GeneratePaper] POST payload", payloadSummary);
       const response = await facultyPaperApi.generateExam({
         title: examTitle.trim(),
         durationMinutes: Number(duration),
@@ -253,12 +287,8 @@ export function FacultyGeneratePaper() {
         syllabus: syllabusFile,
       });
       setGenerationProgress(100);
-      if (response.warning) {
-        toast.warning(`${response.warning} Computed total: ${response.actual_total_marks} marks.`);
-      } else {
-        toast.success(`Exam paper generated: ${response.actual_total_marks} marks.`);
-      }
-      navigate(`/faculty/exams/${response.exam_id}/edit`);
+      toast.success(`Generation started for ${response.requested_total_marks} marks.`);
+      navigate(`/faculty/exams/${response.exam_id}/generating`);
     } catch (requestError) {
       const message = requestError instanceof Error && !axios.isAxiosError(requestError)
         ? requestError.message
@@ -389,7 +419,9 @@ export function FacultyGeneratePaper() {
             <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
               <h3 className="font-semibold mb-4">Difficulty Distribution</h3>
               <div className="space-y-4">
-                {Object.entries(difficultyMix).map(([level, value]) => (
+                {difficultyKeys.map((level) => {
+                  const value = difficultyMix[level];
+                  return (
                   <div key={level}>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-sm font-medium">{level}</label>
@@ -400,14 +432,16 @@ export function FacultyGeneratePaper() {
                       min="0"
                       max="100"
                       value={value}
-                      onChange={(e) => setDifficultyMix({
-                        ...difficultyMix,
-                        [level]: parseInt(e.target.value)
-                      })}
+                      onChange={(e) => handleDifficultyChange(level, e.target.value)}
                       className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
                     />
                   </div>
-                ))}
+                    );
+                  })}
+                  {(() => {
+                    const total = difficultyKeys.reduce((sum, level) => sum + difficultyMix[level], 0);
+                    return <p className={`text-sm ${total === 100 ? "text-muted-foreground" : "text-red-600"}`}>Total: {total}%</p>;
+                  })()}
               </div>
             </div>
 

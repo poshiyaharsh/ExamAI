@@ -110,7 +110,7 @@ export type FacultyProfileResponse = {
   data: FacultyProfileData;
 };
 
-export type AiModel = "ollama-qwen2.5-3b" | "ollama-llama3.2-3b" | "ollama-phi3-mini";
+export type AiModel = "qwen2.5-3b" | "llama3.2-3b" | "phi3-mini";
 export type PaperQuestionType = "MCQ" | "Subjective" | "True/False" | "Fill in the Blanks";
 export type PaperDifficulty = "Easy" | "Medium" | "Hard";
 
@@ -258,7 +258,8 @@ export type FacultyExam = {
   question_types: string[];
   ai_model_used: string;
   source_syllabus_text?: string;
-  status: "draft" | "published" | "closed";
+  status: "generating" | "draft" | "failed" | "published" | "closed";
+  error_message?: string;
   starts_at: string | null;
   ends_at: string | null;
   created_at: string;
@@ -685,13 +686,12 @@ export const facultyPaperApi = {
     payload.topics.forEach((topic) => formData.append("topics", topic));
     payload.questionTypes.forEach((questionType) => formData.append("question_types", questionType));
     formData.append("difficulty_distribution", JSON.stringify(payload.difficultyDistribution));
-    const modelMap: Record<AiModel, string> = {
-      "ollama-qwen2.5-3b": "qwen2.5-3b",
-      "ollama-llama3.2-3b": "llama3.2-3b",
-      "ollama-phi3-mini": "phi3-mini",
-    };
-    formData.append("ai_model", modelMap[payload.aiModel]);
+    console.log("[facultyPaperApi.generateExam] ai_model key", payload.aiModel);
+    formData.append("ai_model", payload.aiModel);
     formData.append("syllabus", payload.syllabus);
+    for (const [key, value] of formData.entries()) {
+      console.log("[facultyPaperApi.generateExam] FormData entry", key, value instanceof File ? value.name : value);
+    }
     const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 190000,

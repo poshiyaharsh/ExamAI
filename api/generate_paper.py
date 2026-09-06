@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 
 from django.db import transaction
 from rest_framework import status
@@ -18,7 +19,7 @@ from .utils.validate_paper import compute_question_counts, validate_and_fix_pape
 
 logger = logging.getLogger(__name__)
 
-MODEL_ALIASES = {
+MODEL_MAP = {
     'qwen2.5-3b': 'qwen2.5:3b-instruct',
     'llama3.2-3b': 'llama3.2:3b',
     'phi3-mini': 'phi3:mini',
@@ -73,7 +74,8 @@ def _validated_type_questions(data, question_type):
     return [question for question in fixed_data['questions'] if question['type'] == question_type]
 
 
-def _call_type_batch(question_type, count, model_name, topics, difficulty_distribution, syllabus_text):
+def _call_type_batch(question_type, count, model_key, topics, difficulty_distribution, syllabus_text):
+    model_tag = MODEL_MAP[model_key]
     prompt = build_type_generation_prompt(
         question_type,
         count,
@@ -85,7 +87,8 @@ def _call_type_batch(question_type, count, model_name, topics, difficulty_distri
     last_error = None
     for temperature in (0.4, 0.2):
         try:
-            raw_response = call_ollama(model_name, prompt, temperature=temperature, num_predict=4096)
+            logger.info('Calling Ollama model key=%s tag=%s', model_key, model_tag)
+            raw_response = call_ollama(model_tag, prompt, temperature=temperature, num_predict=4096)
             generated_data = parse_json_safely(raw_response)
             questions = _validated_type_questions(generated_data, question_type)
             logger.warning(
@@ -144,38 +147,13 @@ def _generate_type_questions(question_type, count, model_name, topics, difficult
     return questions
 
 
-class GeneratePaperView(APIView):
-    permission_classes = [IsAuthenticated, IsFacultyUser]
-    parser_classes = [MultiPartParser, FormParser]
-
-    def post(self, request):
-        try:
-            title = str(request.data.get('title', '')).strip()
-            duration_minutes = int(request.data.get('duration_minutes', 0))
-            total_marks = int(request.data.get('total_marks', 0))
-            topics = _as_list(request.data.get('topics'), request.data, 'topics')
-            question_types = _as_list(request.data.get('question_types'), request.data, 'question_types')
-            difficulty_distribution = _as_dict(request.data.get('difficulty_distribution', {}))
-            model_alias = str(request.data.get('ai_model', '')).strip()
-            model_name = MODEL_ALIASES.get(model_alias)
-            if not title or duration_minutes <= 0 or total_marks <= 0:
-                raise ValueError('title, duration_minutes, and total_marks must be valid positive values.')
-            if not topics or not question_types:
-                raise ValueError('topics and question_types are required.')
-            if not model_name:
-                raise ValueError('ai_model must be qwen2.5-3b, llama3.2-3b, or phi3-mini.')
-        except (TypeError, ValueError) as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        syllabus_file = request.FILES.get('syllabus')
-        syllabus_text = ''
-        if syllabus_file:
-            try:
-                syllabus_text = extract_syllabus_text(syllabus_file)
-            except ValueError as exc:
-                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        counts, _ = compute_question_counts(question_types, total_marks)
+def _run_generation(exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text):
+    try:
+        counts, planned_total_marks = compute_question_counts(question_types, total_marks)
+        logger.debug(
+            'Paper generation counts exam_id=%s counts=%s planned_total_marks=%s requested_total_marks=%s',
+            exam_id, counts, planned_total_marks, total_marks,
+        )
         generated_questions = []
         for question_type in ('mcq', 'truefalse', 'fillblank', 'subjective'):
             requested_count = counts.get(question_type, 0)
@@ -190,57 +168,124 @@ class GeneratePaperView(APIView):
                 ))
 
         if not generated_questions:
-            return Response(
-                {'detail': 'Unable to generate a valid exam paper.'},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            raise ValueError('Unable to generate a valid exam paper.')
 
         actual_total_marks = sum(question['marks'] for question in generated_questions)
-        warning = None
-        if abs(actual_total_marks - total_marks) / total_marks > 0.10:
-            warning = 'Some questions could not be generated reliably; you can add more manually before publishing.'
+        logger.debug(
+            'Paper generation result exam_id=%s actual_total_marks=%s requested_total_marks=%s question_count=%s',
+            exam_id, actual_total_marks, total_marks, len(generated_questions),
+        )
+        with transaction.atomic():
+            exam = Exam.objects.select_for_update().get(id=exam_id)
+            for question_order, generated_question in enumerate(generated_questions, start=1):
+                Question.objects.create(
+                    exam=exam,
+                    order=question_order,
+                    question_type=generated_question['type'],
+                    difficulty=generated_question['difficulty'],
+                    text=generated_question['text'],
+                    options=generated_question.get('options'),
+                    correct_answer=generated_question.get('correct_answer'),
+                    model_answer=generated_question.get('model_answer') or '',
+                    marks=generated_question['marks'],
+                    topic=generated_question.get('topic') or '',
+                )
+            exam.total_marks = actual_total_marks
+            exam.status = Exam.Status.DRAFT
+            exam.error_message = ''
+            exam.save(update_fields=['total_marks', 'status', 'error_message', 'updated_at'])
+    except Exception as exc:
+        logger.exception('Background paper generation failed exam_id=%s', exam_id)
+        Exam.objects.filter(id=exam_id).update(
+            status=Exam.Status.FAILED,
+            error_message=str(exc),
+        )
+
+
+class GeneratePaperView(APIView):
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        safe_payload = {
+            key: [value.name if hasattr(value, 'name') else value for value in values]
+            for key, values in request.data.lists()
+        }
+        logger.debug('Received payload: %s', safe_payload)
+        logger.debug('Received files: %s', {key: value.name for key, value in request.FILES.items()})
+        try:
+            title = str(request.data.get('title', '')).strip()
+            duration_minutes = int(request.data.get('duration_minutes', 0))
+            total_marks = int(request.data.get('total_marks', 0))
+            topics = _as_list(request.data.get('topics'), request.data, 'topics')
+            question_types = _as_list(request.data.get('question_types'), request.data, 'question_types')
+            difficulty_distribution = _as_dict(request.data.get('difficulty_distribution', {}))
+            model_alias = str(request.data.get('ai_model', '')).strip()
+            model_name = model_alias
+            if not title or duration_minutes <= 0 or total_marks <= 0:
+                raise ValueError('title, duration_minutes, and total_marks must be valid positive values.')
+            if not topics or not question_types:
+                raise ValueError('topics and question_types are required.')
+            if model_name not in MODEL_MAP:
+                raise ValueError('ai_model must be qwen2.5-3b, llama3.2-3b, or phi3-mini.')
+        except (TypeError, ValueError) as exc:
+            logger.warning('GeneratePaperView rejected payload: %s', exc)
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        syllabus_file = request.FILES.get('syllabus')
+        syllabus_text = ''
+        if syllabus_file:
+            try:
+                syllabus_file.seek(0)
+                logger.debug(
+                    'Preparing syllabus extraction name=%s size=%s position=%s',
+                    syllabus_file.name,
+                    syllabus_file.size,
+                    syllabus_file.tell(),
+                )
+                syllabus_text = extract_syllabus_text(syllabus_file)
+            except ValueError as exc:
+                logger.warning('GeneratePaperView rejected syllabus: %s', exc)
+                return Response(
+                    {'error': str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            logger.debug('No syllabus uploaded; generation will use topics only.')
 
         try:
-            with transaction.atomic():
-                exam = Exam.objects.create(
-                    title=title,
-                    created_by=request.user,
-                    duration_minutes=duration_minutes,
-                    total_marks=actual_total_marks,
-                    topics=topics,
-                    difficulty_distribution=difficulty_distribution,
-                    question_types=question_types,
-                    ai_model_used=model_name,
-                    source_syllabus_text=syllabus_text,
-                    status=Exam.Status.DRAFT,
-                )
-                for question_order, generated_question in enumerate(generated_questions, start=1):
-                    Question.objects.create(
-                        exam=exam,
-                        order=question_order,
-                        question_type=generated_question['type'],
-                        difficulty=generated_question['difficulty'],
-                        text=generated_question['text'],
-                        options=generated_question.get('options'),
-                        correct_answer=generated_question.get('correct_answer'),
-                        model_answer=generated_question.get('model_answer') or '',
-                        marks=generated_question['marks'],
-                        topic=generated_question.get('topic') or '',
-                    )
+            exam = Exam.objects.create(
+                title=title,
+                created_by=request.user,
+                duration_minutes=duration_minutes,
+                total_marks=total_marks,
+                topics=topics,
+                difficulty_distribution=difficulty_distribution,
+                question_types=question_types,
+                ai_model_used=model_name,
+                source_syllabus_text=syllabus_text,
+                status=Exam.Status.GENERATING,
+            )
         except Exception as exc:
+            logger.exception('Generated paper could not be initialized')
             return Response(
-                {'detail': f'Generated paper could not be saved: {exc}'},
+                {'detail': f'Generated paper could not be initialized: {exc}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        threading.Thread(
+            target=_run_generation,
+            args=(exam.id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text),
+            daemon=True,
+        ).start()
 
         return Response(
             {
                 'exam_id': exam.id,
                 'status': exam.status,
-                'question_count': len(generated_questions),
+                'question_count': 0,
                 'requested_total_marks': total_marks,
-                'actual_total_marks': actual_total_marks,
-                **({'warning': warning} if warning else {}),
+                'actual_total_marks': total_marks,
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_202_ACCEPTED,
         )

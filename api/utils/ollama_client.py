@@ -12,6 +12,7 @@ _request_payload_logged = False
 
 def call_ollama(model: str, prompt: str, timeout=180, temperature=0.4, num_predict=4096) -> str:
     global _request_payload_logged
+    logger.info('Calling Ollama model tag=%s url=%s', model, OLLAMA_GENERATE_URL)
     payload_data = {
         'model': model,
         'prompt': prompt,
@@ -36,15 +37,17 @@ def call_ollama(model: str, prompt: str, timeout=180, temperature=0.4, num_predi
     except HTTPError as exc:
         body = exc.read().decode('utf-8', errors='replace').strip()
         detail = f': {body}' if body else ''
-        raise RuntimeError(f'Ollama returned HTTP {exc.code}{detail}') from exc
+        raise RuntimeError(f'Ollama returned HTTP {exc.code} for model tag "{model}"{detail}') from exc
     except URLError as exc:
-        raise RuntimeError(f'Unable to connect to Ollama: {exc.reason}') from exc
+        raise RuntimeError(f'Unable to connect to Ollama for model tag "{model}": {exc.reason}') from exc
+    except TimeoutError as exc:
+        raise RuntimeError(f'Ollama request timed out for model tag "{model}".') from exc
     except json.JSONDecodeError as exc:
-        raise RuntimeError('Ollama returned an invalid JSON response.') from exc
+        raise RuntimeError(f'Ollama returned an invalid JSON response for model tag "{model}".') from exc
 
     result = response_data.get('response')
     if not isinstance(result, str) or not result.strip():
-        raise RuntimeError('Ollama response did not contain generated text.')
+        raise RuntimeError(f'Ollama response for model tag "{model}" did not contain generated text.')
     return result
 
 
