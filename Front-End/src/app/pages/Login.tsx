@@ -206,7 +206,7 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary via-secondary to-primary flex items-center justify-center p-6">
+    <div className="min-h-screen bg-gradient-to-br from-primary via-secondary to-primary flex items-center justify-center p-3 sm:p-5">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -214,19 +214,19 @@ export function Login() {
         className="w-full max-w-2xl"
       >
         {/* Logo */}
-        <div className="text-center mb-8">
-          <Link to="/">
-            <div className="inline-flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center">
-                <Brain className="w-7 h-7 text-primary" />
+        <div className="text-center mb-3 sm:mb-4">
+          <Link to="/" className="inline-block">
+            <div className="inline-flex items-center gap-2 mb-1.5">
+              <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center shadow-sm">
+                <Brain className="w-5 h-5 text-primary" />
               </div>
-              <span className="text-2xl font-bold text-white">ExamAI</span>
+              <span className="text-xl sm:text-2xl font-bold text-white tracking-tight">ExamAI</span>
             </div>
           </Link>
-          <h1 className="text-3xl font-bold text-white mb-2">
+          <h1 className="text-2xl sm:text-3xl font-bold text-white">
             {isLogin ? "Welcome Back" : "Create Your Account"}
           </h1>
-          <p className="text-indigo-100">
+          <p className="text-xs sm:text-sm text-indigo-100 mt-0.5">
             {isLogin ? "Sign in to continue to ExamAI Platform" : "Join the AI-powered exam management platform"}
           </p>
         </div>
@@ -236,16 +236,16 @@ export function Login() {
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2 }}
-          className="bg-white rounded-2xl shadow-2xl p-8 max-h-[85vh] overflow-y-auto"
+          className="bg-white rounded-2xl shadow-2xl p-5 sm:p-7"
         >
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-3.5">
             {/* Role Selector */}
             <div>
-              <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
-                <Shield className="w-4 h-4 text-primary" />
+              <label className="block text-xs sm:text-sm font-medium mb-1.5 text-foreground flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-primary" />
                 Select Your Role
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 {[
                   { value: "student", label: "Student", icon: GraduationCap },
                   { value: "faculty", label: "Faculty", icon: Briefcase },
@@ -254,17 +254,17 @@ export function Login() {
                   <motion.button
                     key={roleOption.value}
                     type="button"
-                    onClick={() => setRole(roleOption.value)}
+                    onClick={() => setRole(roleOption.value as UserRole)}
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    className={`p-4 rounded-lg border-2 transition-all ${
+                    className={`py-2 px-3 rounded-lg border-2 transition-all flex flex-col items-center justify-center ${
                       role === roleOption.value
                         ? "border-primary bg-primary/5"
                         : "border-border hover:border-primary/50"
                     }`}
                   >
-                    <roleOption.icon className={`w-6 h-6 mx-auto mb-2 ${role === roleOption.value ? "text-primary" : "text-muted-foreground"}`} />
-                    <div className={`text-sm font-medium ${role === roleOption.value ? "text-primary" : "text-foreground"}`}>
+                    <roleOption.icon className={`w-5 h-5 mx-auto mb-1 ${role === roleOption.value ? "text-primary" : "text-muted-foreground"}`} />
+                    <div className={`text-xs sm:text-sm font-medium ${role === roleOption.value ? "text-primary" : "text-foreground"}`}>
                       {roleOption.label}
                     </div>
                   </motion.button>
@@ -274,15 +274,15 @@ export function Login() {
 
             {!isLogin && (role === "student" || role === "faculty") && (
               <div>
-                <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-primary" />
+                <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-primary" />
                   Institution
                 </label>
                 <select
                   value={selectedInstitutionId}
                   onChange={(event) => setSelectedInstitutionId(event.target.value)}
                   disabled={institutionsLoading}
-                  className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                  className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   required
                 >
                   <option value="">{institutionsLoading ? "Loading institutions..." : "Select institution"}</option>
@@ -302,38 +302,36 @@ export function Login() {
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-5"
+                  transition={{ duration: 0.2 }}
+                  className="grid grid-cols-2 gap-3"
                 >
                   {/* Full Name */}
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
-                        <User className="w-4 h-4 text-primary" />
-                        First Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="John"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all"
-                        required={!isLogin}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2 text-foreground">
-                        Last Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Doe"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all"
-                        required={!isLogin}
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-primary" />
+                      First Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="John"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                      required={!isLogin}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground">
+                      Last Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Doe"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                      required={!isLogin}
+                    />
                   </div>
                 </motion.div>
               )}
@@ -341,8 +339,8 @@ export function Login() {
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
-                <Mail className="w-4 h-4 text-primary" />
+              <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-primary" />
                 Email Address
               </label>
               <input
@@ -350,70 +348,68 @@ export function Login() {
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                 required
               />
             </div>
 
-            {/* Password */}
-            <div>
-              <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
-                <Lock className="w-4 h-4 text-primary" />
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all pr-12"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-              {!isLogin && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Must be at least 8 characters with uppercase, lowercase, and numbers
-                </p>
-              )}
-            </div>
-
-            {/* Confirm Password (Signup only) */}
-            {!isLogin && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-              >
-                <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-primary" />
-                  Confirm Password
+            {/* Password & Confirm Password */}
+            <div className={!isLogin ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
+              <div>
+                <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-primary" />
+                  Password
                 </label>
                 <div className="relative">
                   <input
-                    type={showConfirmPassword ? "text" : "password"}
+                    type={showPassword ? "text" : "password"}
                     placeholder="••••••••"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary transition-all pr-12"
-                    required={!isLogin}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all pr-10"
+                    required
                   />
                   <button
                     type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
-                    {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-              </motion.div>
+              </div>
+
+              {!isLogin && (
+                <div>
+                  <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-primary" />
+                    Confirm Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all pr-10"
+                      required={!isLogin}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {!isLogin && (
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                Must be at least 8 characters with uppercase, lowercase, and numbers
+              </p>
             )}
 
             {/* Terms and Conditions (Signup only) */}
@@ -421,26 +417,26 @@ export function Login() {
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="flex items-start gap-3 p-4 bg-muted/30 rounded-lg"
+                className="flex items-center gap-2.5 p-2.5 bg-muted/30 rounded-lg"
               >
                 <input
                   type="checkbox"
                   id="terms"
                   checked={acceptTerms}
                   onChange={(e) => setAcceptTerms(e.target.checked)}
-                  className="mt-1 w-4 h-4 accent-primary cursor-pointer"
+                  className="w-4 h-4 accent-primary shrink-0 cursor-pointer"
                   required={!isLogin}
                 />
-                <label htmlFor="terms" className="text-sm text-muted-foreground cursor-pointer">
+                <label htmlFor="terms" className="text-xs text-muted-foreground cursor-pointer leading-tight">
                   I agree to the{" "}
-                  <a href="#" className="text-primary hover:text-secondary transition-colors">
+                  <a href="#" className="text-primary hover:text-secondary transition-colors font-medium">
                     Terms of Service
                   </a>{" "}
                   and{" "}
-                  <a href="#" className="text-primary hover:text-secondary transition-colors">
+                  <a href="#" className="text-primary hover:text-secondary transition-colors font-medium">
                     Privacy Policy
                   </a>
-                  . I understand this platform is for educational purposes and will be used responsibly.
+                  .
                 </label>
               </motion.div>
             )}
@@ -450,7 +446,7 @@ export function Login() {
               <div className="flex justify-end">
                 <Link
                   to="/forgot-password"
-                  className="text-sm text-primary hover:text-secondary transition-colors"
+                  className="text-xs sm:text-sm text-primary hover:text-secondary transition-colors"
                 >
                   Forgot Password?
                 </Link>
@@ -458,13 +454,13 @@ export function Login() {
             )}
 
             {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2 text-xs sm:text-sm text-red-700">
                 {error}
               </div>
             )}
 
             {successMessage && (
-              <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              <div className="rounded-lg border border-green-200 bg-green-50 px-3.5 py-2 text-xs sm:text-sm text-green-700">
                 {successMessage}
               </div>
             )}
@@ -475,19 +471,19 @@ export function Login() {
               disabled={loading}
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.99 }}
-              className="w-full py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center justify-center gap-2 font-medium disabled:cursor-not-allowed disabled:opacity-70"
+              className="w-full py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center justify-center gap-2 text-sm sm:text-base font-medium disabled:cursor-not-allowed disabled:opacity-70 shadow-md"
             >
-              {!isLogin && <CheckCircle2 className="w-5 h-5" />}
+              {!isLogin && <CheckCircle2 className="w-4 h-4" />}
               {loading ? "Please wait..." : isLogin ? "Sign In" : "Create Account"}
             </motion.button>
 
             {/* Toggle Login/Register */}
-            <div className="text-center text-sm text-muted-foreground">
+            <div className="text-center text-xs sm:text-sm text-muted-foreground pt-0.5">
               {isLogin ? "Don't have an account? " : "Already have an account? "}
               <button
                 type="button"
                 onClick={() => setIsLogin(!isLogin)}
-                className="text-primary hover:text-secondary transition-colors font-medium"
+                className="text-primary hover:text-secondary transition-colors font-semibold"
               >
                 {isLogin ? "Sign up" : "Sign in"}
               </button>
@@ -496,8 +492,8 @@ export function Login() {
         </motion.div>
 
         {/* Back to Home */}
-        <div className="text-center mt-6">
-          <Link to="/" className="text-white hover:text-indigo-100 transition-colors">
+        <div className="text-center mt-3 sm:mt-4">
+          <Link to="/" className="text-xs sm:text-sm text-white hover:text-indigo-100 transition-colors">
             ← Back to Home
           </Link>
         </div>
