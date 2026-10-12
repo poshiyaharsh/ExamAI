@@ -598,7 +598,7 @@ export function AdminStudents() {
 
   return (
     <DashboardLayout userRole="Admin">
-      <div className="space-y-6">
+      <div className="space-y-6 max-w-full min-w-0">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -764,20 +764,21 @@ export function AdminStudents() {
           {error && <p className="text-xs sm:text-sm text-destructive">{error}</p>}
         </div>
 
-        {/* Students Table */}
-        <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+        {/* Students Table & Mobile Cards */}
+        <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden w-full">
+          {/* Desktop & Tablet Table (>= 768px) */}
+          <div className="hidden md:block w-full">
+            <table className="w-full text-left border-collapse table-fixed">
               <thead className="bg-muted/50 border-b border-border text-xs uppercase font-semibold text-muted-foreground tracking-wider">
                 <tr>
-                  <th className="px-5 py-3.5">Student</th>
-                  <th className="px-5 py-3.5">Roll No</th>
-                  <th className="px-5 py-3.5">Department</th>
-                  <th className="px-5 py-3.5 text-center">Exams Attempted</th>
-                  <th className="px-5 py-3.5">Avg Score (%)</th>
-                  <th className="px-5 py-3.5 text-center">Highest / Lowest</th>
-                  <th className="px-5 py-3.5">Performance Status</th>
-                  <th className="px-5 py-3.5 text-right">Actions</th>
+                  <th className="px-3.5 py-3 w-[30%] lg:w-[26%] xl:w-[24%]">Student</th>
+                  <th className="px-3.5 py-3 w-[16%] lg:w-[13%] xl:w-[11%]">Roll No</th>
+                  <th className="px-3.5 py-3 hidden xl:table-cell xl:w-[13%]">Department</th>
+                  <th className="px-3.5 py-3 text-center w-[16%] lg:w-[13%] xl:w-[11%]">Exams</th>
+                  <th className="px-3.5 py-3 w-[20%] lg:w-[18%] xl:w-[16%]">Avg Score</th>
+                  <th className="px-3.5 py-3 text-center hidden 2xl:table-cell 2xl:w-[11%]">High / Low</th>
+                  <th className="px-3.5 py-3 hidden lg:table-cell lg:w-[16%] xl:w-[13%]">Status</th>
+                  <th className="px-3.5 py-3 text-right w-[18%] lg:w-[14%] xl:w-[12%]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border text-sm">
@@ -804,39 +805,43 @@ export function AdminStudents() {
                     return (
                       <tr key={student.id} className="hover:bg-muted/30 transition-colors">
                         {/* Student Name & Email */}
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-2.5">
+                        <td className="px-3.5 py-3 min-w-0">
+                          <div className="flex items-center gap-2.5 min-w-0">
                             <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
                               {student.full_name?.charAt(0) || "S"}
                             </div>
-                            <div>
-                              <p className="font-medium text-foreground">{student.full_name}</p>
-                              <p className="text-xs text-muted-foreground">{student.email}</p>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-foreground text-xs sm:text-sm truncate" title={student.full_name}>
+                                {student.full_name}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate" title={student.email}>
+                                {student.email}
+                              </p>
                             </div>
                           </div>
                         </td>
 
                         {/* Roll No */}
-                        <td className="px-5 py-4 text-xs font-mono text-foreground whitespace-nowrap">
+                        <td className="px-3.5 py-3 text-xs font-mono text-foreground truncate" title={student.roll_number || "-"}>
                           {student.roll_number || "-"}
                         </td>
 
                         {/* Department */}
-                        <td className="px-5 py-4 text-xs text-foreground">
+                        <td className="px-3.5 py-3 text-xs text-foreground truncate hidden xl:table-cell" title={student.department || "-"}>
                           {student.department || "-"}
                         </td>
 
                         {/* Exams Attempted */}
-                        <td className="px-5 py-4 text-xs text-center font-semibold text-foreground">
-                          <span className="inline-block px-2.5 py-0.5 rounded bg-muted/60 text-xs">
+                        <td className="px-3.5 py-3 text-xs text-center font-semibold text-foreground">
+                          <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs font-semibold">
                             {student.number_of_exams}
                           </span>
                         </td>
 
                         {/* Average Score */}
-                        <td className="px-5 py-4 whitespace-nowrap">
+                        <td className="px-3.5 py-3 min-w-0">
                           {typeof student.average_score === "number" ? (
-                            <div className="space-y-1 w-28">
+                            <div className="space-y-1 max-w-[110px]">
                               <div className="flex justify-between items-center text-xs">
                                 <span className="font-bold text-foreground">{student.average_score.toFixed(1)}%</span>
                               </div>
@@ -853,11 +858,11 @@ export function AdminStudents() {
                         </td>
 
                         {/* Highest / Lowest */}
-                        <td className="px-5 py-4 text-xs text-center whitespace-nowrap">
+                        <td className="px-3.5 py-3 text-xs text-center truncate hidden 2xl:table-cell">
                           {typeof student.highest_score === "number" ? (
                             <span className="text-foreground">
                               <span className="text-emerald-600 font-semibold">{student.highest_score}%</span>
-                              <span className="text-muted-foreground mx-1">/</span>
+                              <span className="text-muted-foreground mx-0.5">/</span>
                               <span className="text-rose-600 font-semibold">{student.lowest_score}%</span>
                             </span>
                           ) : (
@@ -866,17 +871,17 @@ export function AdminStudents() {
                         </td>
 
                         {/* Status Badge */}
-                        <td className="px-5 py-4 whitespace-nowrap">
+                        <td className="px-3.5 py-3 hidden lg:table-cell min-w-0">
                           <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${badge.bg}`}
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border truncate ${badge.bg}`}
                           >
                             {badge.label}
                           </span>
                         </td>
 
                         {/* Actions */}
-                        <td className="px-5 py-4 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1.5">
+                        <td className="px-3.5 py-3 text-right">
+                          <div className="inline-flex items-center justify-end gap-1">
                             {/* View Results Button */}
                             <button
                               className="p-1.5 rounded-md hover:bg-primary/10 text-primary transition-colors"
@@ -906,7 +911,7 @@ export function AdminStudents() {
 
                             {/* Email */}
                             <a
-                              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors hidden sm:inline-flex"
                               title="Send Email"
                               href={`mailto:${student.email}`}
                             >
@@ -930,6 +935,124 @@ export function AdminStudents() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile Stacked Cards (< 768px) */}
+          <div className="block md:hidden">
+            {loading ? (
+              <div className="p-8 text-center text-muted-foreground flex items-center justify-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                Loading students...
+              </div>
+            ) : students.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                <GraduationCap className="w-10 h-10 mx-auto mb-2 text-muted-foreground/40" />
+                <p className="font-medium text-foreground">No Students Found</p>
+                <p className="text-xs text-muted-foreground mt-1">Try adjusting search or filters.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {students.map((student) => {
+                  const badge = getPerformanceBadge(student.performance_status, student.average_score);
+                  return (
+                    <div key={student.id} className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
+                            {student.full_name?.charAt(0) || "S"}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-foreground text-sm truncate" title={student.full_name}>
+                              {student.full_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate" title={student.email}>
+                              {student.email}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border shrink-0 ${badge.bg}`}>
+                          {badge.label}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 bg-muted/30 p-2.5 rounded-lg text-xs">
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Roll No</span>
+                          <span className="font-mono text-foreground font-medium">{student.roll_number || "-"}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Department</span>
+                          <span className="text-foreground truncate block font-medium" title={student.department || "-"}>
+                            {student.department || "-"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Exams</span>
+                          <span className="text-foreground font-medium">{student.number_of_exams} attempted</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Avg Score</span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="font-bold text-foreground">
+                              {typeof student.average_score === "number" ? `${student.average_score.toFixed(1)}%` : "N/A"}
+                            </span>
+                            {typeof student.average_score === "number" && (
+                              <div className="w-12 bg-muted rounded-full h-1.5 overflow-hidden">
+                                <div
+                                  className={`h-1.5 rounded-full ${badge.barColor}`}
+                                  style={{ width: `${Math.min(100, Math.max(0, student.average_score))}%` }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <button
+                          onClick={() => void handleOpenResults(student.id)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+                        >
+                          <BarChart3 className="w-3.5 h-3.5" />
+                          View Results
+                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                            title="View Profile"
+                            onClick={() => void handleViewStudent(student.id)}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                            title="Edit Student"
+                            onClick={() => void handleEditStudent(student.id)}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <a
+                            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                            title="Send Email"
+                            href={`mailto:${student.email}`}
+                          >
+                            <Mail className="w-4 h-4" />
+                          </a>
+                          <button
+                            className="p-1.5 rounded-md hover:bg-rose-50 text-rose-600 transition-colors disabled:opacity-50"
+                            title="Delete Student"
+                            onClick={() => void handleDeleteStudent(student)}
+                            disabled={deletingId === student.id}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Pagination */}
