@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .exam_management import ExamDetailView, ExamListView, PublishExamView, QuestionUpdateView
+from .faculty_dashboard import FacultyDashboardView
 from .generate_paper import GeneratePaperView
 from .student_exam import (
     SaveAnswerView,
@@ -34,6 +35,8 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
+    path('faculty/dashboard', FacultyDashboardView.as_view(), name='faculty-dashboard-no-slash'),
+    path('faculty/dashboard/', FacultyDashboardView.as_view(), name='faculty-dashboard'),
     path('student/exams/', StudentExamListView.as_view(), name='student-exam-list'),
     path('student/exams/<int:exam_id>/start/', StartAttemptView.as_view(), name='student-exam-start'),
     path('student/attempts/<int:attempt_id>/save/', SaveAnswerView.as_view(), name='student-answer-save'),

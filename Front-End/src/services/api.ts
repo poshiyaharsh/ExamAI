@@ -538,6 +538,143 @@ export type StudentDashboardResponse = {
   data: StudentDashboardData;
 };
 
+export type FacultyDashboardProfile = {
+  name: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  department: string;
+  designation: string;
+  employee_id: string;
+  subjects_taught: string[];
+};
+
+export type FacultyDashboardStats = {
+  total_exams: number;
+  published_exams: number;
+  draft_exams: number;
+  upcoming_exams: number;
+  ongoing_exams: number;
+  completed_exams: number;
+  total_students: number;
+  total_attempts: number;
+  overall_average: number | null;
+  overall_pass_rate: number | null;
+  pass_count: number;
+  fail_count: number;
+};
+
+export type FacultyOngoingExamItem = {
+  id: number;
+  title: string;
+  subject: string;
+  department: string;
+  duration_minutes: number;
+  total_marks: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  submitted_count: number;
+  eligible_students: number;
+};
+
+export type FacultyUpcomingExamItem = {
+  id: number;
+  title: string;
+  subject: string;
+  department: string;
+  duration_minutes: number;
+  total_marks: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  eligible_students: number;
+};
+
+export type FacultyRecentExamItem = {
+  id: number;
+  title: string;
+  subject: string;
+  department: string;
+  created_at: string;
+  status: string;
+  attempts_count: number;
+  average_score: number | null;
+  pass_rate: number | null;
+};
+
+export type FacultyExamPerfItem = {
+  id: number;
+  exam_title: string;
+  average_score: number;
+  attempts_count: number;
+};
+
+export type FacultyScoreDistributionItem = {
+  range: string;
+  count: number;
+  label: string;
+};
+
+export type FacultyTopPerformerItem = {
+  student_id: number;
+  name: string;
+  roll_number: string;
+  department: string;
+  average_score: number;
+  exams_taken: number;
+};
+
+export type FacultyNeedsAttentionItem = {
+  student_id: number;
+  name: string;
+  roll_number: string;
+  department: string;
+  average_score: number | null;
+  exams_taken: number;
+  type: "low_score" | "unattempted";
+  issue: string;
+};
+
+export type FacultyHardestQuestionItem = {
+  question_id: number;
+  exam_id: number;
+  exam_title: string;
+  text: string;
+  topic: string;
+  difficulty: string;
+  total_answers: number;
+  wrong_answers: number;
+  error_rate: number;
+};
+
+export type FacultyPendingActions = {
+  draft_exams_count: number;
+  drafts: Array<{ id: number; title: string; created_at: string }>;
+  empty_exams_count: number;
+  empty_exams: Array<{ id: number; title: string }>;
+};
+
+export type FacultyDashboardData = {
+  profile: FacultyDashboardProfile;
+  stats: FacultyDashboardStats;
+  ongoing_exams: FacultyOngoingExamItem[];
+  upcoming_exams: FacultyUpcomingExamItem[];
+  recent_exams: FacultyRecentExamItem[];
+  exam_performance: FacultyExamPerfItem[];
+  score_distribution: FacultyScoreDistributionItem[];
+  top_performers: FacultyTopPerformerItem[];
+  needs_attention: {
+    low_scorers: FacultyNeedsAttentionItem[];
+    unattempted_students: FacultyNeedsAttentionItem[];
+  };
+  hardest_questions: FacultyHardestQuestionItem[];
+  pending_actions: FacultyPendingActions;
+};
+
+export type FacultyDashboardResponse = {
+  status: string;
+  data: FacultyDashboardData;
+};
+
 export type StudentExamResultItem = {
   attempt_id: number;
   exam_id: number;
@@ -831,6 +968,13 @@ export const studentPerformanceApi = {
 export const studentDashboardApi = {
   getDashboard: async (): Promise<StudentDashboardResponse> => {
     const response = await apiClient.get<StudentDashboardResponse>("/api/student/dashboard/");
+    return response.data;
+  },
+};
+
+export const facultyDashboardApi = {
+  getDashboard: async (): Promise<FacultyDashboardResponse> => {
+    const response = await apiClient.get<FacultyDashboardResponse>("/api/faculty/dashboard/");
     return response.data;
   },
 };
