@@ -165,12 +165,6 @@ export function FacultyDashboard() {
                 </div>
                 <div className="text-xs sm:text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
                   {profile?.employee_id && <span>ID: {profile.employee_id}</span>}
-                  {profile?.subjects_taught && profile.subjects_taught.length > 0 && (
-                    <>
-                      <span>•</span>
-                      <span>Subjects: <strong>{profile.subjects_taught.slice(0, 3).join(", ")}{profile.subjects_taught.length > 3 ? ` +${profile.subjects_taught.length - 3} more` : ""}</strong></span>
-                    </>
-                  )}
                 </div>
               </div>
 
