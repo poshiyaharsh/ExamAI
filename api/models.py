@@ -110,40 +110,264 @@ class Exam(models.Model):
 		]
 
 
+class Subject(models.Model):
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='subjects',
+		db_index=True,
+	)
+	department = models.CharField(max_length=120, db_index=True)
+	name = models.CharField(max_length=200)
+	code = models.CharField(max_length=50, blank=True, default='')
+	created_by = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='created_subjects',
+	)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ['name']
+		constraints = [
+			models.UniqueConstraint(
+				fields=['institution', 'department', 'name'],
+				name='unique_subject_per_inst_dept_name',
+			),
+		]
+		indexes = [
+			models.Index(fields=['institution', 'department']),
+		]
+
+	def __str__(self):
+		return f"{self.name} ({self.department})"
+
+
+class Topic(models.Model):
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='topics',
+		db_index=True,
+	)
+	subject = models.ForeignKey(
+		Subject,
+		on_delete=models.CASCADE,
+		related_name='topics',
+	)
+	name = models.CharField(max_length=200)
+	created_by = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='created_topics',
+	)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ['name']
+		constraints = [
+			models.UniqueConstraint(
+				fields=['subject', 'name'],
+				name='unique_topic_per_subject_name',
+			),
+		]
+		indexes = [
+			models.Index(fields=['institution', 'subject']),
+		]
+
+	def __str__(self):
+		return f"{self.subject.name} - {self.name}"
+
+
 class Question(models.Model):
 	class QuestionType(models.TextChoices):
+		MCQ_SINGLE = 'MCQ_SINGLE', 'Multiple Choice (Single)'
+		MCQ_MULTIPLE = 'MCQ_MULTIPLE', 'Multiple Choice (Multiple)'
+		TRUE_FALSE = 'TRUE_FALSE', 'True / False'
+		SHORT_ANSWER = 'SHORT_ANSWER', 'Short Answer'
+		LONG_ANSWER = 'LONG_ANSWER', 'Long Answer'
+		# Backward-compatibility legacy values
 		MCQ = 'mcq', 'Multiple Choice'
 		TRUEFALSE = 'truefalse', 'True or False'
 		FILLBLANK = 'fillblank', 'Fill in the Blank'
 		SUBJECTIVE = 'subjective', 'Subjective'
 
 	class Difficulty(models.TextChoices):
-		EASY = 'easy', 'Easy'
-		MEDIUM = 'medium', 'Medium'
-		HARD = 'hard', 'Hard'
+		EASY = 'EASY', 'Easy'
+		MEDIUM = 'MEDIUM', 'Medium'
+		HARD = 'HARD', 'Hard'
+		# Backward-compatibility legacy values
+		LEGACY_EASY = 'easy', 'Easy'
+		LEGACY_MEDIUM = 'medium', 'Medium'
+		LEGACY_HARD = 'hard', 'Hard'
 
-	exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='questions')
+	class Status(models.TextChoices):
+		DRAFT = 'DRAFT', 'Draft'
+		ACTIVE = 'ACTIVE', 'Active'
+		ARCHIVED = 'ARCHIVED', 'Archived'
+
 	institution = models.ForeignKey(
 		AdminInstitution,
 		on_delete=models.CASCADE,
 		related_name='questions',
 		db_index=True,
 	)
-	order = models.PositiveIntegerField()
-	question_type = models.CharField(max_length=20, choices=QuestionType.choices)
-	difficulty = models.CharField(max_length=10, choices=Difficulty.choices)
+	department = models.CharField(max_length=120, db_index=True, blank=True, default='')
+	subject = models.ForeignKey(
+		Subject,
+		on_delete=models.CASCADE,
+		related_name='questions',
+		null=True,
+		blank=True,
+	)
+	topic = models.ForeignKey(
+		Topic,
+		on_delete=models.SET_NULL,
+		related_name='questions',
+		null=True,
+		blank=True,
+	)
+	topic_text = models.CharField(max_length=255, blank=True, default='')
+	exam = models.ForeignKey(
+		Exam,
+		on_delete=models.CASCADE,
+		related_name='questions',
+		null=True,
+		blank=True,
+	)
+	order = models.PositiveIntegerField(default=1)
+	question_type = models.CharField(max_length=30, choices=QuestionType.choices, default=QuestionType.MCQ_SINGLE)
+	difficulty = models.CharField(max_length=20, choices=Difficulty.choices, default=Difficulty.MEDIUM)
 	text = models.TextField()
+	explanation = models.TextField(blank=True, default='')
+	marks = models.DecimalField(max_digits=6, decimal_places=2, default=1.0)
+	negative_marks = models.DecimalField(max_digits=6, decimal_places=2, default=0.0)
+	status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+	is_deleted = models.BooleanField(default=False, db_index=True)
+	deleted_at = models.DateTimeField(null=True, blank=True)
+	text_hash = models.CharField(max_length=64, db_index=True, blank=True, default='')
+	version = models.PositiveIntegerField(default=1)
+	times_used = models.PositiveIntegerField(default=0)
+	last_used_at = models.DateTimeField(null=True, blank=True)
+	tags = models.JSONField(default=list, blank=True)
+	created_by = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='created_questions',
+	)
+	created_at = models.DateTimeField(default=timezone.now, db_index=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	# Legacy fields preserved so exam attempts and serializers continue to function
 	options = models.JSONField(null=True, blank=True)
 	correct_answer = models.JSONField(null=True, blank=True)
 	model_answer = models.TextField(blank=True, default='')
-	marks = models.PositiveIntegerField()
-	topic = models.CharField(max_length=255, blank=True, default='')
 
 	class Meta:
-		ordering = ['order']
+		ordering = ['-created_at', 'order']
+		constraints = [
+			models.UniqueConstraint(
+				fields=['institution', 'subject', 'text_hash'],
+				condition=models.Q(is_deleted=False, subject__isnull=False) & ~models.Q(text_hash=''),
+				name='unique_active_question_per_inst_subject_hash',
+			),
+			models.CheckConstraint(
+				condition=models.Q(marks__gt=0),
+				name='question_marks_gt_zero',
+			),
+			models.CheckConstraint(
+				condition=models.Q(negative_marks__gte=0) & models.Q(negative_marks__lte=models.F('marks')),
+				name='question_negative_marks_valid',
+			),
+		]
 		indexes = [
+			models.Index(fields=['institution', 'subject', 'topic', 'difficulty', 'status']),
+			models.Index(fields=['institution', 'department']),
+			models.Index(fields=['institution', 'question_type']),
+			models.Index(fields=['institution', 'created_at']),
 			models.Index(fields=['institution', 'exam']),
 		]
+
+	def __str__(self):
+		return f"Q{self.id} ({self.get_question_type_display()}): {self.text[:40]}"
+
+
+class Option(models.Model):
+	question = models.ForeignKey(
+		Question,
+		on_delete=models.CASCADE,
+		related_name='option_items',
+	)
+	text = models.TextField()
+	is_correct = models.BooleanField(default=False)
+	order = models.PositiveIntegerField(default=1)
+
+	class Meta:
+		ordering = ['order', 'id']
+
+	def __str__(self):
+		return f"Q{self.question_id} Opt: {self.text[:30]} ({'Correct' if self.is_correct else 'Wrong'})"
+
+
+class QuestionImportLog(models.Model):
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='question_import_logs',
+		db_index=True,
+	)
+	created_by = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+	)
+	filename = models.CharField(max_length=255)
+	file_format = models.CharField(max_length=10)
+	total_rows = models.PositiveIntegerField(default=0)
+	imported_count = models.PositiveIntegerField(default=0)
+	duplicate_count = models.PositiveIntegerField(default=0)
+	failed_count = models.PositiveIntegerField(default=0)
+	error_details = models.JSONField(default=list, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ['-created_at']
+
+
+class QuestionAuditLog(models.Model):
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='question_audit_logs',
+		db_index=True,
+	)
+	question = models.ForeignKey(
+		Question,
+		on_delete=models.CASCADE,
+		related_name='audit_logs',
+	)
+	user = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+	)
+	action = models.CharField(max_length=30)
+	changes = models.JSONField(default=dict, blank=True)
+	timestamp = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ['-timestamp']
+
 
 
 class StudentAttempt(models.Model):

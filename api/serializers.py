@@ -82,6 +82,8 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
 
 class QuestionSerializer(serializers.ModelSerializer):
+    topic = serializers.SerializerMethodField()
+
     class Meta:
         model = Question
         fields = (
@@ -89,9 +91,14 @@ class QuestionSerializer(serializers.ModelSerializer):
             'correct_answer', 'model_answer', 'marks', 'topic',
         )
         read_only_fields = ('id', 'order')
+
+    def get_topic(self, obj):
+        return obj.topic.name if obj.topic else (obj.topic_text or '')
 
 
 class FacultyQuestionSerializer(serializers.ModelSerializer):
+    topic = serializers.SerializerMethodField()
+
     class Meta:
         model = Question
         fields = (
@@ -99,6 +106,9 @@ class FacultyQuestionSerializer(serializers.ModelSerializer):
             'correct_answer', 'model_answer', 'marks', 'topic',
         )
         read_only_fields = ('id', 'order')
+
+    def get_topic(self, obj):
+        return obj.topic.name if obj.topic else (obj.topic_text or '')
 
 
 class ExamListSerializer(serializers.ModelSerializer):
@@ -139,6 +149,8 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
 
 
 class QuestionUpdateSerializer(serializers.ModelSerializer):
+    topic = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = Question
         fields = (
@@ -146,11 +158,21 @@ class QuestionUpdateSerializer(serializers.ModelSerializer):
             'correct_answer', 'model_answer', 'marks', 'topic',
         )
 
+    def update(self, instance, validated_data):
+        if 'topic' in validated_data:
+            instance.topic_text = validated_data.pop('topic')
+        return super().update(instance, validated_data)
+
 
 class StudentQuestionSerializer(serializers.ModelSerializer):
+    topic = serializers.SerializerMethodField()
+
     class Meta:
         model = Question
         fields = ('id', 'order', 'question_type', 'difficulty', 'text', 'options', 'marks', 'topic')
+
+    def get_topic(self, obj):
+        return obj.topic.name if obj.topic else (obj.topic_text or '')
 
 
 class StudentExamSerializer(serializers.ModelSerializer):
@@ -164,11 +186,40 @@ class StudentExamSerializer(serializers.ModelSerializer):
 class StudentAnswerSerializer(serializers.ModelSerializer):
     question_text = serializers.CharField(source='question.text', read_only=True)
     question_type = serializers.CharField(source='question.question_type', read_only=True)
-    correct_answer = serializers.JSONField(source='question.correct_answer', read_only=True)
+    correct_answer = serializers.SerializerMethodField()
+    is_correct = serializers.SerializerMethodField()
+    score_awarded = serializers.SerializerMethodField()
+    ai_feedback = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentAnswer
         fields = ('question', 'question_text', 'question_type', 'correct_answer', 'answer_text', 'is_correct', 'score_awarded', 'ai_feedback')
+
+    def _can_reveal_answers(self, obj):
+        attempt = getattr(obj, 'attempt', None)
+        if not attempt:
+            return False
+        return attempt.status in (StudentAttempt.Status.SUBMITTED, StudentAttempt.Status.AUTO_SUBMITTED, StudentAttempt.Status.EVALUATED)
+
+    def get_correct_answer(self, obj):
+        if self._can_reveal_answers(obj):
+            return obj.question.correct_answer
+        return None
+
+    def get_is_correct(self, obj):
+        if self._can_reveal_answers(obj):
+            return obj.is_correct
+        return None
+
+    def get_score_awarded(self, obj):
+        if self._can_reveal_answers(obj):
+            return obj.score_awarded
+        return None
+
+    def get_ai_feedback(self, obj):
+        if self._can_reveal_answers(obj):
+            return obj.ai_feedback
+        return ''
 
 
 class StudentAttemptSerializer(serializers.ModelSerializer):

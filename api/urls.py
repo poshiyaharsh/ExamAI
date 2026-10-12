@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 
 from .admin_dashboard import AdminDashboardView
 from .exam_management import ExamDetailView, ExamListView, PublishExamView, QuestionUpdateView
@@ -36,6 +36,7 @@ urlpatterns = [
     path('public/stats/', PublicStatsAPIView.as_view(), name='public-stats'),
     path('admin/dashboard', AdminDashboardView.as_view(), name='api-admin-dashboard-no-slash'),
     path('admin/dashboard/', AdminDashboardView.as_view(), name='api-admin-dashboard'),
+    path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),

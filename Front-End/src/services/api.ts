@@ -1559,4 +1559,253 @@ export const publicStatsApi = {
   },
 };
 
+// ==================== QUESTION BANK ====================
+export type BankOption = {
+  id?: number;
+  text: string;
+  is_correct: boolean;
+  order: number;
+};
+
+export type BankQuestion = {
+  id: number;
+  text: string;
+  department: string;
+  subject: number;
+  subject_name: string;
+  topic: number | null;
+  topic_name: string;
+  question_type: "MCQ_SINGLE" | "MCQ_MULTIPLE" | "TRUE_FALSE" | "SHORT_ANSWER" | "LONG_ANSWER";
+  difficulty: "EASY" | "MEDIUM" | "HARD";
+  marks: string | number;
+  negative_marks: string | number;
+  status: "ACTIVE" | "DRAFT" | "ARCHIVED";
+  times_used: number;
+  last_used_at: string | null;
+  version: number;
+  tags: string[];
+  created_by_name: string;
+  options_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BankQuestionDetail = BankQuestion & {
+  explanation: string;
+  model_answer: string;
+  options: BankOption[];
+  is_deleted: boolean;
+  warnings?: string[];
+  usage_info?: {
+    is_locked: boolean;
+    reason: string;
+    times_used: number;
+    last_used_at: string | null;
+    associated_exams: Array<{ id: number; title: string; status: string }>;
+  };
+  audit_logs?: Array<{
+    id: number;
+    action: string;
+    user_name: string;
+    changes: Record<string, any>;
+    timestamp: string;
+  }>;
+};
+
+export type BankSubject = {
+  id: number;
+  name: string;
+  code: string;
+  department: string;
+  question_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BankTopic = {
+  id: number;
+  name: string;
+  subject: number;
+  subject_name: string;
+  question_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type QuestionBankStats = {
+  total_questions: number;
+  unused_count: number;
+  by_difficulty: {
+    Easy: number;
+    Medium: number;
+    Hard: number;
+  };
+  by_status: {
+    Active: number;
+    Draft: number;
+    Archived: number;
+  };
+  by_type: Record<string, number>;
+  by_department: Record<string, number>;
+  most_used_questions: Array<{
+    id: number;
+    text: string;
+    times_used: number;
+    last_used_at: string | null;
+    marks: number;
+    difficulty: string;
+  }>;
+};
+
+export type PaginatedQuestionsResponse = {
+  count: number;
+  total_pages: number;
+  current_page: number;
+  next: string | null;
+  previous: string | null;
+  results: BankQuestion[];
+};
+
+export type QuestionImportReportRow = {
+  row_number: number;
+  question_text: string;
+  is_valid: boolean;
+  errors: string[];
+  warnings: string[];
+};
+
+export type QuestionImportResponse = {
+  dry_run: boolean;
+  message?: string;
+  total_rows: number;
+  valid_count: number;
+  imported_count?: number;
+  failed_count: number;
+  row_results: QuestionImportReportRow[];
+};
+
+export const questionBankApi = {
+  getQuestions: async (params?: Record<string, any>): Promise<PaginatedQuestionsResponse> => {
+    const response = await apiClient.get<PaginatedQuestionsResponse>('/api/admin/question-bank/questions/', { params });
+    return response.data;
+  },
+
+  getQuestion: async (id: number): Promise<BankQuestionDetail> => {
+    const response = await apiClient.get<BankQuestionDetail>(`/api/admin/question-bank/questions/${id}/`);
+    return response.data;
+  },
+
+  createQuestion: async (payload: Partial<BankQuestionDetail>): Promise<BankQuestionDetail> => {
+    const response = await apiClient.post<BankQuestionDetail>('/api/admin/question-bank/questions/', payload);
+    return response.data;
+  },
+
+  updateQuestion: async (id: number, payload: Partial<BankQuestionDetail>): Promise<BankQuestionDetail> => {
+    const response = await apiClient.patch<BankQuestionDetail>(`/api/admin/question-bank/questions/${id}/`, payload);
+    return response.data;
+  },
+
+  deleteQuestion: async (id: number): Promise<{ message: string }> => {
+    const response = await apiClient.delete<{ message: string }>(`/api/admin/question-bank/questions/${id}/`);
+    return response.data;
+  },
+
+  restoreQuestion: async (id: number): Promise<BankQuestionDetail> => {
+    const response = await apiClient.post<BankQuestionDetail>(`/api/admin/question-bank/questions/${id}/restore/`, {});
+    return response.data;
+  },
+
+  duplicateQuestion: async (id: number): Promise<BankQuestionDetail> => {
+    const response = await apiClient.post<BankQuestionDetail>(`/api/admin/question-bank/questions/${id}/duplicate/`, {});
+    return response.data;
+  },
+
+  bulkAction: async (action: string, ids: number[], target_value?: string): Promise<{ message: string; affected_count: number }> => {
+    const response = await apiClient.post<{ message: string; affected_count: number }>('/api/admin/question-bank/questions/bulk-action/', {
+      action,
+      ids,
+      target_value: target_value || '',
+    });
+    return response.data;
+  },
+
+  getStats: async (): Promise<QuestionBankStats> => {
+    const response = await apiClient.get<QuestionBankStats>('/api/admin/question-bank/stats/');
+    return response.data;
+  },
+
+  getSubjects: async (department?: string): Promise<BankSubject[]> => {
+    const response = await apiClient.get<BankSubject[]>('/api/admin/question-bank/subjects/', {
+      params: department ? { department } : undefined,
+    });
+    return response.data;
+  },
+
+  createSubject: async (payload: { name: string; department: string; code?: string }): Promise<BankSubject> => {
+    const response = await apiClient.post<BankSubject>('/api/admin/question-bank/subjects/', payload);
+    return response.data;
+  },
+
+  updateSubject: async (id: number, payload: Partial<BankSubject>): Promise<BankSubject> => {
+    const response = await apiClient.put<BankSubject>(`/api/admin/question-bank/subjects/${id}/`, payload);
+    return response.data;
+  },
+
+  deleteSubject: async (id: number): Promise<{ message: string }> => {
+    const response = await apiClient.delete<{ message: string }>(`/api/admin/question-bank/subjects/${id}/`);
+    return response.data;
+  },
+
+  getTopics: async (subjectId?: number): Promise<BankTopic[]> => {
+    const response = await apiClient.get<BankTopic[]>('/api/admin/question-bank/topics/', {
+      params: subjectId ? { subject: subjectId } : undefined,
+    });
+    return response.data;
+  },
+
+  createTopic: async (payload: { name: string; subject: number }): Promise<BankTopic> => {
+    const response = await apiClient.post<BankTopic>('/api/admin/question-bank/topics/', payload);
+    return response.data;
+  },
+
+  updateTopic: async (id: number, payload: Partial<BankTopic>): Promise<BankTopic> => {
+    const response = await apiClient.put<BankTopic>(`/api/admin/question-bank/topics/${id}/`, payload);
+    return response.data;
+  },
+
+  deleteTopic: async (id: number): Promise<{ message: string }> => {
+    const response = await apiClient.delete<{ message: string }>(`/api/admin/question-bank/topics/${id}/`);
+    return response.data;
+  },
+
+  bulkImport: async (file: File, dryRun: boolean = true, mode: string = 'all_or_nothing'): Promise<QuestionImportResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('mode', mode);
+    const response = await apiClient.post<QuestionImportResponse>(
+      `/api/admin/question-bank/questions/bulk-import/?dry_run=${dryRun}`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return response.data;
+  },
+
+  downloadExport: async (format: 'csv' | 'xlsx' = 'csv', filters?: Record<string, any>): Promise<Blob> => {
+    const response = await apiClient.get('/api/admin/question-bank/questions/export/', {
+      params: { ...(filters || {}), format },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  downloadTemplate: async (format: 'csv' | 'xlsx' = 'csv'): Promise<Blob> => {
+    const response = await apiClient.get('/api/admin/question-bank/questions/template/', {
+      params: { format },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+};
+
+
 

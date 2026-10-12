@@ -111,6 +111,7 @@ class TenantScopedMixin:
 def get_tenant_object_or_404(klass, institution, **kwargs):
     """
     Fetch an object strictly scoped to the tenant.
+    Supports either Model class or pre-filtered QuerySet.
     Returns the object if found and belongs to the tenant.
     Raises Http404 if object does not exist or belongs to another tenant.
     This guarantees zero IDOR leakage and identical 404 response.
@@ -119,10 +120,19 @@ def get_tenant_object_or_404(klass, institution, **kwargs):
         raise Http404('Resource not found in this institution.')
 
     inst_id = institution.id if hasattr(institution, 'id') else institution
+    if hasattr(klass, '_default_manager'):
+        queryset = klass.objects
+        model_class = klass
+    else:
+        queryset = klass
+        model_class = getattr(klass, 'model', None)
+
     try:
-        return klass.objects.get(institution_id=inst_id, **kwargs)
-    except klass.DoesNotExist:
-        raise Http404('Resource not found in this institution.')
+        return queryset.get(institution_id=inst_id, **kwargs)
+    except Exception as exc:
+        if (model_class and isinstance(exc, model_class.DoesNotExist)) or isinstance(exc, Http404):
+            raise Http404('Resource not found in this institution.')
+        raise
 
 
 def get_tenant_cache_version(institution_id):

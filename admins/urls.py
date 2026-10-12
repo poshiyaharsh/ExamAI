@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 
 from .views import (
     AdminInstitutionAPIView,
@@ -38,4 +38,5 @@ urlpatterns = [
     path('exams/audit/', AdminExamAuditAPIView.as_view(), name='admin-exams-audit'),
     path('exams/<int:exam_id>', AdminExamDetailAPIView.as_view(), name='admin-exam-detail-no-slash'),
     path('exams/<int:exam_id>/', AdminExamDetailAPIView.as_view(), name='admin-exam-detail'),
+    path('question-bank/', include('api.urls_question_bank')),
 ]

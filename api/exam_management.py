@@ -1,4 +1,6 @@
+from django.db import models
 from django.db.models import Count
+from django.utils import timezone
 import logging
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -123,6 +125,23 @@ class PublishExamView(FacultyExamViewMixin, APIView):
             )
         exam.status = Exam.Status.PUBLISHED
         exam.save(update_fields=['status', 'updated_at'])
+
+        # Update times_used and last_used_at on exam questions and repository bank questions
+        now = timezone.now()
+        exam.questions.all().update(
+            times_used=models.F('times_used') + 1,
+            last_used_at=now,
+        )
+        q_hashes = [q.text_hash for q in questions if q.text_hash]
+        if q_hashes:
+            Question.objects.filter(
+                institution=exam.institution,
+                text_hash__in=q_hashes,
+                exam__isnull=True,
+            ).update(
+                times_used=models.F('times_used') + 1,
+                last_used_at=now,
+            )
 
         from api.tenant import bump_tenant_cache_version
         bump_tenant_cache_version(exam.institution_id)
