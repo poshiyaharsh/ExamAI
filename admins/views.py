@@ -4,7 +4,7 @@ from django.db import OperationalError, ProgrammingError
 from django.db import transaction
 import datetime
 from django.utils import timezone
-from django.db.models import Count, Q
+from django.db.models import Avg, Count, ExpressionWrapper, F, FloatField, Max, Min, Q
 import logging
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
@@ -23,6 +23,7 @@ from .serializers import (
     AdminStudentDetailSerializer,
     AdminStudentListSerializer,
     AdminStudentUpdateSerializer,
+    AdminStudentResultItemSerializer,
     AdminInstitutionUpdateSerializer,
     AdminLoginSerializer,
     AdminSignupSerializer,
@@ -245,11 +246,79 @@ class AdminStudentsAPIView(APIView):
                         'status': 'success',
                         'message': 'Institution information not created yet.',
                         'data': [],
+                        'stats': {
+                            'total_students': 0,
+                            'overall_average_score': None,
+                            'top_performer': None,
+                            'students_below_pass': 0,
+                        },
+                        'departments': [],
                     },
                     status=status.HTTP_200_OK,
                 )
 
-            queryset = StudentProfile.objects.select_related('user').filter(institution=institution)
+            completed_filter = Q(user__exam_attempts__status__in=[
+                StudentAttempt.Status.SUBMITTED,
+                StudentAttempt.Status.AUTO_SUBMITTED,
+                StudentAttempt.Status.EVALUATED,
+            ])
+
+            base_queryset = (
+                StudentProfile.objects.select_related('user', 'institution')
+                .filter(institution=institution)
+                .annotate(
+                    attempt_count=Count('user__exam_attempts', filter=completed_filter, distinct=True),
+                    last_exam_date=Max('user__exam_attempts__submitted_at', filter=completed_filter),
+                    avg_percentage=Avg(
+                        ExpressionWrapper(
+                            F('user__exam_attempts__total_score') * 100.0 / F('user__exam_attempts__exam__total_marks'),
+                            output_field=FloatField()
+                        ),
+                        filter=completed_filter
+                    ),
+                    max_percentage=Max(
+                        ExpressionWrapper(
+                            F('user__exam_attempts__total_score') * 100.0 / F('user__exam_attempts__exam__total_marks'),
+                            output_field=FloatField()
+                        ),
+                        filter=completed_filter
+                    ),
+                    min_percentage=Min(
+                        ExpressionWrapper(
+                            F('user__exam_attempts__total_score') * 100.0 / F('user__exam_attempts__exam__total_marks'),
+                            output_field=FloatField()
+                        ),
+                        filter=completed_filter
+                    ),
+                )
+            )
+
+            # Pre-filter stats
+            all_students = list(base_queryset)
+            total_students = len(all_students)
+            students_with_exams = [s for s in all_students if (s.attempt_count or 0) > 0 and s.avg_percentage is not None]
+            
+            if students_with_exams:
+                overall_avg = round(sum(s.avg_percentage for s in students_with_exams) / len(students_with_exams), 1)
+                best_student = max(students_with_exams, key=lambda s: s.avg_percentage)
+                b_name = f"{best_student.user.first_name} {best_student.user.last_name}".strip() or best_student.user.username
+                top_performer = {
+                    'id': best_student.id,
+                    'name': b_name,
+                    'email': best_student.user.email,
+                    'roll_number': best_student.student_id,
+                    'percentage': round(best_student.avg_percentage, 1),
+                }
+                students_below_pass = len([s for s in students_with_exams if s.avg_percentage < 40.0])
+            else:
+                overall_avg = None
+                top_performer = None
+                students_below_pass = 0
+
+            departments = sorted(list({s.department for s in all_students if s.department}))
+
+            # Applying search & filters
+            queryset = base_queryset
 
             search_query = request.query_params.get('search', '').strip()
             if search_query:
@@ -261,17 +330,79 @@ class AdminStudentsAPIView(APIView):
                 )
 
             department = request.query_params.get('department', '').strip()
-            if department:
+            if department and department != 'all':
                 queryset = queryset.filter(department__iexact=department)
 
-            students = queryset.order_by('user__first_name', 'user__last_name', 'id')
-            serializer = AdminStudentListSerializer(students, many=True)
+            score_range = request.query_params.get('score_range', '').strip().lower()
+            if score_range and score_range != 'all':
+                if score_range == 'excellent':
+                    queryset = queryset.filter(avg_percentage__gte=80.0)
+                elif score_range == 'good':
+                    queryset = queryset.filter(avg_percentage__gte=65.0, avg_percentage__lt=80.0)
+                elif score_range == 'average':
+                    queryset = queryset.filter(avg_percentage__gte=50.0, avg_percentage__lt=65.0)
+                elif score_range == 'needs_improvement':
+                    queryset = queryset.filter(avg_percentage__lt=50.0, attempt_count__gt=0)
+                elif score_range == 'no_exams':
+                    queryset = queryset.filter(Q(attempt_count=0) | Q(avg_percentage__isnull=True))
+
+            # Sorting
+            sort_by = request.query_params.get('sort', '').strip()
+            if sort_by == 'average_desc':
+                queryset = queryset.order_by(F('avg_percentage').desc(nulls_last=True), 'user__first_name')
+            elif sort_by == 'average_asc':
+                queryset = queryset.order_by(F('avg_percentage').asc(nulls_last=True), 'user__first_name')
+            elif sort_by == 'name_asc':
+                queryset = queryset.order_by('user__first_name', 'user__last_name')
+            elif sort_by == 'name_desc':
+                queryset = queryset.order_by('-user__first_name', '-user__last_name')
+            elif sort_by == 'exams_desc':
+                queryset = queryset.order_by('-attempt_count', '-avg_percentage')
+            elif sort_by == 'last_exam_desc':
+                queryset = queryset.order_by(F('last_exam_date').desc(nulls_last=True))
+            else:
+                queryset = queryset.order_by('user__first_name', 'user__last_name', 'id')
+
+            filtered_count = queryset.count()
+            page = request.query_params.get('page')
+            page_size = request.query_params.get('page_size')
+
+            if page:
+                try:
+                    p = max(1, int(page))
+                    ps = max(1, min(100, int(page_size or 10)))
+                except (ValueError, TypeError):
+                    p, ps = 1, 10
+                offset = (p - 1) * ps
+                total_pages = max(1, (filtered_count + ps - 1) // ps) if filtered_count else 1
+                students_page = queryset[offset:offset + ps]
+                pagination_data = {
+                    'page': p,
+                    'page_size': ps,
+                    'total_count': filtered_count,
+                    'total_pages': total_pages,
+                    'has_next': p < total_pages,
+                    'has_prev': p > 1,
+                }
+            else:
+                students_page = queryset
+                pagination_data = None
+
+            serializer = AdminStudentListSerializer(students_page, many=True)
 
             return Response(
                 {
                     'status': 'success',
                     'message': 'Students fetched successfully.',
                     'data': serializer.data,
+                    'pagination': pagination_data,
+                    'stats': {
+                        'total_students': total_students,
+                        'overall_average_score': overall_avg,
+                        'top_performer': top_performer,
+                        'students_below_pass': students_below_pass,
+                    },
+                    'departments': departments,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -285,7 +416,7 @@ class AdminStudentsAPIView(APIView):
             return _error_response(
                 exc,
                 f'Unexpected admin students list error for user_id={request.user.id}',
-                'Unable to fetch students.',
+                'Unable to fetch students list.',
             )
 
     def post(self, request):
@@ -1043,4 +1174,93 @@ class AdminExamDetailAPIView(APIView):
                 exc,
                 f'Admin exam delete error for exam_id={exam_id}',
                 'Unable to delete exam.',
+            )
+
+
+class AdminStudentResultsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request, student_id):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            institution = _get_admin_institution(request.user)
+            student = StudentProfile.objects.select_related('user', 'institution').filter(id=student_id).first()
+            if not student:
+                return Response({'status': 'error', 'message': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+            if institution and student.institution and student.institution != institution:
+                return Response({'status': 'error', 'message': 'Student does not belong to your institution.'}, status=status.HTTP_403_FORBIDDEN)
+
+            attempts = (
+                StudentAttempt.objects.filter(student=student.user)
+                .select_related('exam', 'exam__created_by')
+                .order_by('-submitted_at', '-started_at')
+            )
+
+            completed_attempts = [
+                a for a in attempts
+                if a.status in [StudentAttempt.Status.SUBMITTED, StudentAttempt.Status.AUTO_SUBMITTED, StudentAttempt.Status.EVALUATED]
+            ]
+
+            results_serializer = AdminStudentResultItemSerializer(attempts, many=True)
+            percentages = [
+                (float(a.total_score or 0) / (a.exam.total_marks or 1)) * 100.0
+                for a in completed_attempts
+            ]
+
+            overall_avg = round(sum(percentages) / len(percentages), 1) if percentages else None
+            highest_pct = round(max(percentages), 1) if percentages else None
+            lowest_pct = round(min(percentages), 1) if percentages else None
+
+            # Build chronological trend (oldest to newest)
+            trend = []
+            for a in reversed(completed_attempts):
+                pct = round((float(a.total_score or 0) / (a.exam.total_marks or 1)) * 100.0, 1)
+                d = a.submitted_at or a.started_at
+                trend.append({
+                    'date': d.strftime('%b %d, %Y') if d else '-',
+                    'percentage': pct,
+                    'exam_title': a.exam.title,
+                    'status': a.status,
+                })
+
+            full_name = f"{student.user.first_name} {student.user.last_name}".strip() or student.user.username
+
+            return Response({
+                'status': 'success',
+                'data': {
+                    'student': {
+                        'id': student.id,
+                        'full_name': full_name,
+                        'first_name': student.user.first_name,
+                        'last_name': student.user.last_name,
+                        'email': student.user.email,
+                        'roll_number': student.student_id,
+                        'department': student.department,
+                    },
+                    'summary': {
+                        'total_attempts': len(completed_attempts),
+                        'overall_average': overall_avg,
+                        'highest_score': highest_pct,
+                        'lowest_score': lowest_pct,
+                        'performance_status': (
+                            'N/A' if overall_avg is None else
+                            'Excellent' if overall_avg >= 80 else
+                            'Good' if overall_avg >= 65 else
+                            'Average' if overall_avg >= 50 else 'Needs Improvement'
+                        ),
+                    },
+                    'results': results_serializer.data,
+                    'trend': trend,
+                }
+            }, status=status.HTTP_200_OK)
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected admin student results error for student_id={student_id}',
+                'Unable to fetch student results.',
             )

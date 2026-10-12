@@ -42,16 +42,8 @@ def _is_objective(question):
 
 
 def _objective_correct(question, answer_text):
-    submitted = _normalise(answer_text)
-    correct = question.correct_answer
-    if question.question_type in {'mcq', 'truefalse', 'fillblank'}:
-        try:
-            option_index = {'A': 0, 'B': 1, 'C': 2, 'D': 3}[str(correct).upper()]
-            options = question.options or (['True', 'False'] if question.question_type == 'truefalse' else [])
-            return submitted == _normalise(options[option_index])
-        except (KeyError, TypeError, ValueError, IndexError):
-            return submitted == _normalise(correct)
-    return submitted == _normalise(correct)
+    from .utils.scoring import is_objective_answer_correct
+    return is_objective_answer_correct(question, answer_text)
 
 
 class StudentExamListView(StudentExamPermissionMixin, APIView):
@@ -148,27 +140,8 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
 
         now = timezone.now()
         auto_submitted = now >= _deadline(attempt)
-        subjective_questions = []
-        with transaction.atomic():
-            for question in attempt.exam.questions.all():
-                answer, _ = StudentAnswer.objects.get_or_create(attempt=attempt, question=question)
-                if _is_objective(question):
-                    correct = _objective_correct(question, answer.answer_text)
-                    answer.is_correct = correct
-                    answer.score_awarded = question.marks if correct else 0
-                    answer.save(update_fields=['is_correct', 'score_awarded'])
-                else:
-                    subjective_questions.append(answer)
-            attempt.submitted_at = now
-            attempt.status = StudentAttempt.Status.SUBMITTED if subjective_questions else (
-                StudentAttempt.Status.AUTO_SUBMITTED if auto_submitted else StudentAttempt.Status.EVALUATED
-            )
-            attempt.total_score = sum(answer.score_awarded or 0 for answer in attempt.answers.all())
-            attempt.save(update_fields=['submitted_at', 'status', 'total_score'])
-
-        if subjective_questions:
-            from .evaluation import evaluate_attempt_subjectives
-            threading.Thread(target=evaluate_attempt_subjectives, args=(attempt.id,), daemon=True).start()
+        from .utils.scoring import calculate_and_save_attempt_score
+        calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
 
         return Response(StudentAttemptSerializer(attempt).data)
 

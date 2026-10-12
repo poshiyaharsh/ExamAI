@@ -330,18 +330,89 @@ export type StudentAttemptResponse = StudentAttempt;
 export type AdminStudentRow = {
   id: number;
   full_name: string;
+  first_name?: string;
+  last_name?: string;
   email: string;
   roll_number: string;
   department: string;
   year: string;
   number_of_exams: number;
   average_score: number | null;
+  highest_score?: number | null;
+  lowest_score?: number | null;
+  last_exam_date?: string | null;
+  performance_status?: "Excellent" | "Good" | "Average" | "Needs Improvement" | "N/A";
 };
 
 export type AdminStudentListResponse = {
   status: string;
   message: string;
   data: AdminStudentRow[];
+  pagination?: {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  } | null;
+  stats?: {
+    total_students: number;
+    overall_average_score: number | null;
+    top_performer: {
+      id: number;
+      name: string;
+      email: string;
+      roll_number: string;
+      percentage: number;
+    } | null;
+    students_below_pass: number;
+  };
+  departments?: string[];
+};
+
+export type StudentExamResultItem = {
+  attempt_id: number;
+  exam_id: number;
+  exam_title: string;
+  subject: string;
+  faculty_name: string;
+  faculty_email: string;
+  date: string | null;
+  marks_obtained: number;
+  total_marks: number;
+  percentage: number;
+  is_passed: boolean;
+  status: string;
+};
+
+export type AdminStudentResultsResponse = {
+  status: string;
+  data: {
+    student: {
+      id: number;
+      full_name: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+      roll_number: string;
+      department: string;
+    };
+    summary: {
+      total_attempts: number;
+      overall_average: number | null;
+      highest_score: number | null;
+      lowest_score: number | null;
+      performance_status: string;
+    };
+    results: StudentExamResultItem[];
+    trend: Array<{
+      date: string;
+      percentage: number;
+      exam_title: string;
+      status: string;
+    }>;
+  };
 };
 
 export type AdminStudentDetails = {
@@ -600,6 +671,10 @@ export const adminStudentsApi = {
   getStudents: async (params?: {
     search?: string;
     department?: string;
+    score_range?: string;
+    sort?: string;
+    page?: number;
+    page_size?: number;
   }): Promise<AdminStudentListResponse> => {
     const response = await apiClient.get<AdminStudentListResponse>('/api/admin/students', {
       params,
@@ -608,6 +683,10 @@ export const adminStudentsApi = {
   },
   getStudentById: async (studentId: number): Promise<AdminStudentDetailResponse> => {
     const response = await apiClient.get<AdminStudentDetailResponse>(`/api/admin/students/${studentId}`);
+    return response.data;
+  },
+  getStudentResults: async (studentId: number): Promise<AdminStudentResultsResponse> => {
+    const response = await apiClient.get<AdminStudentResultsResponse>(`/api/admin/students/${studentId}/results`);
     return response.data;
   },
   createStudent: async (payload: AdminStudentCreatePayload): Promise<AdminStudentDetailResponse> => {

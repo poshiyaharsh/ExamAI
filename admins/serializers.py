@@ -13,7 +13,7 @@ from rest_framework import serializers
 from .models import AdminDepartment, AdminInstitution, AdminProfile
 from students.models import StudentProfile
 from faculty.models import FacultyProfile
-from api.models import Exam, Question
+from api.models import Exam, Question, StudentAttempt
 
 
 logger = logging.getLogger(__name__)
@@ -135,23 +135,35 @@ class AdminInstitutionUpdateSerializer(serializers.ModelSerializer):
 
 class AdminStudentListSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
     roll_number = serializers.CharField(source='student_id', read_only=True)
     year = serializers.SerializerMethodField()
     number_of_exams = serializers.SerializerMethodField()
     average_score = serializers.SerializerMethodField()
+    highest_score = serializers.SerializerMethodField()
+    lowest_score = serializers.SerializerMethodField()
+    last_exam_date = serializers.SerializerMethodField()
+    performance_status = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentProfile
         fields = (
             'id',
             'full_name',
+            'first_name',
+            'last_name',
             'email',
             'roll_number',
             'department',
             'year',
             'number_of_exams',
             'average_score',
+            'highest_score',
+            'lowest_score',
+            'last_exam_date',
+            'performance_status',
         )
 
     def get_full_name(self, obj):
@@ -169,11 +181,37 @@ class AdminStudentListSerializer(serializers.ModelSerializer):
         return ''
 
     def get_number_of_exams(self, obj):
-        return int(getattr(obj, 'number_of_exams', 0) or 0)
+        return int(getattr(obj, 'attempt_count', 0) or 0)
 
     def get_average_score(self, obj):
-        average_score = getattr(obj, 'average_score', None)
-        return average_score if isinstance(average_score, (int, float)) else None
+        val = getattr(obj, 'avg_percentage', None)
+        return round(float(val), 1) if val is not None else None
+
+    def get_highest_score(self, obj):
+        val = getattr(obj, 'max_percentage', None)
+        return round(float(val), 1) if val is not None else None
+
+    def get_lowest_score(self, obj):
+        val = getattr(obj, 'min_percentage', None)
+        return round(float(val), 1) if val is not None else None
+
+    def get_last_exam_date(self, obj):
+        val = getattr(obj, 'last_exam_date', None)
+        return val.isoformat() if val else None
+
+    def get_performance_status(self, obj):
+        val = getattr(obj, 'avg_percentage', None)
+        if val is None:
+            return 'N/A'
+        avg = float(val)
+        if avg >= 80.0:
+            return 'Excellent'
+        elif avg >= 65.0:
+            return 'Good'
+        elif avg >= 50.0:
+            return 'Average'
+        else:
+            return 'Needs Improvement'
 
 
 class AdminStudentDetailSerializer(serializers.ModelSerializer):
@@ -185,6 +223,10 @@ class AdminStudentDetailSerializer(serializers.ModelSerializer):
     year = serializers.SerializerMethodField()
     number_of_exams = serializers.SerializerMethodField()
     average_score = serializers.SerializerMethodField()
+    highest_score = serializers.SerializerMethodField()
+    lowest_score = serializers.SerializerMethodField()
+    last_exam_date = serializers.SerializerMethodField()
+    performance_status = serializers.SerializerMethodField()
     institution = serializers.SerializerMethodField()
 
     class Meta:
@@ -200,8 +242,124 @@ class AdminStudentDetailSerializer(serializers.ModelSerializer):
             'year',
             'number_of_exams',
             'average_score',
+            'highest_score',
+            'lowest_score',
+            'last_exam_date',
+            'performance_status',
             'institution',
         )
+
+    def get_full_name(self, obj):
+        full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
+        return full_name or obj.user.username
+
+    def get_year(self, obj):
+        student_id = getattr(obj, 'student_id', '') or ''
+        parts = student_id.split('-')
+        if len(parts) >= 3 and parts[1].isdigit():
+            return parts[1]
+        created_at = getattr(obj, 'created_at', None)
+        if created_at:
+            return timezone.localtime(created_at).strftime('%Y')
+        return ''
+
+    def get_number_of_exams(self, obj):
+        return int(getattr(obj, 'attempt_count', 0) or 0)
+
+    def get_average_score(self, obj):
+        val = getattr(obj, 'avg_percentage', None)
+        return round(float(val), 1) if val is not None else None
+
+    def get_highest_score(self, obj):
+        val = getattr(obj, 'max_percentage', None)
+        return round(float(val), 1) if val is not None else None
+
+    def get_lowest_score(self, obj):
+        val = getattr(obj, 'min_percentage', None)
+        return round(float(val), 1) if val is not None else None
+
+    def get_last_exam_date(self, obj):
+        val = getattr(obj, 'last_exam_date', None)
+        return val.isoformat() if val else None
+
+    def get_performance_status(self, obj):
+        val = getattr(obj, 'avg_percentage', None)
+        if val is None:
+            return 'N/A'
+        avg = float(val)
+        if avg >= 80.0:
+            return 'Excellent'
+        elif avg >= 65.0:
+            return 'Good'
+        elif avg >= 50.0:
+            return 'Average'
+        else:
+            return 'Needs Improvement'
+
+    def get_institution(self, obj):
+        if not obj.institution:
+            return None
+        return {
+            'id': obj.institution.id,
+            'institution_name': obj.institution.institution_name,
+            'institution_code': obj.institution.institution_code,
+        }
+
+
+class AdminStudentResultItemSerializer(serializers.ModelSerializer):
+    attempt_id = serializers.IntegerField(source='id')
+    exam_id = serializers.IntegerField(source='exam.id')
+    exam_title = serializers.CharField(source='exam.title')
+    subject = serializers.SerializerMethodField()
+    faculty_name = serializers.SerializerMethodField()
+    faculty_email = serializers.EmailField(source='exam.created_by.email')
+    date = serializers.SerializerMethodField()
+    marks_obtained = serializers.SerializerMethodField()
+    total_marks = serializers.IntegerField(source='exam.total_marks')
+    percentage = serializers.SerializerMethodField()
+    is_passed = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StudentAttempt
+        fields = (
+            'attempt_id',
+            'exam_id',
+            'exam_title',
+            'subject',
+            'faculty_name',
+            'faculty_email',
+            'date',
+            'marks_obtained',
+            'total_marks',
+            'percentage',
+            'is_passed',
+            'status',
+        )
+
+    def get_subject(self, obj):
+        if isinstance(obj.exam.topics, list) and obj.exam.topics:
+            return ', '.join(str(t) for t in obj.exam.topics)
+        return 'General'
+
+    def get_faculty_name(self, obj):
+        u = obj.exam.created_by
+        return f'{u.first_name} {u.last_name}'.strip() or u.username
+
+    def get_date(self, obj):
+        val = obj.submitted_at or obj.started_at
+        return val.isoformat() if val else None
+
+    def get_marks_obtained(self, obj):
+        return round(float(obj.total_score or 0.0), 1)
+
+    def get_percentage(self, obj):
+        total = obj.exam.total_marks or 1
+        return round((float(obj.total_score or 0.0) / total) * 100.0, 1)
+
+    def get_is_passed(self, obj):
+        total = obj.exam.total_marks or 1
+        pct = (float(obj.total_score or 0.0) / total) * 100.0
+        return pct >= 40.0
 
     def get_full_name(self, obj):
         full_name = f'{obj.user.first_name} {obj.user.last_name}'.strip()
