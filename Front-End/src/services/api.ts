@@ -372,6 +372,93 @@ export type AdminStudentListResponse = {
   departments?: string[];
 };
 
+export type StudentPerformanceSummary = {
+  total_attempts: number;
+  overall_average: number | null;
+  highest_score: number | null;
+  lowest_score: number | null;
+  pass_count: number;
+  fail_count: number;
+  pass_rate: number | null;
+  last_exam_date: string | null;
+  performance_status: "Excellent" | "Good" | "Average" | "Needs Improvement" | "N/A";
+  department: string;
+  department_rank?: number | null;
+  department_total_students?: number | null;
+  department_percentile?: number | null;
+};
+
+export type StudentPerformanceSummaryResponse = {
+  status: string;
+  data: StudentPerformanceSummary;
+};
+
+export type StudentPerformanceResultRow = {
+  attempt_id: number;
+  exam_id: number;
+  exam_title: string;
+  subject: string;
+  department: string;
+  faculty_name: string;
+  faculty_email: string;
+  date: string;
+  marks_obtained: number;
+  total_marks: number;
+  percentage: number;
+  is_passed: boolean;
+  time_taken_seconds: number | null;
+  time_taken: string;
+  status: string;
+};
+
+export type StudentPerformanceResultsResponse = {
+  status: string;
+  data: StudentPerformanceResultRow[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
+};
+
+export type StudentPerformanceTrendItem = {
+  attempt_id: number;
+  date: string;
+  iso_date: string | null;
+  percentage: number;
+  marks_obtained: number;
+  total_marks: number;
+  exam_title: string;
+  status: string;
+};
+
+export type StudentPerformanceTrendResponse = {
+  status: string;
+  data: StudentPerformanceTrendItem[];
+};
+
+export type StudentSubjectItem = {
+  subject: string;
+  average_score: number;
+  exam_count: number;
+  highest_score: number;
+  lowest_score: number;
+  is_strongest?: boolean;
+  is_weakest?: boolean;
+};
+
+export type StudentPerformanceSubjectsResponse = {
+  status: string;
+  data: {
+    subjects: StudentSubjectItem[];
+    strongest_subject: string | null;
+    weakest_subject: string | null;
+  };
+};
+
 export type StudentExamResultItem = {
   attempt_id: number;
   exam_id: number;
@@ -628,6 +715,36 @@ export const studentExamApi = {
   },
   getAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
     const response = await apiClient.get<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/`);
+    return response.data;
+  },
+};
+
+export const studentPerformanceApi = {
+  getSummary: async (): Promise<StudentPerformanceSummaryResponse> => {
+    const response = await apiClient.get<StudentPerformanceSummaryResponse>("/api/student/performance/summary/");
+    return response.data;
+  },
+  getResults: async (params?: {
+    search?: string;
+    subject?: string;
+    status?: string;
+    start_date?: string;
+    end_date?: string;
+    sort?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<StudentPerformanceResultsResponse> => {
+    const response = await apiClient.get<StudentPerformanceResultsResponse>("/api/student/performance/results/", {
+      params,
+    });
+    return response.data;
+  },
+  getTrend: async (): Promise<StudentPerformanceTrendResponse> => {
+    const response = await apiClient.get<StudentPerformanceTrendResponse>("/api/student/performance/trend/");
+    return response.data;
+  },
+  getSubjects: async (): Promise<StudentPerformanceSubjectsResponse> => {
+    const response = await apiClient.get<StudentPerformanceSubjectsResponse>("/api/student/performance/subjects/");
     return response.data;
   },
 };

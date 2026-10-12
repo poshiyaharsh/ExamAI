@@ -9,6 +9,12 @@ from .student_exam import (
     StudentExamListView,
     SubmitAttemptView,
 )
+from .student_performance import (
+    StudentPerformanceResultsView,
+    StudentPerformanceSubjectsView,
+    StudentPerformanceSummaryView,
+    StudentPerformanceTrendView,
+)
 from .views import (
     AuthMeAPIView,
     ChangePasswordAPIView,
@@ -32,6 +38,14 @@ urlpatterns = [
     path('student/attempts/<int:attempt_id>/save/', SaveAnswerView.as_view(), name='student-answer-save'),
     path('student/attempts/<int:attempt_id>/submit/', SubmitAttemptView.as_view(), name='student-attempt-submit'),
     path('student/attempts/<int:attempt_id>/', StudentAttemptDetailView.as_view(), name='student-attempt-detail'),
+    path('student/performance/summary', StudentPerformanceSummaryView.as_view(), name='student-performance-summary-no-slash'),
+    path('student/performance/summary/', StudentPerformanceSummaryView.as_view(), name='student-performance-summary'),
+    path('student/performance/results', StudentPerformanceResultsView.as_view(), name='student-performance-results-no-slash'),
+    path('student/performance/results/', StudentPerformanceResultsView.as_view(), name='student-performance-results'),
+    path('student/performance/trend', StudentPerformanceTrendView.as_view(), name='student-performance-trend-no-slash'),
+    path('student/performance/trend/', StudentPerformanceTrendView.as_view(), name='student-performance-trend'),
+    path('student/performance/subjects', StudentPerformanceSubjectsView.as_view(), name='student-performance-subjects-no-slash'),
+    path('student/performance/subjects/', StudentPerformanceSubjectsView.as_view(), name='student-performance-subjects'),
     path('departments', DepartmentListAPIView.as_view(), name='department-list-no-slash'),
     path('departments/', DepartmentListAPIView.as_view(), name='department-list'),
     path('auth/me', AuthMeAPIView.as_view(), name='auth-me-no-slash'),
