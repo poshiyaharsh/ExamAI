@@ -26,12 +26,17 @@ class FacultyDashboardView(APIView):
     def get(self, request):
         user = request.user
         now = timezone.now()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(user)
+        if not tenant:
+            return Response({'status': 'error', 'message': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
         faculty_profile = getattr(user, 'faculty_profile', None)
         dept = faculty_profile.department if faculty_profile else ''
 
         # 1. Profile information
         full_name = f"{user.first_name} {user.last_name}".strip() or user.username
-        faculty_exams = Exam.objects.filter(created_by=user)
+        faculty_exams = Exam.objects.filter(created_by=user, institution=tenant)
 
         all_topics = set()
         for topics_list in faculty_exams.values_list('topics', flat=True):
@@ -69,7 +74,7 @@ class FacultyDashboardView(APIView):
             ends_at__lt=now,
         ).count()
 
-        total_students = StudentProfile.objects.filter(department__iexact=dept).count() if dept else 0
+        total_students = StudentProfile.objects.filter(institution=tenant, department__iexact=dept).count() if dept else 0
 
         pct_expr = ExpressionWrapper(
             F('total_score') * 100.0 / F('exam__total_marks'),
@@ -77,6 +82,7 @@ class FacultyDashboardView(APIView):
         )
 
         faculty_attempts = StudentAttempt.objects.filter(
+            institution=tenant,
             exam__created_by=user,
             status__in=COMPLETED_STATUSES,
         )
@@ -277,10 +283,10 @@ class FacultyDashboardView(APIView):
         unattempted_list = []
         if dept:
             attempted_student_ids = set(
-                StudentAttempt.objects.filter(exam__department__iexact=dept).values_list('student_id', flat=True)
+                StudentAttempt.objects.filter(institution=tenant, exam__department__iexact=dept).values_list('student_id', flat=True)
             )
             unattempted_students = (
-                StudentProfile.objects.filter(department__iexact=dept)
+                StudentProfile.objects.filter(institution=tenant, department__iexact=dept)
                 .exclude(user_id__in=attempted_student_ids)
                 .select_related('user')[:5]
             )
@@ -301,6 +307,7 @@ class FacultyDashboardView(APIView):
         # 10. Hardest Questions
         hardest_qs = (
             StudentAnswer.objects.filter(
+                institution=tenant,
                 attempt__exam__created_by=user,
                 attempt__status__in=COMPLETED_STATUSES,
             )

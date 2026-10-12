@@ -180,6 +180,7 @@ def _run_generation(exam_id, model_name, topics, question_types, total_marks, di
             for question_order, generated_question in enumerate(generated_questions, start=1):
                 Question.objects.create(
                     exam=exam,
+                    institution=exam.institution,
                     order=question_order,
                     question_type=generated_question['type'],
                     difficulty=generated_question['difficulty'],
@@ -254,12 +255,18 @@ class GeneratePaperView(APIView):
             logger.debug('No syllabus uploaded; generation will use topics only.')
 
         from .utils.departments import get_faculty_department, normalize_department
+        from api.tenant import get_user_institution
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant_inst:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
         faculty_dept = get_faculty_department(request.user)
         client_dept = normalize_department(request.data.get('department'))
         assigned_dept = faculty_dept or client_dept
 
         try:
             exam = Exam.objects.create(
+                institution=tenant_inst,
                 title=title,
                 created_by=request.user,
                 department=assigned_dept,

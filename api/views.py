@@ -112,6 +112,17 @@ class AuthMeAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        from api.tenant import get_user_institution
+        institution = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        inst_payload = None
+        if institution:
+            inst_payload = {
+                'id': institution.id,
+                'institution_name': institution.institution_name,
+                'institution_code': institution.institution_code,
+                'status': getattr(institution, 'status', 'active'),
+            }
+
         return Response(
             {
                 'status': 'success',
@@ -121,6 +132,7 @@ class AuthMeAPIView(APIView):
                     'first_name': request.user.first_name,
                     'last_name': request.user.last_name,
                     'email': request.user.email,
+                    'institution': inst_payload,
                 },
                 'role': role,
             },
@@ -344,7 +356,7 @@ class InstitutionListAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        institutions = AdminInstitution.objects.order_by('institution_name')
+        institutions = AdminInstitution.objects.filter(status=AdminInstitution.STATUS_ACTIVE).order_by('institution_name')
         serializer = InstitutionSerializer(institutions, many=True)
         return Response(
             {
@@ -446,11 +458,11 @@ class PublicStatsAPIView(APIView):
         from faculty.models import FacultyProfile
         from admins.models import AdminInstitution
 
-        total_students = StudentProfile.objects.count()
-        total_faculty = FacultyProfile.objects.count()
-        total_exams = Exam.objects.filter(status=Exam.Status.PUBLISHED).count()
+        total_institutes = AdminInstitution.objects.filter(status=AdminInstitution.STATUS_ACTIVE).count()
+        total_students = StudentProfile.objects.filter(institution__status=AdminInstitution.STATUS_ACTIVE).count()
+        total_faculty = FacultyProfile.objects.filter(institution__status=AdminInstitution.STATUS_ACTIVE).count()
+        total_exams = Exam.objects.filter(status=Exam.Status.PUBLISHED, institution__status=AdminInstitution.STATUS_ACTIVE).count()
         total_departments = len(DEFAULT_DEPARTMENT_NAMES)
-        total_institutes = AdminInstitution.objects.count()
 
         data = {
             'total_students': total_students,

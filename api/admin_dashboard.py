@@ -33,19 +33,17 @@ class AdminDashboardView(APIView):
         week_ago = now - datetime.timedelta(days=7)
 
         # 1. Scoping by Institution
-        institution = AdminInstitution.objects.filter(admin=admin_user).first()
-
-        students_qs = StudentProfile.objects.select_related('user', 'institution')
-        faculty_qs = FacultyProfile.objects.select_related('user', 'institution')
-        exams_qs = Exam.objects.select_related('created_by', 'created_by__faculty_profile')
-
-        if institution:
-            students_qs = students_qs.filter(institution=institution)
-            faculty_qs = faculty_qs.filter(institution=institution)
-            exams_qs = exams_qs.filter(
-                Q(created_by__faculty_profile__institution=institution)
-                | Q(created_by__faculty_profile__institution__isnull=True)
+        from api.tenant import get_user_institution
+        institution = getattr(request, 'tenant', None) or get_user_institution(admin_user)
+        if not institution:
+            return Response(
+                {'status': 'error', 'message': 'Admin institution not found.'},
+                status=status.HTTP_404_NOT_FOUND,
             )
+
+        students_qs = StudentProfile.objects.select_related('user', 'institution').filter(institution=institution)
+        faculty_qs = FacultyProfile.objects.select_related('user', 'institution').filter(institution=institution)
+        exams_qs = Exam.objects.select_related('created_by', 'created_by__faculty_profile').filter(institution=institution)
 
         # 2. Filters: department and range
         dept_param = request.query_params.get('department', '').strip()
@@ -75,6 +73,7 @@ class AdminDashboardView(APIView):
 
         attempts_qs = (
             StudentAttempt.objects.filter(
+                institution=institution,
                 exam__in=exams_qs,
                 status__in=COMPLETED_STATUSES,
             )

@@ -23,7 +23,11 @@ class FacultyExamViewMixin:
     permission_classes = [IsAuthenticated, IsFacultyUser]
 
     def get_exam(self, request, exam_id):
-        return Exam.objects.filter(created_by=request.user, id=exam_id).first()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return None
+        return Exam.objects.filter(created_by=request.user, institution=tenant, id=exam_id).first()
 
 
 class ExamListView(APIView):
@@ -31,8 +35,13 @@ class ExamListView(APIView):
     pagination_class = None
 
     def get(self, request):
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response([])
+
         exams = (
-            Exam.objects.filter(created_by=request.user)
+            Exam.objects.filter(created_by=request.user, institution=tenant)
             .annotate(question_count=Count('questions', distinct=True), attempts_count=Count('attempts', distinct=True))
             .order_by('-created_at')
         )
@@ -62,7 +71,7 @@ class QuestionUpdateView(FacultyExamViewMixin, APIView):
         exam = self.get_exam(request, exam_id)
         if not exam:
             return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
-        question = Question.objects.filter(exam=exam, id=question_id).first()
+        question = Question.objects.filter(exam=exam, institution=exam.institution, id=question_id).first()
         if not question:
             return Response({'detail': 'Question not found.'}, status=status.HTTP_404_NOT_FOUND)
         serializer = QuestionUpdateSerializer(question, data=request.data)

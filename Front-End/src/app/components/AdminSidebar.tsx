@@ -16,9 +16,10 @@ export interface AdminSidebarProps {
   onLogout: () => void;
   displayName: string;
   displayEmail: string;
+  institutionName?: string;
 }
 
-export function AdminSidebar({ open, onLogout, displayName, displayEmail }: AdminSidebarProps) {
+export function AdminSidebar({ open, onLogout, displayName, displayEmail, institutionName }: AdminSidebarProps) {
   return (
     <motion.aside
       initial={{ x: -280 }}
@@ -33,9 +34,16 @@ export function AdminSidebar({ open, onLogout, displayName, displayEmail }: Admi
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
               <LayoutDashboard className="w-6 h-6 text-white" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="font-semibold text-sidebar-foreground">ExamAI</div>
-              <div className="text-xs text-muted-foreground">Admin</div>
+              <div className="text-xs text-muted-foreground flex items-center gap-1 truncate">
+                <span>Admin</span>
+                {institutionName && (
+                  <span className="text-[11px] text-primary font-medium truncate max-w-[140px]" title={institutionName}>
+                    • {institutionName}
+                  </span>
+                )}
+              </div>
             </div>
           </Link>
         </div>

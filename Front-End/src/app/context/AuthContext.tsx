@@ -48,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           first_name: meResponse.user.first_name,
           last_name: meResponse.user.last_name,
           email: meResponse.user.email,
+          institution: meResponse.user.institution || storedSession.user?.institution || null,
         },
       };
 

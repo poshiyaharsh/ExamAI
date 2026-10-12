@@ -73,10 +73,15 @@ def _error_response(exc, log_message, fallback_message):
 
 
 def _build_token_payload(user):
+    from api.tenant import get_user_institution
+    institution = get_user_institution(user)
+    inst_id = institution.id if institution else None
     refresh = RefreshToken.for_user(user)
     refresh['role'] = 'faculty'
+    refresh['institution_id'] = inst_id
     access = refresh.access_token
     access['role'] = 'faculty'
+    access['institution_id'] = inst_id
     return {
         'refresh': str(refresh),
         'access': str(access),
@@ -414,6 +419,7 @@ def _save_generated_paper(faculty, validated_data, generated):
         PaperQuestion.objects.bulk_create([
             PaperQuestion(
                 paper=paper,
+                institution=faculty.institution,
                 question_number=question['question_number'],
                 question_type=question['type'],
                 difficulty=question['difficulty'],
@@ -566,6 +572,16 @@ class FacultyLoginAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
 
+        profile = _get_or_create_faculty_profile(user)
+        if profile.institution and getattr(profile.institution, 'status', 'active') == 'suspended':
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Your institution has been suspended. Please contact your administrator.',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         return Response(
             {
                 'status': 'success',
@@ -577,6 +593,11 @@ class FacultyLoginAPIView(APIView):
                     'last_name': user.last_name,
                     'email': user.email,
                     'role': 'faculty',
+                    'institution': {
+                        'id': profile.institution.id,
+                        'name': profile.institution.institution_name,
+                        'code': profile.institution.institution_code,
+                    } if profile.institution else None,
                 },
             },
             status=status.HTTP_200_OK,

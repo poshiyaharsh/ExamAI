@@ -63,6 +63,12 @@ def check_student_exam_access(user, exam) -> Tuple[bool, str]:
     if not user or not user.is_authenticated:
         return False, 'Authentication required.'
 
+    from api.tenant import get_user_institution
+    stu_inst = get_user_institution(user)
+    exam_inst_id = getattr(exam, 'institution_id', None)
+    if stu_inst and exam_inst_id and stu_inst.id != exam_inst_id:
+        return False, 'Access denied. This exam belongs to a different institution.'
+
     student_dept = get_student_department(user)
     if not student_dept:
         return False, 'Your student profile does not have a department assigned.'

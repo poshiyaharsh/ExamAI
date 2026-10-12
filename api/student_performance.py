@@ -25,11 +25,15 @@ class StudentPerformancePermissionMixin:
     permission_classes = [IsAuthenticated, IsStudentUser]
 
 
-def _get_student_completed_attempts(user):
+def _get_student_completed_attempts(user, tenant=None):
     """
     Returns queryset of completed attempts for the authenticated student,
-    strictly scoped to their assigned department.
+    strictly scoped to their assigned department and tenant institution.
     """
+    if not tenant:
+        from api.tenant import get_user_institution
+        tenant = get_user_institution(user)
+
     pct_expr = ExpressionWrapper(
         F('total_score') * 100.0 / F('exam__total_marks'),
         output_field=FloatField()
@@ -38,6 +42,7 @@ def _get_student_completed_attempts(user):
     qs = (
         StudentAttempt.objects.filter(
             student=user,
+            institution=tenant,
             status__in=COMPLETED_STATUSES,
         )
         .select_related('exam', 'exam__created_by')
@@ -66,7 +71,9 @@ def _format_time_taken(started_at, submitted_at):
 
 class StudentPerformanceSummaryView(StudentPerformancePermissionMixin, APIView):
     def get(self, request):
-        attempts_qs, student_dept, pct_expr = _get_student_completed_attempts(request.user)
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        attempts_qs, student_dept, pct_expr = _get_student_completed_attempts(request.user, tenant=tenant)
 
         stats = attempts_qs.aggregate(
             total_attempts=Count('id'),
@@ -108,6 +115,7 @@ class StudentPerformanceSummaryView(StudentPerformancePermissionMixin, APIView):
             try:
                 dept_student_stats = (
                     StudentAttempt.objects.filter(
+                        institution=tenant,
                         status__in=COMPLETED_STATUSES,
                         exam__department__iexact=student_dept,
                         student__student_profile__department__iexact=student_dept,
@@ -154,7 +162,9 @@ class StudentPerformanceSummaryView(StudentPerformancePermissionMixin, APIView):
 
 class StudentPerformanceResultsView(StudentPerformancePermissionMixin, APIView):
     def get(self, request):
-        attempts_qs, student_dept, _ = _get_student_completed_attempts(request.user)
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        attempts_qs, student_dept, _ = _get_student_completed_attempts(request.user, tenant=tenant)
 
         # Filters
         search_query = request.query_params.get('search', '').strip()
@@ -268,7 +278,9 @@ class StudentPerformanceResultsView(StudentPerformancePermissionMixin, APIView):
 
 class StudentPerformanceTrendView(StudentPerformancePermissionMixin, APIView):
     def get(self, request):
-        attempts_qs, _, _ = _get_student_completed_attempts(request.user)
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        attempts_qs, _, _ = _get_student_completed_attempts(request.user, tenant=tenant)
         # Chronological order for chart
         attempts = attempts_qs.order_by('submitted_at', 'started_at', 'id')
 
@@ -295,7 +307,9 @@ class StudentPerformanceTrendView(StudentPerformancePermissionMixin, APIView):
 
 class StudentPerformanceSubjectsView(StudentPerformancePermissionMixin, APIView):
     def get(self, request):
-        attempts_qs, _, pct_expr = _get_student_completed_attempts(request.user)
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        attempts_qs, _, pct_expr = _get_student_completed_attempts(request.user, tenant=tenant)
 
         # Database aggregation: GROUP BY exam__topics
         grouped_topics = (

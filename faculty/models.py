@@ -14,18 +14,28 @@ class FacultyProfile(models.Model):
         blank=True,
         related_name='faculty_profiles',
     )
-    employee_id = models.CharField(max_length=12, unique=True, blank=True, null=True)
+    employee_id = models.CharField(max_length=12, blank=True, null=True)
     department = models.CharField(max_length=120, blank=True, default='')
     designation = models.CharField(max_length=120, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['institution', 'employee_id'],
+                name='unique_institution_employee_id',
+            ),
+        ]
+
     @staticmethod
-    def build_next_employee_id():
+    def build_next_employee_id(institution=None):
         year = timezone.now().year
         prefix = f'FAC-{year}-'
+        qs = FacultyProfile.objects.filter(employee_id__startswith=prefix)
+        if institution:
+            qs = qs.filter(institution=institution)
         latest_employee_id = (
-            FacultyProfile.objects.filter(employee_id__startswith=prefix)
-            .order_by('-employee_id')
+            qs.order_by('-employee_id')
             .values_list('employee_id', flat=True)
             .first()
         )
@@ -45,8 +55,8 @@ class FacultyProfile(models.Model):
             return self.employee_id
 
         for _ in range(5):
-            candidate = self.build_next_employee_id()
-            if not FacultyProfile.objects.filter(employee_id=candidate).exists():
+            candidate = self.build_next_employee_id(institution=self.institution)
+            if not FacultyProfile.objects.filter(institution=self.institution, employee_id=candidate).exists():
                 self.employee_id = candidate
                 self.save(update_fields=['employee_id'])
                 return self.employee_id
@@ -58,7 +68,8 @@ class FacultyProfile(models.Model):
 
 
 def faculty_syllabus_upload_path(instance, filename):
-    return f'syllabi/faculty_{instance.faculty_id}/{filename}'
+    inst_id = getattr(instance, 'institution_id', None) or 'general'
+    return f'syllabi/inst_{inst_id}/faculty_{instance.faculty_id}/{filename}'
 
 
 class SyllabusUpload(models.Model):
@@ -101,6 +112,12 @@ class Paper(models.Model):
 
 class PaperQuestion(models.Model):
     paper = models.ForeignKey(Paper, on_delete=models.CASCADE, related_name='questions')
+    institution = models.ForeignKey(
+        AdminInstitution,
+        on_delete=models.CASCADE,
+        related_name='paper_questions',
+        db_index=True,
+    )
     question_number = models.PositiveIntegerField()
     question_type = models.CharField(max_length=40)
     difficulty = models.CharField(max_length=20)
@@ -112,6 +129,9 @@ class PaperQuestion(models.Model):
     class Meta:
         ordering = ['question_number']
         unique_together = ('paper', 'question_number')
+        indexes = [
+            models.Index(fields=['institution', 'paper']),
+        ]
 
     def __str__(self):
         return f'{self.paper_id} Q{self.question_number}'

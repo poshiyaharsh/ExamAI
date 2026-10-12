@@ -59,10 +59,15 @@ def _error_response(exc, log_message, fallback_message):
 
 
 def _build_token_payload(user):
+    from api.tenant import get_user_institution
+    institution = get_user_institution(user)
+    inst_id = institution.id if institution else None
     refresh = RefreshToken.for_user(user)
     refresh['role'] = 'admin'
+    refresh['institution_id'] = inst_id
     access = refresh.access_token
     access['role'] = 'admin'
+    access['institution_id'] = inst_id
     return {
         'refresh': str(refresh),
         'access': str(access),
@@ -112,6 +117,16 @@ class AdminLoginAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
 
+        institution = _get_admin_institution(user)
+        if institution and getattr(institution, 'status', 'active') == 'suspended':
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Your institution has been suspended. Please contact your administrator.',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         return Response(
             {
                 'status': 'success',
@@ -123,6 +138,11 @@ class AdminLoginAPIView(APIView):
                     'last_name': user.last_name,
                     'email': user.email,
                     'role': 'admin',
+                    'institution': {
+                        'id': institution.id,
+                        'name': institution.institution_name,
+                        'code': institution.institution_code,
+                    } if institution else None,
                 },
             },
             status=status.HTTP_200_OK,
@@ -888,19 +908,37 @@ class AdminExamsAPIView(APIView):
 
         try:
             institution = _get_admin_institution(request.user)
+            if not institution:
+                return Response(
+                    {
+                        'status': 'success',
+                        'message': 'Institution information not created yet.',
+                        'data': [],
+                        'pagination': None,
+                        'stats': {
+                            'total_exams': 0,
+                            'published_exams': 0,
+                            'draft_exams': 0,
+                            'created_this_week': 0,
+                        },
+                        'filter_options': {
+                            'faculties': [],
+                            'departments': [],
+                            'subjects': [],
+                            'statuses': [],
+                        },
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
             base_queryset = (
                 Exam.objects.select_related('created_by', 'created_by__faculty_profile')
+                .filter(institution=institution)
                 .annotate(
                     question_count=Count('questions', distinct=True),
                     attempts_count=Count('attempts', distinct=True),
                 )
             )
-
-            if institution:
-                base_queryset = base_queryset.filter(
-                    Q(created_by__faculty_profile__institution=institution)
-                    | Q(created_by__faculty_profile__institution__isnull=True)
-                )
 
             now = timezone.now()
             week_ago = now - datetime.timedelta(days=7)
@@ -1064,13 +1102,14 @@ class AdminExamDetailAPIView(APIView):
 
     def _get_exam(self, request, exam_id):
         institution = _get_admin_institution(request.user)
-        queryset = Exam.objects.select_related('created_by', 'created_by__faculty_profile').prefetch_related('questions', 'attempts')
-        if institution:
-            queryset = queryset.filter(
-                Q(created_by__faculty_profile__institution=institution)
-                | Q(created_by__faculty_profile__institution__isnull=True)
-            )
-        return queryset.filter(id=exam_id).first()
+        if not institution:
+            return None
+        return (
+            Exam.objects.select_related('created_by', 'created_by__faculty_profile')
+            .prefetch_related('questions', 'attempts')
+            .filter(id=exam_id, institution=institution)
+            .first()
+        )
 
     def get(self, request, exam_id):
         if not _ensure_admin_user(request.user):
@@ -1192,14 +1231,15 @@ class AdminStudentResultsAPIView(APIView):
 
         try:
             institution = _get_admin_institution(request.user)
-            student = StudentProfile.objects.select_related('user', 'institution').filter(id=student_id).first()
+            if not institution:
+                return Response({'status': 'error', 'message': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            student = StudentProfile.objects.select_related('user', 'institution').filter(id=student_id, institution=institution).first()
             if not student:
                 return Response({'status': 'error', 'message': 'Student not found.'}, status=status.HTTP_404_NOT_FOUND)
-            if institution and student.institution and student.institution != institution:
-                return Response({'status': 'error', 'message': 'Student does not belong to your institution.'}, status=status.HTTP_403_FORBIDDEN)
 
             attempts = (
-                StudentAttempt.objects.filter(student=student.user)
+                StudentAttempt.objects.filter(student=student.user, institution=institution)
                 .select_related('exam', 'exam__created_by')
                 .order_by('-submitted_at', '-started_at')
             )

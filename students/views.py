@@ -46,10 +46,15 @@ def _error_response(exc, log_message, fallback_message):
 
 
 def _build_token_payload(user):
+    from api.tenant import get_user_institution
+    institution = get_user_institution(user)
+    inst_id = institution.id if institution else None
     refresh = RefreshToken.for_user(user)
     refresh['role'] = 'student'
+    refresh['institution_id'] = inst_id
     access = refresh.access_token
     access['role'] = 'student'
+    access['institution_id'] = inst_id
     return {
         'refresh': str(refresh),
         'access': str(access),
@@ -130,6 +135,16 @@ class StudentLoginAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
 
+        profile = _get_or_create_student_profile(user)
+        if profile.institution and getattr(profile.institution, 'status', 'active') == 'suspended':
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Your institution has been suspended. Please contact your administrator.',
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         return Response(
             {
                 'status': 'success',
@@ -141,6 +156,11 @@ class StudentLoginAPIView(APIView):
                     'last_name': user.last_name,
                     'email': user.email,
                     'role': 'student',
+                    'institution': {
+                        'id': profile.institution.id,
+                        'name': profile.institution.institution_name,
+                        'code': profile.institution.institution_code,
+                    } if profile.institution else None,
                 },
             },
             status=status.HTTP_200_OK,
@@ -174,6 +194,40 @@ class StudentProfileAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+    def put(self, request):
+        try:
+            profile = _get_or_create_student_profile(request.user)
+        except (OperationalError, ProgrammingError) as exc:
+            return _error_response(
+                exc,
+                f'Student profile update database error for user_id={request.user.id}',
+                'Database schema issue detected. Please run migrations.',
+            )
+        except Exception as exc:
+            return _error_response(
+                exc,
+                f'Unexpected student profile update error for user_id={request.user.id}',
+                'Unable to update student profile.',
+            )
+
+        serializer = StudentProfileDepartmentUpdateSerializer(profile, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        response_serializer = StudentProfileSerializer(profile)
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Department updated successfully.',
+                'data': response_serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request):
+        return self.put(request)
+
 
 
 class StudentExamListAPIView(APIView):
@@ -209,7 +263,15 @@ class StudentExamStartAPIView(APIView):
         paper = _student_paper_queryset(student).filter(id=paper_id).first()
         if not paper:
             return Response({'status': 'error', 'message': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
-        attempt, _ = ExamAttempt.objects.get_or_create(student=student, paper=paper, status=ExamAttempt.STATUS_STARTED, defaults={'max_score': paper.total_marks})
+        attempt, _ = ExamAttempt.objects.get_or_create(
+            student=student,
+            paper=paper,
+            status=ExamAttempt.STATUS_STARTED,
+            defaults={'institution': student.institution, 'max_score': paper.total_marks},
+        )
+        if not attempt.institution:
+            attempt.institution = student.institution
+            attempt.save(update_fields=['institution'])
         return Response({'status': 'success', 'message': 'Exam started successfully.', 'data': {'attempt': ExamAttemptSerializer(attempt).data, 'exam': StudentExamDetailSerializer(paper).data}})
 
 

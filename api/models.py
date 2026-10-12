@@ -39,6 +39,9 @@ class PasswordResetOTP(models.Model):
 		return timezone.now() > self.reset_token_expires_at
 
 
+from admins.models import AdminInstitution
+
+
 class Exam(models.Model):
 	class Status(models.TextChoices):
 		GENERATING = 'generating', 'Generating'
@@ -47,6 +50,12 @@ class Exam(models.Model):
 		PUBLISHED = 'published', 'Published'
 		CLOSED = 'closed', 'Closed'
 
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='exams',
+		db_index=True,
+	)
 	title = models.CharField(max_length=255)
 	created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams')
 	department = models.CharField(max_length=120, blank=True, default='', db_index=True)
@@ -64,6 +73,13 @@ class Exam(models.Model):
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
+	class Meta:
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['institution', 'department', 'status']),
+			models.Index(fields=['institution', 'created_by']),
+		]
+
 
 class Question(models.Model):
 	class QuestionType(models.TextChoices):
@@ -78,6 +94,12 @@ class Question(models.Model):
 		HARD = 'hard', 'Hard'
 
 	exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='questions')
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='questions',
+		db_index=True,
+	)
 	order = models.PositiveIntegerField()
 	question_type = models.CharField(max_length=20, choices=QuestionType.choices)
 	difficulty = models.CharField(max_length=10, choices=Difficulty.choices)
@@ -88,6 +110,12 @@ class Question(models.Model):
 	marks = models.PositiveIntegerField()
 	topic = models.CharField(max_length=255, blank=True, default='')
 
+	class Meta:
+		ordering = ['order']
+		indexes = [
+			models.Index(fields=['institution', 'exam']),
+		]
+
 
 class StudentAttempt(models.Model):
 	class Status(models.TextChoices):
@@ -97,6 +125,12 @@ class StudentAttempt(models.Model):
 		EVALUATED = 'evaluated', 'Evaluated'
 
 	exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='attempts')
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='attempts',
+		db_index=True,
+	)
 	student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='exam_attempts')
 	started_at = models.DateTimeField(auto_now_add=True)
 	submitted_at = models.DateTimeField(null=True, blank=True)
@@ -105,14 +139,27 @@ class StudentAttempt(models.Model):
 
 	class Meta:
 		unique_together = ('exam', 'student')
+		indexes = [
+			models.Index(fields=['institution', 'student']),
+			models.Index(fields=['institution', 'exam']),
+		]
 
 
 class StudentAnswer(models.Model):
 	attempt = models.ForeignKey(StudentAttempt, on_delete=models.CASCADE, related_name='answers')
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='student_answers',
+		db_index=True,
+	)
 	question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='student_answers')
 	answer_text = models.TextField(blank=True, default='')
 	is_correct = models.BooleanField(null=True, blank=True)
 	score_awarded = models.FloatField(null=True, blank=True)
 	ai_feedback = models.TextField(blank=True, default='')
 
-# Create your models here.
+	class Meta:
+		indexes = [
+			models.Index(fields=['institution', 'attempt']),
+		]

@@ -17,6 +17,13 @@ class AdminInstitution(models.Model):
     institution_code = models.CharField(max_length=13, unique=True, editable=False)
     address = models.CharField(max_length=500, blank=True, default='')
     phone = models.CharField(max_length=20, blank=True, default='')
+    STATUS_ACTIVE = 'active'
+    STATUS_SUSPENDED = 'suspended'
+    STATUS_CHOICES = (
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_SUSPENDED, 'Suspended'),
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

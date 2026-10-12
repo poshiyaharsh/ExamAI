@@ -78,6 +78,12 @@ export type AuthMeResponse = {
     first_name: string;
     last_name: string;
     email: string;
+    institution?: {
+      id: number;
+      institution_name: string;
+      institution_code: string;
+      status?: string;
+    } | null;
   };
   role: UserRole;
 };

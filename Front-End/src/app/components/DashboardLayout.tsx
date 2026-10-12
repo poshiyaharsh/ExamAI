@@ -59,6 +59,10 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
     .trim();
   const displayName = fullName || session?.user.email?.split("@")[0] || "User";
   const displayEmail = session?.user.email || "";
+  const institutionName =
+    session?.user.institution?.institution_name ||
+    session?.user.institution?.name ||
+    "";
 
   const handleLogout = () => {
     clearAuthenticatedSession();
@@ -76,6 +80,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
               onLogout={handleLogout}
               displayName={displayName}
               displayEmail={displayEmail}
+              institutionName={institutionName}
             />
           ) : (
             <motion.aside
@@ -91,9 +96,16 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
                       <Brain className="w-6 h-6 text-white" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="font-semibold text-sidebar-foreground">ExamAI</div>
-                      <div className="text-xs text-muted-foreground">{userRole}</div>
+                      <div className="text-xs text-muted-foreground flex items-center gap-1 truncate">
+                        <span>{userRole}</span>
+                        {institutionName && (
+                          <span className="text-[11px] text-primary font-medium truncate max-w-[140px]" title={institutionName}>
+                            • {institutionName}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </Link>
                 </div>
@@ -161,7 +173,14 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
                   <Brain className="w-4 h-4 text-white" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-foreground leading-tight">ExamAI</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-foreground leading-tight">ExamAI</p>
+                    {institutionName && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-primary/10 text-primary border border-primary/20">
+                        {institutionName}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground leading-tight truncate">{pageTitle}</p>
                 </div>
               </Link>

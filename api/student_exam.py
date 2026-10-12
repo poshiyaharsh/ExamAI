@@ -56,18 +56,24 @@ def _objective_correct(question, answer_text):
 class StudentExamListView(StudentExamPermissionMixin, APIView):
     def get(self, request):
         from .utils.departments import get_student_department
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response([])
+
         student_dept = get_student_department(request.user)
         if not student_dept:
             return Response([])
 
         exams = Exam.objects.filter(
+            institution=tenant,
             status=Exam.Status.PUBLISHED,
             department__iexact=student_dept,
         ).prefetch_related('questions')
 
         attempts = {
             attempt.exam_id: attempt
-            for attempt in StudentAttempt.objects.filter(student=request.user, exam__in=exams)
+            for attempt in StudentAttempt.objects.filter(institution=tenant, student=request.user, exam__in=exams)
         }
         now = timezone.now()
         result = []
@@ -90,7 +96,12 @@ class StudentExamListView(StudentExamPermissionMixin, APIView):
 class StartAttemptView(StudentExamPermissionMixin, APIView):
     def post(self, request, exam_id):
         from .utils.departments import check_student_exam_access
-        exam = Exam.objects.filter(id=exam_id).first()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        exam = Exam.objects.filter(id=exam_id, institution=tenant).first()
         if not exam:
             return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -105,8 +116,12 @@ class StartAttemptView(StudentExamPermissionMixin, APIView):
         attempt, created = StudentAttempt.objects.get_or_create(
             exam=exam,
             student=request.user,
-            defaults={'status': StudentAttempt.Status.IN_PROGRESS},
+            defaults={'institution': tenant, 'status': StudentAttempt.Status.IN_PROGRESS},
         )
+        if not attempt.institution:
+            attempt.institution = tenant
+            attempt.save(update_fields=['institution'])
+
         if attempt.status in {'submitted', 'auto_submitted', 'evaluated'}:
             return Response({'detail': 'This exam attempt has already been submitted.'}, status=status.HTTP_400_BAD_REQUEST)
         if timezone.now() >= _deadline(attempt):
@@ -127,7 +142,12 @@ class StartAttemptView(StudentExamPermissionMixin, APIView):
 
 class SaveAnswerView(StudentExamPermissionMixin, APIView):
     def post(self, request, attempt_id):
-        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).select_related('exam').first()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant).select_related('exam').first()
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
         from .utils.departments import check_student_exam_access
@@ -143,13 +163,13 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
             attempt.save(update_fields=['status', 'submitted_at'])
             return Response({'detail': 'The exam deadline has passed.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        question = Question.objects.filter(id=request.data.get('question_id'), exam=attempt.exam).first()
+        question = Question.objects.filter(id=request.data.get('question_id'), exam=attempt.exam, institution=tenant).first()
         if not question:
-            return Response({'detail': 'Question not found for this exam.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Question not found for this exam.'}, status=status.HTTP_404_NOT_FOUND)
         answer, _ = StudentAnswer.objects.update_or_create(
             attempt=attempt,
             question=question,
-            defaults={'answer_text': str(request.data.get('answer_text', ''))},
+            defaults={'institution': tenant, 'answer_text': str(request.data.get('answer_text', ''))},
         )
         return Response({'saved': True, 'question_id': question.id, 'answer_text': answer.answer_text})
 
@@ -163,7 +183,12 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
             return Response({'detail': 'Unable to submit the exam.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _post(self, request, attempt_id):
-        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).select_related('exam').prefetch_related('answers__question').first()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant).select_related('exam').prefetch_related('answers__question').first()
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
         from .utils.departments import check_student_exam_access
@@ -184,7 +209,12 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
 
 class StudentAttemptDetailView(StudentExamPermissionMixin, APIView):
     def get(self, request, attempt_id):
-        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).select_related('exam').prefetch_related('answers__question').first()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant).select_related('exam').prefetch_related('answers__question').first()
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
         from .utils.departments import check_student_exam_access

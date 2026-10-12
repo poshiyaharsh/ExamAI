@@ -15,17 +15,27 @@ class StudentProfile(models.Model):
         blank=True,
         related_name='student_profiles',
     )
-    student_id = models.CharField(max_length=13, unique=True, blank=True, null=True)
+    student_id = models.CharField(max_length=13, blank=True, null=True)
     department = models.CharField(max_length=120, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['institution', 'student_id'],
+                name='unique_institution_student_id',
+            ),
+        ]
+
     @staticmethod
-    def build_next_student_id():
+    def build_next_student_id(institution=None):
         year = timezone.now().year
         prefix = f'STU-{year}-'
+        qs = StudentProfile.objects.filter(student_id__startswith=prefix)
+        if institution:
+            qs = qs.filter(institution=institution)
         latest_student_id = (
-            StudentProfile.objects.filter(student_id__startswith=prefix)
-            .order_by('-student_id')
+            qs.order_by('-student_id')
             .values_list('student_id', flat=True)
             .first()
         )
@@ -45,8 +55,8 @@ class StudentProfile(models.Model):
             return self.student_id
 
         for _ in range(5):
-            candidate = self.build_next_student_id()
-            if not StudentProfile.objects.filter(student_id=candidate).exists():
+            candidate = self.build_next_student_id(institution=self.institution)
+            if not StudentProfile.objects.filter(institution=self.institution, student_id=candidate).exists():
                 self.student_id = candidate
                 self.save(update_fields=['student_id'])
                 return self.student_id
@@ -66,6 +76,12 @@ class ExamAttempt(models.Model):
     )
 
     student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name='exam_attempts')
+    institution = models.ForeignKey(
+        AdminInstitution,
+        on_delete=models.CASCADE,
+        related_name='legacy_exam_attempts',
+        db_index=True,
+    )
     paper = models.ForeignKey(Paper, on_delete=models.CASCADE, related_name='attempts')
     answers = models.JSONField(default=dict)
     score = models.PositiveIntegerField(default=0)
@@ -76,4 +92,8 @@ class ExamAttempt(models.Model):
 
     class Meta:
         ordering = ['-started_at']
-        indexes = [models.Index(fields=['student', 'paper', 'status'])]
+        indexes = [
+            models.Index(fields=['student', 'paper', 'status']),
+            models.Index(fields=['institution', 'student']),
+            models.Index(fields=['institution', 'paper']),
+        ]

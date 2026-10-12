@@ -39,6 +39,11 @@ class StudentDashboardView(APIView):
     def get(self, request):
         user = request.user
         now = timezone.now()
+        from api.tenant import get_user_institution
+        tenant = getattr(request, 'tenant', None) or get_user_institution(user)
+        if not tenant:
+            return Response({'status': 'error', 'message': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
         student_profile = getattr(user, 'student_profile', None)
         student_dept = get_student_department(user)
 
@@ -65,6 +70,7 @@ class StudentDashboardView(APIView):
         # 2. Department-scoped published exams
         if student_dept:
             dept_exams = Exam.objects.filter(
+                institution=tenant,
                 status=Exam.Status.PUBLISHED,
                 department__iexact=student_dept,
             ).select_related('created_by')
@@ -81,6 +87,7 @@ class StudentDashboardView(APIView):
 
         completed_attempts_qs = (
             StudentAttempt.objects.filter(
+                institution=tenant,
                 student=user,
                 status__in=COMPLETED_STATUSES,
             )
