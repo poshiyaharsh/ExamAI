@@ -9,6 +9,7 @@ from .student_exam import (
     StudentExamListView,
     SubmitAttemptView,
 )
+from .student_dashboard import StudentDashboardView
 from .student_performance import (
     StudentPerformanceResultsView,
     StudentPerformanceSubjectsView,
@@ -38,6 +39,8 @@ urlpatterns = [
     path('student/attempts/<int:attempt_id>/save/', SaveAnswerView.as_view(), name='student-answer-save'),
     path('student/attempts/<int:attempt_id>/submit/', SubmitAttemptView.as_view(), name='student-attempt-submit'),
     path('student/attempts/<int:attempt_id>/', StudentAttemptDetailView.as_view(), name='student-attempt-detail'),
+    path('student/dashboard', StudentDashboardView.as_view(), name='student-dashboard-no-slash'),
+    path('student/dashboard/', StudentDashboardView.as_view(), name='student-dashboard'),
     path('student/performance/summary', StudentPerformanceSummaryView.as_view(), name='student-performance-summary-no-slash'),
     path('student/performance/summary/', StudentPerformanceSummaryView.as_view(), name='student-performance-summary'),
     path('student/performance/results', StudentPerformanceResultsView.as_view(), name='student-performance-results-no-slash'),

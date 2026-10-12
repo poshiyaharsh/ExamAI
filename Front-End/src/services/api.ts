@@ -459,6 +459,85 @@ export type StudentPerformanceSubjectsResponse = {
   };
 };
 
+export type StudentDashboardProfile = {
+  name: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  roll_number: string;
+  department: string;
+  year_semester: string;
+  profile_photo: string | null;
+};
+
+export type StudentDashboardStats = {
+  total_available: number;
+  exams_attempted: number;
+  exams_pending: number;
+  average_score: number | null;
+  highest_score: number | null;
+  pass_count: number;
+  fail_count: number;
+  pass_rate: number | null;
+  performance_status: "Excellent" | "Good" | "Average" | "Needs Improvement" | "N/A";
+};
+
+export type StudentDashboardExamItem = {
+  id: number;
+  title: string;
+  subject: string;
+  department: string;
+  faculty_name: string;
+  duration_minutes: number;
+  total_marks: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  is_open: boolean;
+};
+
+export type StudentDashboardRecentResult = {
+  attempt_id: number;
+  exam_id: number;
+  exam_title: string;
+  subject: string;
+  department: string;
+  faculty_name: string;
+  date: string;
+  marks_obtained: number;
+  total_marks: number;
+  percentage: number;
+  is_passed: boolean;
+  time_taken: string;
+  status: string;
+};
+
+export type StudentDashboardTrendItem = {
+  attempt_id: number;
+  date: string;
+  percentage: number;
+  exam_title: string;
+};
+
+export type StudentDashboardData = {
+  profile: StudentDashboardProfile;
+  stats: StudentDashboardStats;
+  ongoing_exams: StudentDashboardExamItem[];
+  upcoming_exams: StudentDashboardExamItem[];
+  recent_results: StudentDashboardRecentResult[];
+  performance_trend: StudentDashboardTrendItem[];
+  subject_strengths: {
+    strongest: { subject: string; average_score: number; count: number } | null;
+    weakest: { subject: string; average_score: number; count: number } | null;
+    all: Array<{ subject: string; average_score: number; count: number }>;
+  };
+  announcements: Array<{ id: number; title: string; message: string; date: string }>;
+};
+
+export type StudentDashboardResponse = {
+  status: string;
+  data: StudentDashboardData;
+};
+
 export type StudentExamResultItem = {
   attempt_id: number;
   exam_id: number;
@@ -745,6 +824,13 @@ export const studentPerformanceApi = {
   },
   getSubjects: async (): Promise<StudentPerformanceSubjectsResponse> => {
     const response = await apiClient.get<StudentPerformanceSubjectsResponse>("/api/student/performance/subjects/");
+    return response.data;
+  },
+};
+
+export const studentDashboardApi = {
+  getDashboard: async (): Promise<StudentDashboardResponse> => {
+    const response = await apiClient.get<StudentDashboardResponse>("/api/student/dashboard/");
     return response.data;
   },
 };
