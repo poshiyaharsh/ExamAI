@@ -22,7 +22,7 @@ export function StudentExams() {
     try {
       setLoading(true);
       const response = await studentExamApi.getExams();
-      setExams(response.data || []);
+      setExams(Array.isArray(response) ? response : []);
       setError("");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to fetch exams.");
@@ -38,10 +38,30 @@ export function StudentExams() {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
+  const tabExams = useMemo(() => {
+    return exams.filter((item) => {
+      if (activeTab === "completed") return item.completed;
+      if (activeTab === "upcoming") return !item.completed && !item.available;
+      return !item.completed && item.available;
+    });
+  }, [exams, activeTab]);
+
   const filteredExams = useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
-    return search ? exams.filter((exam) => `${exam.title} ${exam.faculty}`.toLowerCase().includes(search)) : exams;
-  }, [exams, searchQuery]);
+    return search
+      ? tabExams.filter((item) =>
+          `${item.exam.title} ${item.exam.topics.join(" ")} ${item.exam.department || ""}`
+            .toLowerCase()
+            .includes(search)
+        )
+      : tabExams;
+  }, [tabExams, searchQuery]);
+
+  const getTabCount = (tab: "available" | "upcoming" | "completed") => {
+    if (tab === "completed") return exams.filter((item) => item.completed).length;
+    if (tab === "upcoming") return exams.filter((item) => !item.completed && !item.available).length;
+    return exams.filter((item) => !item.completed && item.available).length;
+  };
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Student">
@@ -77,29 +97,38 @@ export function StudentExams() {
                     activeTab === tab ? "text-primary border-b-2 border-primary font-semibold" : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {tab[0].toUpperCase() + tab.slice(1)} ({tab === "available" ? exams.length : 0})
+                  {tab[0].toUpperCase() + tab.slice(1)} ({getTabCount(tab)})
                 </button>
               ))}
             </div>
           </div>
           <div className="p-5 sm:p-6">
-            {activeTab !== "available" ? (
-              <div className="text-center py-12">
-                <CheckCircle className="w-12 h-12 text-muted-foreground/60 mx-auto mb-3" />
-                <p className="text-xs sm:text-sm text-muted-foreground">No {activeTab} exams at the moment</p>
-              </div>
-            ) : loading ? (
+            {loading ? (
               <div className="text-center py-12 text-xs sm:text-sm text-muted-foreground">Loading exams...</div>
             ) : error ? (
               <div className="text-center py-12 text-xs sm:text-sm text-destructive font-medium">{error}</div>
             ) : filteredExams.length === 0 ? (
               <div className="text-center py-12">
-                <FileText className="w-12 h-12 text-muted-foreground/60 mx-auto mb-3" />
-                <p className="text-xs sm:text-sm text-muted-foreground">No exams available for your department right now.</p>
+                {activeTab === "completed" ? (
+                  <>
+                    <CheckCircle className="w-12 h-12 text-muted-foreground/60 mx-auto mb-3" />
+                    <p className="text-xs sm:text-sm text-muted-foreground">No completed exams yet.</p>
+                  </>
+                ) : activeTab === "upcoming" ? (
+                  <>
+                    <Calendar className="w-12 h-12 text-muted-foreground/60 mx-auto mb-3" />
+                    <p className="text-xs sm:text-sm text-muted-foreground">No upcoming exams scheduled.</p>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-12 h-12 text-muted-foreground/60 mx-auto mb-3" />
+                    <p className="text-xs sm:text-sm text-muted-foreground">No exams available for your department right now.</p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-3.5">
-                {filteredExams.map((exam) => (
+                {filteredExams.map(({ exam, completed, attempt_id: attemptId, available }) => (
                   <div key={exam.id} className="p-4 sm:p-5 rounded-xl border border-border hover:border-primary/50 hover:shadow-xs transition-all">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                       <div className="flex-1">
@@ -116,27 +145,46 @@ export function StudentExams() {
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs sm:text-sm text-muted-foreground">{exam.faculty}</p>
+                            {exam.topics && exam.topics.length > 0 && (
+                              <p className="text-xs sm:text-sm text-muted-foreground">{exam.topics.join(", ")}</p>
+                            )}
                           </div>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:ml-14">
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Calendar className="w-3.5 h-3.5" />
-                            {new Date(exam.created_at).toLocaleDateString()}
+                            {exam.starts_at
+                              ? new Date(exam.starts_at).toLocaleDateString()
+                              : exam.ends_at
+                              ? new Date(exam.ends_at).toLocaleDateString()
+                              : "Open now"}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Clock className="w-3.5 h-3.5" />
-                            {exam.duration} min
+                            {exam.duration_minutes} min
                           </div>
                           <div className="text-xs text-muted-foreground">{exam.total_marks} Marks</div>
-                          <div className="text-xs text-muted-foreground">{exam.question_count} Questions</div>
+                          <div className="text-xs text-muted-foreground">{exam.questions?.length ?? 0} Questions</div>
                         </div>
                       </div>
-                      <Link to={`/exam/${exam.id}`}>
-                        <button className="w-full sm:w-auto px-4 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-xs sm:text-sm hover:opacity-90 shadow-sm transition-all">
-                          Start Exam
-                        </button>
-                      </Link>
+                      <div>
+                        {completed && attemptId ? (
+                          <Link to={`/student/results/${attemptId}`}>
+                            <button className="w-full sm:w-auto px-4 py-2 rounded-lg border border-border bg-white text-foreground font-medium text-xs sm:text-sm hover:bg-muted/50 shadow-xs transition-all">
+                              View Result
+                            </button>
+                          </Link>
+                        ) : (
+                          <Link to={`/student/exams/${exam.id}/take`}>
+                            <button
+                              disabled={!available}
+                              className="w-full sm:w-auto px-4 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-xs sm:text-sm hover:opacity-90 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Start Exam
+                            </button>
+                          </Link>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
