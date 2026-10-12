@@ -211,7 +211,7 @@ export function Login() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
-        className="w-full max-w-2xl"
+        className="w-full max-w-[460px]"
       >
         {/* Logo */}
         <div className="text-center mb-3 sm:mb-4">
@@ -236,7 +236,7 @@ export function Login() {
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2 }}
-          className="bg-white rounded-2xl shadow-2xl p-5 sm:p-7"
+          className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6"
         >
           <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-3.5">
             {/* Role Selector */}
