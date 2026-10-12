@@ -33,17 +33,58 @@ export function StudentExamsPage() {
   return (
     <DashboardLayout menuItems={menuItems} userRole="Student">
       <div className="space-y-6">
-        <div><h1 className="text-3xl font-bold text-foreground">Available Exams</h1><p className="mt-2 text-muted-foreground">Start an exam when its window opens.</p></div>
-        {loading ? <p className="text-muted-foreground">Loading exams...</p> : exams.length === 0 ? <p className="text-muted-foreground">No published exams are available.</p> : (
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Available Exams</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Start an exam when its window opens.</p>
+        </div>
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading exams...</p>
+        ) : exams.length === 0 ? (
+          <div className="rounded-xl border border-border bg-white p-8 text-center text-sm text-muted-foreground shadow-sm">
+            No published exams are available.
+          </div>
+        ) : (
           <div className="grid gap-4 lg:grid-cols-2">
             {exams.map(({ exam, completed, attempt_id: attemptId, available }) => (
-              <article key={exam.id} className="rounded-xl border border-border bg-white p-6">
+              <article key={exam.id} className="rounded-xl border border-border bg-white p-5 sm:p-6 shadow-sm hover:shadow-md transition-all">
                 <div className="flex items-start justify-between gap-4">
-                  <div><h2 className="text-lg font-semibold">{exam.title}</h2><p className="mt-1 text-sm text-muted-foreground">{exam.topics.join(", ")}</p></div>
-                  <FileText className="h-5 w-5 text-primary" />
+                  <div>
+                    <h2 className="text-base sm:text-lg font-semibold text-foreground">{exam.title}</h2>
+                    <p className="mt-1 text-xs sm:text-sm text-muted-foreground">{exam.topics.join(", ")}</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <FileText className="h-5 w-5 text-primary" />
+                  </div>
                 </div>
-                <div className="mt-5 grid grid-cols-2 gap-3 text-sm text-muted-foreground"><span>{exam.duration_minutes} minutes</span><span>{exam.total_marks} marks</span><span>{exam.questions?.length ?? 0} questions</span><span className="inline-flex items-center gap-1"><Clock className="h-4 w-4" /> {formatWindow(exam)}</span></div>
-                <div className="mt-5 flex items-center justify-between gap-3"><span className={`text-sm font-medium ${completed ? "text-emerald-600" : available ? "text-primary" : "text-amber-600"}`}>{completed ? "Completed" : available ? "Ready to start" : "Not open yet"}</span>{completed && attemptId ? <button type="button" onClick={() => navigate(`/student/results/${attemptId}`)} className="rounded-lg border border-border px-4 py-2 text-sm">View result</button> : <button type="button" disabled={!available} onClick={() => navigate(`/student/exams/${exam.id}/take`)} className="rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50">Start exam</button>}</div>
+                <div className="mt-4 grid grid-cols-2 gap-2.5 text-xs sm:text-sm text-muted-foreground">
+                  <span>{exam.duration_minutes} minutes</span>
+                  <span>{exam.total_marks} marks</span>
+                  <span>{exam.questions?.length ?? 0} questions</span>
+                  <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {formatWindow(exam)}</span>
+                </div>
+                <div className="mt-5 flex items-center justify-between gap-3 pt-3 border-t border-border/60">
+                  <span className={`text-xs sm:text-sm font-medium ${completed ? "text-emerald-600" : available ? "text-primary" : "text-amber-600"}`}>
+                    {completed ? "Completed" : available ? "Ready to start" : "Not open yet"}
+                  </span>
+                  {completed && attemptId ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/student/results/${attemptId}`)}
+                      className="rounded-lg border border-border px-3.5 py-1.5 text-xs sm:text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
+                    >
+                      View result
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!available}
+                      onClick={() => navigate(`/student/exams/${exam.id}/take`)}
+                      className="rounded-lg bg-gradient-to-r from-primary to-secondary px-4 py-2 text-xs sm:text-sm font-medium text-white shadow-sm hover:opacity-90 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Start exam
+                    </button>
+                  )}
+                </div>
               </article>
             ))}
           </div>

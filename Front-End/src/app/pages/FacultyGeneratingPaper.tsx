@@ -39,21 +39,29 @@ export function FacultyGeneratingPaper() {
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
-      <div className="mx-auto max-w-2xl rounded-xl border border-border bg-white p-8 text-center shadow-sm">
+      <div className="mx-auto max-w-xl rounded-xl border border-border bg-white p-8 sm:p-10 text-center shadow-sm my-8">
         {error ? (
           <>
-            <AlertCircle className="mx-auto mb-4 h-10 w-10 text-destructive" />
-            <h1 className="text-2xl font-bold">Unable to generate paper</h1>
-            <p className="mt-3 text-sm text-destructive">{error}</p>
-            <button type="button" onClick={() => navigate("/faculty/generate")} className="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-white">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto mb-4 text-rose-600">
+              <AlertCircle className="h-7 w-7" />
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Unable to generate paper</h1>
+            <p className="mt-2 text-xs sm:text-sm text-destructive">{error}</p>
+            <button
+              type="button"
+              onClick={() => navigate("/faculty/generate")}
+              className="mt-6 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-secondary px-5 py-2.5 text-sm font-medium text-white shadow-md hover:opacity-90 transition-all"
+            >
               <RefreshCw className="h-4 w-4" /> Retry
             </button>
           </>
         ) : (
           <>
-            <LoaderCircle className="mx-auto mb-4 h-10 w-10 animate-spin text-primary" />
-            <h1 className="text-2xl font-bold">Generating paper...</h1>
-            <p className="mt-3 text-sm text-muted-foreground">Your paper is being generated. This page will update automatically.</p>
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/10 to-secondary/10 border border-primary/20 flex items-center justify-center mx-auto mb-5 shadow-xs">
+              <LoaderCircle className="h-8 w-8 animate-spin text-primary" />
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Generating paper...</h1>
+            <p className="mt-2 text-xs sm:text-sm text-muted-foreground">Your paper is being generated with AI. This page will update automatically.</p>
           </>
         )}
       </div>

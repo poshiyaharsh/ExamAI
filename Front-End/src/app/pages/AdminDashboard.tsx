@@ -25,67 +25,67 @@ export function AdminDashboard() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground mb-2">Admin Dashboard</h1>
-            <p className="text-muted-foreground">Overview of your institution's exam performance</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Admin Dashboard</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">Overview of your institution's exam performance</p>
           </div>
-          <button className="px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center gap-2">
-            <Plus className="w-5 h-5" />
+          <button className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 shadow-md font-medium text-sm transition-all flex items-center gap-2">
+            <Plus className="w-4 h-4" />
             Create Exam
           </button>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                <FileText className="w-6 h-6 text-white" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-primary/20 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-sm">
+                <FileText className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                 +12%
               </span>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">247</div>
-            <div className="text-sm text-muted-foreground">Total Exams</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-0.5">247</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Total Exams</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center">
-                <Users className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-primary/20 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center shadow-sm">
+                <Users className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                 +8%
               </span>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">3,456</div>
-            <div className="text-sm text-muted-foreground">Total Students</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-0.5">3,456</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Total Students</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                <BarChart className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-primary/20 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-sm">
+                <BarChart className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                 +5%
               </span>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">85.4%</div>
-            <div className="text-sm text-muted-foreground">Avg Performance</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-0.5">85.4%</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Avg Performance</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center">
-                <Database className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-primary/20 transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center shadow-sm">
+                <Database className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xs px-2 py-1 rounded-full bg-accent text-accent-foreground">
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
                 Updated
               </span>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">12,847</div>
-            <div className="text-sm text-muted-foreground">Question Bank</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-0.5">12,847</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Question Bank</div>
           </div>
         </div>
 

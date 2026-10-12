@@ -315,60 +315,60 @@ export function FacultyGeneratePaper() {
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Generate Exam Paper</h1>
-          <p className="text-muted-foreground">Create AI-powered exam papers with customized parameters</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Generate Exam Paper</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Create AI-powered exam papers with customized parameters</p>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <h3 className="font-semibold mb-4">Basic Details</h3>
-              <div className="space-y-4">
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <h3 className="font-semibold text-foreground mb-4">Basic Details</h3>
+              <div className="space-y-3.5">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Exam Title</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Exam Title</label>
                   <input
                     type="text"
                     value={examTitle}
                     onChange={(e) => setExamTitle(e.target.value)}
                     placeholder="e.g., Data Structures Midterm"
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                   />
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
+                <div className="grid sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Duration (minutes)</label>
+                    <label className="block text-xs font-medium text-foreground mb-1.5">Duration (minutes)</label>
                     <input
                       type="number"
                       value={duration}
                       onChange={(e) => setDuration(e.target.value)}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Total Marks</label>
+                    <label className="block text-xs font-medium text-foreground mb-1.5">Total Marks</label>
                     <input
                       type="number"
                       value={totalMarks}
                       onChange={(e) => setTotalMarks(e.target.value)}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     />
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold">Topics to Cover</h3>
+                <h3 className="font-semibold text-foreground">Topics to Cover</h3>
                 <button
                   onClick={handleAddTopic}
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
                 >
-                  <Plus className="w-4 h-4" />
+                  <Plus className="w-3.5 h-3.5" />
                   Add Topic
                 </button>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {topics.map((topic, index) => (
                   <div key={index} className="flex items-center gap-2">
                     <input
@@ -376,14 +376,14 @@ export function FacultyGeneratePaper() {
                       value={topic}
                       onChange={(e) => handleTopicChange(index, e.target.value)}
                       placeholder={`Topic ${index + 1}`}
-                      className="flex-1 px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                      className="flex-1 px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     />
                     {topics.length > 1 && (
                       <button
                         onClick={() => handleRemoveTopic(index)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
                       >
-                        <Trash2 className="w-5 h-5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     )}
                   </div>
@@ -391,16 +391,16 @@ export function FacultyGeneratePaper() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <h3 className="font-semibold mb-4">Question Types</h3>
-              <div className="grid sm:grid-cols-2 gap-4">
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <h3 className="font-semibold text-foreground mb-4">Question Types</h3>
+              <div className="grid sm:grid-cols-2 gap-3.5">
                 {Object.entries({
                   mcq: "Multiple Choice",
                   subjective: "Subjective",
                   trueFalse: "True/False",
                   fillBlanks: "Fill in the Blanks"
                 }).map(([key, label]) => (
-                  <label key={key} className="flex items-center gap-3 cursor-pointer">
+                  <label key={key} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-muted/30 transition-colors cursor-pointer">
                     <input
                       type="checkbox"
                       checked={questionTypes[key as keyof typeof questionTypes]}
@@ -408,24 +408,24 @@ export function FacultyGeneratePaper() {
                         ...questionTypes,
                         [key]: e.target.checked
                       })}
-                      className="w-5 h-5 rounded border-border text-primary focus:ring-2 focus:ring-primary/20"
+                      className="w-4 h-4 rounded border-border text-primary focus:ring-2 focus:ring-primary accent-primary"
                     />
-                    <span className="text-sm font-medium">{label}</span>
+                    <span className="text-xs sm:text-sm font-medium text-foreground">{label}</span>
                   </label>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <h3 className="font-semibold mb-4">Difficulty Distribution</h3>
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <h3 className="font-semibold text-foreground mb-4">Difficulty Distribution</h3>
               <div className="space-y-4">
                 {difficultyKeys.map((level) => {
                   const value = difficultyMix[level];
                   return (
                   <div key={level}>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-sm font-medium">{level}</label>
-                      <span className="text-sm text-muted-foreground">{value}%</span>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-medium text-foreground">{level}</label>
+                      <span className="text-xs font-bold text-primary">{value}%</span>
                     </div>
                     <input
                       type="range"
@@ -433,7 +433,7 @@ export function FacultyGeneratePaper() {
                       max="100"
                       value={value}
                       onChange={(e) => handleDifficultyChange(level, e.target.value)}
-                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary"
+                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
                     />
                   </div>
                     );
@@ -498,11 +498,11 @@ export function FacultyGeneratePaper() {
           </div>
 
           <div className="space-y-6">
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <h3 className="font-semibold mb-4">Upload Syllabus</h3>
-              <label className="block border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary transition-colors cursor-pointer">
-                <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground mb-1">Click to upload</p>
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <h3 className="font-semibold text-foreground mb-4">Upload Syllabus</h3>
+              <label className="block border-2 border-dashed border-border rounded-xl p-6 text-center hover:border-primary/60 hover:bg-primary/5 transition-all cursor-pointer">
+                <Upload className="w-9 h-9 text-muted-foreground/60 mx-auto mb-2" />
+                <p className="text-sm font-medium text-foreground mb-1">Click to upload</p>
                 <p className="text-xs text-muted-foreground">PDF, DOCX (Max 10MB)</p>
                 <input
                   type="file"
@@ -512,54 +512,54 @@ export function FacultyGeneratePaper() {
                 />
               </label>
               <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between text-xs sm:text-sm p-2 rounded-lg bg-muted/40">
                   <span className="text-muted-foreground">Uploaded:</span>
-                  <span className="font-medium">{uploadedSyllabus?.original_filename || syllabusFile?.name || "-"}</span>
+                  <span className="font-medium text-foreground truncate max-w-[200px]">{uploadedSyllabus?.original_filename || syllabusFile?.name || "-"}</span>
                 </div>
                 {(uploadProgress > 0 || isGenerating) && (
-                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                     <div className="h-full bg-primary transition-all" style={{ width: `${uploadProgress}%` }} />
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <h3 className="font-semibold mb-4">AI Model</h3>
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <h3 className="font-semibold text-foreground mb-3">AI Model</h3>
               <select
                 value={aiModel}
                 onChange={(e) => setAiModel(e.target.value as AiModel)}
-                className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               >
                 {aiModels.map((model) => (
                   <option key={model} value={model}>{aiModelLabels[model]}</option>
                 ))}
               </select>
-              <p className={`mt-2 text-xs ${ollamaStatus === "connected" ? "text-emerald-600" : ollamaStatus === "model-missing" ? "text-amber-600" : "text-red-600"}`}>
+              <p className={`mt-2 text-xs font-medium ${ollamaStatus === "connected" ? "text-emerald-600" : ollamaStatus === "model-missing" ? "text-amber-600" : "text-rose-600"}`}>
                 {ollamaStatusMessage}
               </p>
             </div>
 
             {isGenerating && (
-              <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-                <div className="flex items-center justify-between text-sm mb-2">
+              <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+                <div className="flex items-center justify-between text-xs sm:text-sm mb-2">
                   <span className="text-muted-foreground">Generation Progress</span>
-                  <span className="font-medium">{generationProgress}%</span>
+                  <span className="font-semibold text-primary">{generationProgress}%</span>
                 </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-primary transition-all" style={{ width: `${generationProgress}%` }} />
+                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-primary to-secondary transition-all" style={{ width: `${generationProgress}%` }} />
                 </div>
               </div>
             )}
 
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p className="text-xs sm:text-sm text-destructive font-medium">{error}</p>}
 
             <button
               onClick={() => void handleGenerate()}
               disabled={isGenerating}
-              className="w-full px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <Sparkles className="w-5 h-5" />
+              <Sparkles className="w-4 h-4" />
               {isGenerating ? `Generating with ${aiModel}… this can take up to a minute.` : "Generate Paper"}
             </button>
           </div>

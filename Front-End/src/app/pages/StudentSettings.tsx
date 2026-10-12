@@ -225,56 +225,56 @@ export function StudentSettings() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Settings</h1>
-          <p className="text-muted-foreground">Manage your account preferences</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Settings</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Manage your account preferences</p>
         </div>
 
         {/* Profile Settings */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <User className="w-5 h-5 text-white" />
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+              <User className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Profile Information</h3>
+            <h3 className="font-semibold text-lg text-foreground">Profile Information</h3>
           </div>
-          <div className="p-6 space-y-4">
-            <div className="grid md:grid-cols-2 gap-4">
+          <div className="p-5 sm:p-6 space-y-3.5">
+            <div className="grid md:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-sm text-muted-foreground mb-2">Full Name</label>
+                <label className="block text-xs font-medium text-foreground mb-1.5">Full Name</label>
                 <input
                   type="text"
                   value={profileLoading ? "Loading..." : fullName}
                   disabled
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
+                  className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                 />
               </div>
               <div>
-                <label className="block text-sm text-muted-foreground mb-2">Email</label>
+                <label className="block text-xs font-medium text-foreground mb-1.5">Email</label>
                 <input
                   type="email"
                   value={profileLoading ? "Loading..." : email}
                   disabled
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
+                  className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                 />
               </div>
             </div>
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid md:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-sm text-muted-foreground mb-2">Student ID</label>
+                <label className="block text-xs font-medium text-foreground mb-1.5">Student ID</label>
                 <input
                   type="text"
                   value={profileLoading ? "Loading..." : studentId}
                   disabled
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
+                  className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                 />
               </div>
               <div>
-                <label className="block text-sm text-muted-foreground mb-2">Department</label>
+                <label className="block text-xs font-medium text-foreground mb-1.5">Department</label>
                 <select
                   value={department}
                   onChange={(event) => setDepartment(event.target.value)}
                   disabled={profileLoading || savingProfile}
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring disabled:bg-muted disabled:text-muted-foreground"
+                  className="w-full px-3.5 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:bg-muted/50 disabled:text-muted-foreground"
                 >
                   <option value="">Select Department</option>
                   {departmentOptions.map((item) => (
@@ -286,21 +286,21 @@ export function StudentSettings() {
               </div>
             </div>
             <div>
-              <label className="block text-sm text-muted-foreground mb-2">Institution</label>
+              <label className="block text-xs font-medium text-foreground mb-1.5">Institution</label>
               <input
                 type="text"
                 value={profileLoading ? "Loading..." : institutionName}
                 disabled
-                className="w-full px-4 py-2 rounded-lg border border-border bg-muted text-muted-foreground"
+                className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
               />
             </div>
-            {profileError && <p className="text-sm text-destructive">{profileError}</p>}
-            {profileSuccess && <p className="text-sm text-green-600">{profileSuccess}</p>}
-            <div className="pt-4">
+            {profileError && <p className="text-xs sm:text-sm text-destructive font-medium">{profileError}</p>}
+            {profileSuccess && <p className="text-xs sm:text-sm text-emerald-600 font-medium">{profileSuccess}</p>}
+            <div className="pt-2">
               <button
                 onClick={handleProfileSave}
                 disabled={profileLoading || savingProfile}
-                className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+                className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {savingProfile ? "Saving..." : "Save Changes"}
               </button>
@@ -309,18 +309,18 @@ export function StudentSettings() {
         </div>
 
         {/* Notification Settings */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <Bell className="w-5 h-5 text-white" />
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+              <Bell className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Notifications</h3>
+            <h3 className="font-semibold text-lg text-foreground">Notifications</h3>
           </div>
-          <div className="p-6 space-y-4">
-            <div className="flex items-center justify-between py-3 border-b border-border">
+          <div className="p-5 sm:p-6 space-y-3">
+            <div className="flex items-center justify-between py-2 border-b border-border">
               <div>
-                <div className="font-medium text-foreground">Email Notifications</div>
-                <div className="text-sm text-muted-foreground">Receive exam updates via email</div>
+                <div className="text-sm font-medium text-foreground">Email Notifications</div>
+                <div className="text-xs text-muted-foreground">Receive exam updates via email</div>
               </div>
               <button
                 onClick={() => setEmailNotifications(!emailNotifications)}
@@ -336,10 +336,10 @@ export function StudentSettings() {
               </button>
             </div>
 
-            <div className="flex items-center justify-between py-3 border-b border-border">
+            <div className="flex items-center justify-between py-2">
               <div>
-                <div className="font-medium text-foreground">Exam Reminders</div>
-                <div className="text-sm text-muted-foreground">Get reminded about upcoming exams</div>
+                <div className="text-sm font-medium text-foreground">Exam Reminders</div>
+                <div className="text-xs text-muted-foreground">Get reminded about upcoming exams</div>
               </div>
               <button
                 onClick={() => setExamReminders(!examReminders)}
@@ -354,85 +354,84 @@ export function StudentSettings() {
                 />
               </button>
             </div>
-
           </div>
         </div>
 
         {/* Security Settings */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <Lock className="w-5 h-5 text-white" />
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+              <Lock className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold">Security</h3>
+            <h3 className="font-semibold text-lg text-foreground">Security</h3>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="p-5 sm:p-6 space-y-3.5">
             <div>
-              <label className="block text-sm text-muted-foreground mb-2">Current Password</label>
+              <label className="block text-xs font-medium text-foreground mb-1.5">Current Password</label>
               <div className="relative">
                 <input
                   type={showCurrentPassword ? "text" : "password"}
                   placeholder="••••••••"
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring pr-10"
+                  className="w-full px-3.5 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all pr-10"
                 />
                 <button
                   type="button"
                   onClick={() => setShowCurrentPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid md:grid-cols-2 gap-3.5">
               <div>
-                <label className="block text-sm text-muted-foreground mb-2">New Password</label>
+                <label className="block text-xs font-medium text-foreground mb-1.5">New Password</label>
                 <div className="relative">
                   <input
                     type={showNewPassword ? "text" : "password"}
                     placeholder="••••••••"
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
-                    className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring pr-10"
+                    className="w-full px-3.5 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewPassword((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-muted-foreground mb-2">Confirm Password</label>
+                <label className="block text-xs font-medium text-foreground mb-1.5">Confirm Password</label>
                 <div className="relative">
                   <input
                     type={showConfirmPassword ? "text" : "password"}
                     placeholder="••••••••"
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
-                    className="w-full px-4 py-2 rounded-lg border border-border bg-input-background focus:outline-none focus:ring-2 focus:ring-ring pr-10"
+                    className="w-full px-3.5 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
             </div>
-            {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-            {passwordSuccess && <p className="text-sm text-green-600">{passwordSuccess}</p>}
-            <div className="pt-4">
+            {passwordError && <p className="text-xs sm:text-sm text-destructive font-medium">{passwordError}</p>}
+            {passwordSuccess && <p className="text-xs sm:text-sm text-emerald-600 font-medium">{passwordSuccess}</p>}
+            <div className="pt-2">
               <button
                 onClick={handlePasswordUpdate}
                 disabled={changingPassword}
-                className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+                className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {changingPassword ? "Updating..." : "Update Password"}
               </button>

@@ -43,40 +43,40 @@ export function StudentPerformance() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Performance Analytics</h1>
-          <p className="text-muted-foreground">Track your academic progress and insights</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Performance Analytics</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Track your academic progress and insights</p>
         </div>
 
         {/* Overall Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-sm text-muted-foreground mb-1">Overall Average</div>
-            <div className="text-3xl font-bold text-foreground">84.6%</div>
-            <div className="text-sm text-green-600 mt-1">↑ 5.2% from last month</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium mb-1">Overall Average</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground">84.6%</div>
+            <div className="text-xs text-emerald-600 font-medium mt-1">↑ 5.2% from last month</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-sm text-muted-foreground mb-1">Total Exams</div>
-            <div className="text-3xl font-bold text-foreground">28</div>
-            <div className="text-sm text-muted-foreground mt-1">Completed</div>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium mb-1">Total Exams</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground">28</div>
+            <div className="text-xs text-muted-foreground mt-1">Completed</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-sm text-muted-foreground mb-1">Best Score</div>
-            <div className="text-3xl font-bold text-foreground">95%</div>
-            <div className="text-sm text-muted-foreground mt-1">English Literature</div>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium mb-1">Best Score</div>
+            <div className="text-2xl sm:text-3xl font-bold text-primary">95%</div>
+            <div className="text-xs text-muted-foreground mt-1">English Literature</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-sm text-muted-foreground mb-1">Improvement</div>
-            <div className="text-3xl font-bold text-foreground">+20%</div>
-            <div className="text-sm text-green-600 mt-1">Since semester start</div>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium mb-1">Improvement</div>
+            <div className="text-2xl sm:text-3xl font-bold text-emerald-600">+20%</div>
+            <div className="text-xs text-emerald-600 font-medium mt-1">Since semester start</div>
           </div>
         </div>
 
         {/* Performance Trend */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-          <h3 className="font-semibold mb-6">Performance Trend (Last 7 Months)</h3>
+        <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+          <h3 className="font-semibold text-foreground mb-5">Performance Trend (Last 7 Months)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={performanceData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -89,8 +89,8 @@ export function StudentPerformance() {
         </div>
 
         {/* Subject-wise Performance */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-          <h3 className="font-semibold mb-6">Subject-wise Performance</h3>
+        <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+          <h3 className="font-semibold text-foreground mb-5">Subject-wise Performance</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={subjectPerformance}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -103,24 +103,24 @@ export function StudentPerformance() {
         </div>
 
         {/* Topic Analysis */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-semibold">Topic-wise Strength Analysis</h3>
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border">
+            <h3 className="font-semibold text-foreground">Topic-wise Strength Analysis</h3>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="p-5 sm:p-6 space-y-4">
             {topicAnalysis.map((topic, index) => (
-              <div key={index} className="space-y-2">
-                <div className="flex items-center justify-between">
+              <div key={index} className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs sm:text-sm">
                   <span className="font-medium text-foreground">{topic.topic}</span>
-                  <span className="text-sm text-muted-foreground">{topic.attempts} attempts</span>
+                  <span className="text-muted-foreground">{topic.attempts} attempts</span>
                 </div>
-                <div className="relative w-full h-3 bg-muted rounded-full overflow-hidden">
+                <div className="relative w-full h-2.5 bg-muted rounded-full overflow-hidden">
                   <div
                     className="absolute left-0 top-0 h-full bg-gradient-to-r from-primary to-secondary rounded-full"
                     style={{ width: `${topic.strength}%` }}
                   />
                 </div>
-                <div className="text-right text-sm font-medium text-primary">{topic.strength}%</div>
+                <div className="text-right text-xs font-semibold text-primary">{topic.strength}%</div>
               </div>
             ))}
           </div>
@@ -128,38 +128,38 @@ export function StudentPerformance() {
 
         {/* Strengths & Weaknesses */}
         <div className="grid lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <h3 className="font-semibold text-green-700 mb-4">💪 Strengths</h3>
+          <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+            <h3 className="font-semibold text-emerald-700 mb-4 flex items-center gap-2">💪 Strengths</h3>
             <div className="space-y-3">
-              <div className="p-3 bg-green-50 rounded-lg">
-                <div className="font-medium text-foreground">Quick Problem Solving</div>
-                <div className="text-sm text-muted-foreground">Consistently fast in MCQ sections</div>
+              <div className="p-3.5 bg-emerald-50/60 border border-emerald-200/60 rounded-xl">
+                <div className="text-sm font-medium text-foreground">Quick Problem Solving</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Consistently fast in MCQ sections</div>
               </div>
-              <div className="p-3 bg-green-50 rounded-lg">
-                <div className="font-medium text-foreground">Strong Conceptual Understanding</div>
-                <div className="text-sm text-muted-foreground">High scores in theory-based questions</div>
+              <div className="p-3.5 bg-emerald-50/60 border border-emerald-200/60 rounded-xl">
+                <div className="text-sm font-medium text-foreground">Strong Conceptual Understanding</div>
+                <div className="text-xs text-muted-foreground mt-0.5">High scores in theory-based questions</div>
               </div>
-              <div className="p-3 bg-green-50 rounded-lg">
-                <div className="font-medium text-foreground">Consistent Performance</div>
-                <div className="text-sm text-muted-foreground">Steady improvement over time</div>
+              <div className="p-3.5 bg-emerald-50/60 border border-emerald-200/60 rounded-xl">
+                <div className="text-sm font-medium text-foreground">Consistent Performance</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Steady improvement over time</div>
               </div>
             </div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <h3 className="font-semibold text-orange-700 mb-4">📈 Areas for Improvement</h3>
+          <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+            <h3 className="font-semibold text-amber-700 mb-4 flex items-center gap-2">📈 Areas for Improvement</h3>
             <div className="space-y-3">
-              <div className="p-3 bg-orange-50 rounded-lg">
-                <div className="font-medium text-foreground">Complex Problem Analysis</div>
-                <div className="text-sm text-muted-foreground">Spend more time on multi-step problems</div>
+              <div className="p-3.5 bg-amber-50/60 border border-amber-200/60 rounded-xl">
+                <div className="text-sm font-medium text-foreground">Complex Problem Analysis</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Spend more time on multi-step problems</div>
               </div>
-              <div className="p-3 bg-orange-50 rounded-lg">
-                <div className="font-medium text-foreground">Time Management</div>
-                <div className="text-sm text-muted-foreground">Practice timed mock tests</div>
+              <div className="p-3.5 bg-amber-50/60 border border-amber-200/60 rounded-xl">
+                <div className="text-sm font-medium text-foreground">Time Management</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Practice timed mock tests</div>
               </div>
-              <div className="p-3 bg-orange-50 rounded-lg">
-                <div className="font-medium text-foreground">Numerical Accuracy</div>
-                <div className="text-sm text-muted-foreground">Review calculation methods</div>
+              <div className="p-3.5 bg-amber-50/60 border border-amber-200/60 rounded-xl">
+                <div className="text-sm font-medium text-foreground">Numerical Accuracy</div>
+                <div className="text-xs text-muted-foreground mt-0.5">Review calculation methods</div>
               </div>
             </div>
           </div>

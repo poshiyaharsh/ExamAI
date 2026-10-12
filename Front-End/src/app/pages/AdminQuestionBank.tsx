@@ -52,41 +52,41 @@ export function AdminQuestionBank() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground mb-2">Question Bank Management</h1>
-            <p className="text-muted-foreground">Manage the institution question repository</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Question Bank Management</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">Manage the institution question repository</p>
           </div>
-          <div className="flex gap-3">
-            <button className="px-6 py-3 rounded-lg border border-border text-foreground hover:bg-accent transition-colors flex items-center gap-2">
-              <Upload className="w-5 h-5" />
+          <div className="flex gap-2.5">
+            <button className="px-4 py-2.5 rounded-lg border border-border text-foreground hover:bg-muted text-sm font-medium transition-colors flex items-center gap-2">
+              <Upload className="w-4 h-4" />
               Bulk Upload CSV
             </button>
             <button
               onClick={() => setShowAddModal(true)}
-              className="px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center gap-2"
+              className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 shadow-md font-medium text-sm transition-all flex items-center gap-2"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
               Add Question
             </button>
           </div>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-3xl font-bold text-foreground mb-1">1,247</div>
-            <div className="text-sm text-muted-foreground">Total Questions</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-primary/20 transition-all">
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-0.5">1,247</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Total Questions</div>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-3xl font-bold text-foreground mb-1">342</div>
-            <div className="text-sm text-muted-foreground">Easy</div>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-emerald-200 transition-all">
+            <div className="text-2xl sm:text-3xl font-bold text-emerald-600 mb-0.5">342</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Easy</div>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-3xl font-bold text-foreground mb-1">589</div>
-            <div className="text-sm text-muted-foreground">Medium</div>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-amber-200 transition-all">
+            <div className="text-2xl sm:text-3xl font-bold text-amber-600 mb-0.5">589</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Medium</div>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="text-3xl font-bold text-foreground mb-1">316</div>
-            <div className="text-sm text-muted-foreground">Hard</div>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-rose-200 transition-all">
+            <div className="text-2xl sm:text-3xl font-bold text-rose-600 mb-0.5">316</div>
+            <div className="text-xs sm:text-sm text-muted-foreground">Hard</div>
           </div>
         </div>
 

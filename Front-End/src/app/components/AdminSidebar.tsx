@@ -45,13 +45,13 @@ export function AdminSidebar({ open, onLogout, displayName, displayEmail }: Admi
             <NavLink key={item.path} to={item.path} end>
               {({ isActive }) => (
                 <div
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                  className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
                     isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                      ? "bg-gradient-to-r from-primary to-secondary text-white shadow-sm"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-foreground"
                   }`}
                 >
-                  <item.icon className="w-5 h-5" />
+                  <item.icon className="w-4 h-4 shrink-0" />
                   <span>{item.label}</span>
                 </div>
               )}

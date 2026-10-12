@@ -36,13 +36,13 @@ export function ResultPage() {
   return (
     <div className="min-h-screen bg-muted/30">
       {/* Header */}
-      <div className="bg-gradient-to-r from-primary to-secondary text-white py-12">
-        <div className="max-w-7xl mx-auto px-6">
-          <Link to="/student" className="text-white/80 hover:text-white mb-4 inline-block">
+      <div className="bg-gradient-to-r from-primary to-secondary text-white py-8 sm:py-10 shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <Link to="/student" className="text-white/80 hover:text-white text-xs sm:text-sm font-medium mb-3 inline-flex items-center gap-1.5 transition-colors">
             ← Back to Dashboard
           </Link>
-          <h1 className="text-4xl font-bold mb-2">Exam Results</h1>
-          <p className="text-white/90">Data Structures Midterm Examination</p>
+          <h1 className="text-2xl sm:text-4xl font-bold mb-1">Exam Results</h1>
+          <p className="text-white/80 text-xs sm:text-sm">Data Structures Midterm Examination</p>
         </div>
       </div>
 
@@ -251,8 +251,8 @@ export function ResultPage() {
           transition={{ delay: 0.5 }}
           className="flex justify-center"
         >
-          <button className="px-8 py-4 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center gap-3">
-            <Download className="w-5 h-5" />
+          <button className="px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all flex items-center gap-2">
+            <Download className="w-4 h-4" />
             Download Result PDF
           </button>
         </motion.div>

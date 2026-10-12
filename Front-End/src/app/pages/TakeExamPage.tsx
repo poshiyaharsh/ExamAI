@@ -117,22 +117,152 @@ export function TakeExamPage() {
       <header className="sticky top-0 z-20 border-b border-border bg-white shadow-sm">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="min-w-0"><h1 className="truncate font-semibold">{session.exam.title}</h1><p className="text-sm text-muted-foreground">Answered {answeredCount}/{questions.length} · {answeredMarks}/{session.exam.total_marks} marks</p></div>
-          <div className="flex items-center gap-3"><span className="text-xs text-muted-foreground">{saveState === "saving" ? "Saving..." : saveState === "saved" ? <span className="inline-flex items-center gap-1 text-emerald-600"><Check className="h-3 w-3" /> Saved</span> : saveState === "error" ? <span className="text-red-600">Save failed</span> : "Autosave in 15s"}</span><span className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 font-semibold ${isWarning ? "bg-red-100 text-red-700" : "bg-accent text-accent-foreground"}`}><Clock className="h-4 w-4" />{formatCountdown(secondsLeft)}</span></div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              {saveState === "saving" ? "Saving..." : saveState === "saved" ? <span className="inline-flex items-center gap-1 text-emerald-600 font-medium"><Check className="h-3 w-3" /> Saved</span> : saveState === "error" ? <span className="text-rose-600 font-medium">Save failed</span> : "Autosave in 15s"}
+            </span>
+            <span className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold border ${isWarning ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-primary/10 text-primary border-primary/20"}`}>
+              <Clock className="h-4 w-4" />{formatCountdown(secondsLeft)}
+            </span>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto grid max-w-6xl gap-5 p-4 sm:p-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <aside className="h-fit rounded-xl border border-border bg-white p-4 lg:sticky lg:top-24"><p className="mb-3 text-sm font-semibold">Questions</p><div className="grid grid-cols-6 gap-2 lg:grid-cols-4">{questions.map((question, index) => <button key={question.id} type="button" onClick={() => setCurrentIndex(index)} className={`aspect-square rounded-lg border text-sm font-medium transition-colors ${index === currentIndex ? "border-primary bg-primary text-white" : answers[question.id]?.trim() ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-border bg-white text-muted-foreground hover:border-primary"}`}>{index + 1}</button>)}</div><div className="mt-4 space-y-2 text-xs text-muted-foreground"><p><span className="mr-2 inline-block h-3 w-3 rounded bg-primary align-middle" />Current</p><p><span className="mr-2 inline-block h-3 w-3 rounded bg-emerald-100 align-middle" />Answered</p><p><span className="mr-2 inline-block h-3 w-3 rounded border border-border align-middle" />Unanswered</p></div></aside>
+        <aside className="h-fit rounded-xl border border-border bg-white p-4 lg:sticky lg:top-24 shadow-sm">
+          <p className="mb-3 text-sm font-semibold text-foreground">Questions</p>
+          <div className="grid grid-cols-6 gap-2 lg:grid-cols-4">
+            {questions.map((question, index) => (
+              <button
+                key={question.id}
+                type="button"
+                onClick={() => setCurrentIndex(index)}
+                className={`aspect-square rounded-lg border text-xs sm:text-sm transition-all ${
+                  index === currentIndex
+                    ? "border-primary bg-gradient-to-r from-primary to-secondary text-white font-bold shadow-xs"
+                    : answers[question.id]?.trim()
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-700 font-medium"
+                    : "border-border bg-white text-muted-foreground hover:border-primary/50"
+                }`}
+              >
+                {index + 1}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 space-y-2 text-xs text-muted-foreground pt-3 border-t border-border">
+            <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded bg-gradient-to-r from-primary to-secondary align-middle" />Current</p>
+            <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded bg-emerald-100 border border-emerald-300 align-middle" />Answered</p>
+            <p><span className="mr-2 inline-block h-2.5 w-2.5 rounded border border-border align-middle" />Unanswered</p>
+          </div>
+        </aside>
 
-        <section className="rounded-xl border border-border bg-white p-5 sm:p-8"><div className="mb-6 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-foreground">{typeLabel[currentQuestion.question_type]}</span><span className="rounded-full border border-border px-3 py-1 text-xs font-semibold">Q{currentQuestion.order} · {currentQuestion.marks} {currentQuestion.marks === 1 ? "mark" : "marks"}</span></div><span className="text-sm text-muted-foreground">{currentIndex + 1} of {questions.length}</span></div><h2 className="text-lg font-medium leading-relaxed">{currentQuestion.text}</h2>
-          {currentQuestion.question_type === "mcq" || currentQuestion.question_type === "truefalse" || currentQuestion.question_type === "fillblank" ? <div className="mt-7 space-y-3">{currentOptions.map((option, index) => <label key={option} className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-4 transition-colors ${answers[currentQuestion.id] === option ? "border-primary bg-accent" : "border-border hover:border-primary/50"}`}><input type="radio" name={`question-${currentQuestion.id}`} checked={answers[currentQuestion.id] === option} onChange={() => setAnswer(currentQuestion.id, option)} className="sr-only" /><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md font-semibold ${answers[currentQuestion.id] === option ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}>{optionLabels[index]})</span><span>{option}</span></label>)}</div> : <div className="mt-7"><textarea rows={12} value={answers[currentQuestion.id] ?? ""} onChange={(event) => setAnswer(currentQuestion.id, event.target.value)} className="w-full resize-none rounded-xl border border-border p-4 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Write your answer here..." /><p className="mt-2 text-right text-xs text-muted-foreground">{(answers[currentQuestion.id] ?? "").length} characters · {(answers[currentQuestion.id] ?? "").trim() ? (answers[currentQuestion.id] ?? "").trim().split(/\s+/).length : 0} words</p></div>}
-          <div className="mt-8 flex items-center justify-between gap-3 border-t border-border pt-5"><button type="button" disabled={currentIndex === 0} onClick={() => setCurrentIndex((index) => index - 1)} className="rounded-lg border border-border px-4 py-2 text-sm disabled:opacity-40">Previous</button><button type="button" disabled={currentIndex === questions.length - 1} onClick={() => setCurrentIndex((index) => index + 1)} className="rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:opacity-40">Next</button></div>
+        <section className="rounded-xl border border-border bg-white p-5 sm:p-8 shadow-sm">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-primary/10 text-primary border border-primary/20 px-3 py-0.5 text-xs font-semibold">{typeLabel[currentQuestion.question_type]}</span>
+              <span className="rounded-full border border-border bg-muted/30 px-3 py-0.5 text-xs font-semibold text-foreground">Q{currentQuestion.order} · {currentQuestion.marks} {currentQuestion.marks === 1 ? "mark" : "marks"}</span>
+            </div>
+            <span className="text-xs sm:text-sm text-muted-foreground">{currentIndex + 1} of {questions.length}</span>
+          </div>
+          <h2 className="text-base sm:text-lg font-medium leading-relaxed text-foreground">{currentQuestion.text}</h2>
+          {currentQuestion.question_type === "mcq" || currentQuestion.question_type === "truefalse" || currentQuestion.question_type === "fillblank" ? (
+            <div className="mt-7 space-y-3">
+              {currentOptions.map((option, index) => (
+                <label
+                  key={option}
+                  className={`flex cursor-pointer items-center gap-3.5 rounded-xl border-2 p-3.5 sm:p-4 transition-all ${
+                    answers[currentQuestion.id] === option ? "border-primary bg-primary/5 ring-1 ring-primary shadow-xs" : "border-border hover:border-primary/40 bg-white"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name={`question-${currentQuestion.id}`}
+                    checked={answers[currentQuestion.id] === option}
+                    onChange={() => setAnswer(currentQuestion.id, option)}
+                    className="sr-only"
+                  />
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold transition-all ${answers[currentQuestion.id] === option ? "bg-gradient-to-r from-primary to-secondary text-white" : "bg-muted text-muted-foreground"}`}>
+                    {optionLabels[index]})
+                  </span>
+                  <span className="text-sm font-medium text-foreground">{option}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-7">
+              <textarea
+                rows={12}
+                value={answers[currentQuestion.id] ?? ""}
+                onChange={(event) => setAnswer(currentQuestion.id, event.target.value)}
+                className="w-full resize-none rounded-xl border border-border bg-input-background p-4 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                placeholder="Write your answer here..."
+              />
+              <p className="mt-2 text-right text-xs text-muted-foreground">
+                {(answers[currentQuestion.id] ?? "").length} characters · {(answers[currentQuestion.id] ?? "").trim() ? (answers[currentQuestion.id] ?? "").trim().split(/\s+/).length : 0} words
+              </p>
+            </div>
+          )}
+          <div className="mt-8 flex items-center justify-between gap-3 border-t border-border pt-5">
+            <button
+              type="button"
+              disabled={currentIndex === 0}
+              onClick={() => setCurrentIndex((index) => index - 1)}
+              className="rounded-lg border border-border px-4 py-2 text-xs sm:text-sm font-medium text-foreground hover:bg-muted/50 transition-colors disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={currentIndex === questions.length - 1}
+              onClick={() => setCurrentIndex((index) => index + 1)}
+              className="rounded-lg bg-gradient-to-r from-primary to-secondary px-4 py-2 text-xs sm:text-sm font-medium text-white shadow-sm hover:opacity-90 transition-all disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </section>
       </main>
 
-      <footer className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-white/95 px-4 py-3 shadow-lg backdrop-blur"><div className="mx-auto flex max-w-6xl items-center justify-between gap-3"><span className="text-sm text-muted-foreground">{answeredCount} of {questions.length} answered</span><button type="button" disabled={submitting} onClick={() => setShowSubmitDialog(true)} className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 font-medium text-white disabled:opacity-50"><Send className="h-4 w-4" />{submitting ? "Submitting..." : "Submit Exam"}</button></div></footer>
+      <footer className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+          <span className="text-xs sm:text-sm text-muted-foreground">{answeredCount} of {questions.length} answered</span>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => setShowSubmitDialog(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-secondary px-5 py-2.5 font-medium text-sm text-white shadow-md hover:opacity-90 transition-all disabled:opacity-50"
+          >
+            <Send className="h-4 w-4" />{submitting ? "Submitting..." : "Submit Exam"}
+          </button>
+        </div>
+      </footer>
 
-      {showSubmitDialog && <div className="fixed inset-0 z-30 grid place-items-center bg-black/40 p-4"><div role="dialog" aria-modal="true" className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"><h2 className="text-lg font-semibold">Submit exam?</h2><p className="mt-2 text-sm text-muted-foreground">You've answered {answeredCount} of {questions.length} questions. Submit now?</p><div className="mt-6 flex justify-end gap-3"><button type="button" disabled={submitting} onClick={() => setShowSubmitDialog(false)} className="rounded-lg border border-border px-4 py-2 text-sm">Continue exam</button><button type="button" disabled={submitting} onClick={() => { setShowSubmitDialog(false); void submitAttempt(); }} className="rounded-lg bg-primary px-4 py-2 text-sm text-white">Submit now</button></div></div></div>}
+      {showSubmitDialog && (
+        <div className="fixed inset-0 z-30 grid place-items-center bg-black/40 backdrop-blur-xs p-4">
+          <div role="dialog" aria-modal="true" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-border">
+            <h2 className="text-lg font-semibold text-foreground">Submit exam?</h2>
+            <p className="mt-2 text-xs sm:text-sm text-muted-foreground">You've answered {answeredCount} of {questions.length} questions. Are you sure you want to submit?</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setShowSubmitDialog(false)}
+                className="rounded-lg border border-border px-4 py-2 text-xs sm:text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
+              >
+                Continue exam
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => { setShowSubmitDialog(false); void submitAttempt(); }}
+                className="rounded-lg bg-gradient-to-r from-primary to-secondary px-4 py-2 text-xs sm:text-sm font-medium text-white shadow-md hover:opacity-90 transition-all"
+              >
+                Submit now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

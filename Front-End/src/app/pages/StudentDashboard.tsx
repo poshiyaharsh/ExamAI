@@ -49,64 +49,64 @@ export function StudentDashboard() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Student Dashboard</h1>
-          <p className="text-muted-foreground">Welcome back! Here's your exam overview</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Student Dashboard</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Welcome back! Here's your exam overview</p>
         </div>
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                <FileText className="w-6 h-6 text-white" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-xs">
+                <FileText className="w-5 h-5 text-white" />
               </div>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">2</div>
-            <div className="text-sm text-muted-foreground">Available Exams</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-1">2</div>
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium">Available Exams</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center">
-                <Clock className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-xs">
+                <Clock className="w-5 h-5 text-white" />
               </div>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">3</div>
-            <div className="text-sm text-muted-foreground">Upcoming Exams</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-1">3</div>
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium">Upcoming Exams</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-xs">
+                <TrendingUp className="w-5 h-5 text-white" />
               </div>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">85.8%</div>
-            <div className="text-sm text-muted-foreground">Average Score</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-1">85.8%</div>
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium">Average Score</div>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-secondary to-primary flex items-center justify-center">
-                <FileText className="w-6 h-6 text-white" />
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md transition-all">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-xs">
+                <FileText className="w-5 h-5 text-white" />
               </div>
             </div>
-            <div className="text-3xl font-bold text-foreground mb-1">12</div>
-            <div className="text-sm text-muted-foreground">Completed Exams</div>
+            <div className="text-2xl sm:text-3xl font-bold text-foreground mb-1">12</div>
+            <div className="text-xs sm:text-sm text-muted-foreground font-medium">Completed Exams</div>
           </div>
         </div>
 
         {/* Available Exams */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-semibold">Available Exams</h3>
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border">
+            <h3 className="font-semibold text-foreground">Available Exams</h3>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="p-5 sm:p-6 space-y-3">
             {availableExams.map((exam) => (
-              <div key={exam.id} className="flex items-center justify-between p-4 rounded-lg border border-border hover:border-primary transition-colors">
+              <div key={exam.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-border hover:border-primary/50 hover:shadow-xs transition-all">
                 <div>
-                  <h4 className="font-semibold text-foreground mb-1">{exam.title}</h4>
-                  <div className="flex gap-4 text-sm text-muted-foreground">
+                  <h4 className="font-semibold text-foreground text-sm sm:text-base mb-1">{exam.title}</h4>
+                  <div className="flex flex-wrap gap-2 sm:gap-3 text-xs sm:text-sm text-muted-foreground">
                     <span>{exam.subject}</span>
                     <span>•</span>
                     <span>{exam.duration}</span>
@@ -115,7 +115,7 @@ export function StudentDashboard() {
                   </div>
                 </div>
                 <Link to={`/exam/${exam.id}`}>
-                  <button className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity">
+                  <button className="px-4 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-xs sm:text-sm hover:opacity-90 shadow-sm transition-all">
                     Start Exam
                   </button>
                 </Link>
@@ -125,21 +125,21 @@ export function StudentDashboard() {
         </div>
 
         {/* Upcoming Exams */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-semibold">Upcoming Exams</h3>
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border">
+            <h3 className="font-semibold text-foreground">Upcoming Exams</h3>
           </div>
           <div className="divide-y divide-border">
             {upcomingExams.map((exam, index) => (
-              <div key={index} className="p-6 hover:bg-muted/30 transition-colors">
+              <div key={index} className="p-5 sm:p-6 hover:bg-muted/30 transition-colors">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="font-semibold text-foreground mb-1">{exam.title}</h4>
-                    <p className="text-sm text-muted-foreground">{exam.subject}</p>
+                    <h4 className="font-semibold text-foreground text-sm sm:text-base mb-1">{exam.title}</h4>
+                    <p className="text-xs sm:text-sm text-muted-foreground">{exam.subject}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm text-foreground">{exam.date}</p>
-                    <p className="text-sm text-muted-foreground">{exam.time}</p>
+                    <p className="text-xs sm:text-sm font-medium text-foreground">{exam.date}</p>
+                    <p className="text-xs text-muted-foreground">{exam.time}</p>
                   </div>
                 </div>
               </div>
@@ -149,8 +149,8 @@ export function StudentDashboard() {
 
         {/* Performance Overview */}
         <div className="grid lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <h3 className="font-semibold mb-6">Performance Trend</h3>
+          <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+            <h3 className="font-semibold text-foreground mb-5">Performance Trend</h3>
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={performanceData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -162,8 +162,8 @@ export function StudentDashboard() {
             </ResponsiveContainer>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <h3 className="font-semibold mb-6">Subject Performance</h3>
+          <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+            <h3 className="font-semibold text-foreground mb-5">Subject Performance</h3>
             <div className="flex items-center justify-center">
               <ResponsiveContainer width="100%" height={250}>
                 <PieChart>
@@ -189,35 +189,35 @@ export function StudentDashboard() {
         </div>
 
         {/* Previous Results */}
-        <div className="bg-white rounded-xl shadow-sm border border-border">
-          <div className="p-6 border-b border-border">
-            <h3 className="font-semibold">Previous Results</h3>
+        <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+          <div className="p-5 sm:p-6 border-b border-border">
+            <h3 className="font-semibold text-foreground">Previous Results</h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-muted/50">
+              <thead className="bg-muted/40">
                 <tr>
-                  <th className="text-left px-6 py-3 text-sm text-muted-foreground">Exam</th>
-                  <th className="text-left px-6 py-3 text-sm text-muted-foreground">Score</th>
-                  <th className="text-left px-6 py-3 text-sm text-muted-foreground">Date</th>
-                  <th className="text-left px-6 py-3 text-sm text-muted-foreground">Grade</th>
-                  <th className="text-left px-6 py-3 text-sm text-muted-foreground">Actions</th>
+                  <th className="text-left px-5 sm:px-6 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Exam</th>
+                  <th className="text-left px-5 sm:px-6 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Score</th>
+                  <th className="text-left px-5 sm:px-6 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Date</th>
+                  <th className="text-left px-5 sm:px-6 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Grade</th>
+                  <th className="text-left px-5 sm:px-6 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border">
                 {previousResults.map((result, index) => (
-                  <tr key={index} className="border-t border-border hover:bg-muted/30 transition-colors">
-                    <td className="px-6 py-4">{result.exam}</td>
-                    <td className="px-6 py-4">{result.score}/{result.maxScore}</td>
-                    <td className="px-6 py-4">{result.date}</td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-700">
+                  <tr key={index} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-5 sm:px-6 py-4 text-sm font-medium text-foreground">{result.exam}</td>
+                    <td className="px-5 sm:px-6 py-4 text-sm text-foreground">{result.score}/{result.maxScore}</td>
+                    <td className="px-5 sm:px-6 py-4 text-sm text-muted-foreground">{result.date}</td>
+                    <td className="px-5 sm:px-6 py-4">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
                         {result.grade}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-5 sm:px-6 py-4">
                       <Link to={`/result/${index + 1}`}>
-                        <button className="text-primary hover:text-secondary text-sm">View Details</button>
+                        <button className="text-primary hover:text-secondary text-sm font-semibold transition-colors">View Details</button>
                       </Link>
                     </td>
                   </tr>

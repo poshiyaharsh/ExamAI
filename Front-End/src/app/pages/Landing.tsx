@@ -88,7 +88,7 @@ export function Landing() {
             <span className="text-xl font-semibold text-foreground">ExamAI</span>
           </div>
           <Link to="/login">
-            <button className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity">
+            <button className="px-5 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 shadow-sm transition-all text-sm font-medium">
               Sign In
             </button>
           </Link>
@@ -108,7 +108,7 @@ export function Landing() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <span className="inline-block px-4 py-1 rounded-full bg-accent text-accent-foreground mb-4 lg:mb-6">
+              <span className="inline-block px-3.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold mb-4 lg:mb-6">
                 AI-Powered Exam Platform
               </span>
             </motion.div>
@@ -132,14 +132,14 @@ export function Landing() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5 }}
-              className="flex flex-col sm:flex-row gap-4"
+              className="flex flex-col sm:flex-row gap-3.5"
             >
               <Link to="/login">
-                <button className="px-8 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity">
+                <button className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 shadow-md font-medium transition-all">
                   Get Started
                 </button>
               </Link>
-              <button className="px-8 py-3 rounded-lg border-2 border-primary text-primary hover:bg-accent transition-colors">
+              <button className="px-6 py-2.5 rounded-lg border-2 border-primary/20 text-primary hover:bg-primary/5 hover:border-primary transition-all font-medium">
                 Learn More
               </button>
             </motion.div>
@@ -183,13 +183,13 @@ export function Landing() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.1 }}
-              className="bg-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-shadow"
+              className="bg-white rounded-xl p-6 shadow-sm border border-border hover:shadow-md hover:border-primary/30 transition-all"
             >
-              <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center mb-4">
-                <feature.icon className="w-6 h-6 text-white" />
+              <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center mb-4 shadow-sm">
+                <feature.icon className="w-5 h-5 text-white" />
               </div>
               <h3 className="text-xl font-semibold text-foreground mb-2">{feature.title}</h3>
-              <p className="text-muted-foreground">{feature.description}</p>
+              <p className="text-muted-foreground text-sm leading-relaxed">{feature.description}</p>
             </motion.div>
           ))}
         </div>
@@ -250,17 +250,17 @@ export function Landing() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.1 }}
-              className="bg-white rounded-xl p-6 shadow-lg"
+              className="bg-white rounded-xl p-6 shadow-sm border border-border"
             >
               <div className="flex gap-1 mb-4">
                 {[...Array(testimonial.rating)].map((_, i) => (
-                  <Star key={i} className="w-5 h-5 fill-primary text-primary" />
+                  <Star key={i} className="w-4 h-4 fill-primary text-primary" />
                 ))}
               </div>
-              <p className="text-muted-foreground mb-4">{testimonial.content}</p>
+              <p className="text-muted-foreground text-sm mb-4 leading-relaxed">{testimonial.content}</p>
               <div>
-                <div className="font-semibold text-foreground">{testimonial.name}</div>
-                <div className="text-sm text-muted-foreground">{testimonial.role}</div>
+                <div className="font-semibold text-sm text-foreground">{testimonial.name}</div>
+                <div className="text-xs text-muted-foreground">{testimonial.role}</div>
               </div>
             </motion.div>
           ))}

@@ -474,11 +474,11 @@ export function AdminStudents() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground mb-2">Student Management</h1>
-            <p className="text-muted-foreground">Manage all enrolled students</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Student Management</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">Manage all enrolled students</p>
           </div>
           <button
-            className="px-6 py-3 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity flex items-center gap-2"
+            className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 shadow-md font-medium text-sm transition-all flex items-center gap-2"
             onClick={() => {
               setIsCreateOpen(true);
               setCreateError("");
@@ -486,50 +486,50 @@ export function AdminStudents() {
               void fetchCreateDepartments();
             }}
           >
-            <Plus className="w-5 h-5" />
+            <Plus className="w-4 h-4" />
             Add Student
           </button>
         </div>
 
         {/* Stats */}
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <p className="text-sm text-muted-foreground mb-1">Total Students</p>
-            <p className="text-3xl font-bold text-foreground">{students.length}</p>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-primary/20 transition-all">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Students</p>
+            <p className="text-2xl sm:text-3xl font-bold text-foreground">{students.length}</p>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <p className="text-sm text-muted-foreground mb-1">Active Students</p>
-            <p className="text-3xl font-bold text-green-600">{students.length}</p>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-emerald-200 transition-all">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-1">Active Students</p>
+            <p className="text-2xl sm:text-3xl font-bold text-emerald-600">{students.length}</p>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <p className="text-sm text-muted-foreground mb-1">Avg Performance</p>
-            <p className="text-3xl font-bold text-foreground">{averagePerformance}%</p>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-blue-200 transition-all">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-1">Avg Performance</p>
+            <p className="text-2xl sm:text-3xl font-bold text-blue-600">{averagePerformance}%</p>
           </div>
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-            <p className="text-sm text-muted-foreground mb-1">Total Exams</p>
-            <p className="text-3xl font-bold text-foreground">{totalExams}</p>
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-border hover:shadow-md hover:border-purple-200 transition-all">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Exams</p>
+            <p className="text-2xl sm:text-3xl font-bold text-purple-600">{totalExams}</p>
           </div>
         </div>
 
         {/* Search and Filters */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-          <div className="flex flex-col sm:flex-row gap-4">
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-border">
+          <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <input
                 type="text"
                 placeholder="Search by name, email, or roll number..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                className="w-full pl-9 pr-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
               />
             </div>
             <div className="flex items-center gap-2">
-              <Filter className="w-5 h-5 text-muted-foreground" />
+              <Filter className="w-4 h-4 text-muted-foreground" />
               <select
                 value={departmentFilter}
                 onChange={(e) => setDepartmentFilter(e.target.value)}
-                className="px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                className="px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
               >
                 <option value="all">All Departments</option>
                 {departments.map((dept) => (
@@ -538,7 +538,7 @@ export function AdminStudents() {
               </select>
             </div>
           </div>
-          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+          {error && <p className="mt-3 text-xs sm:text-sm text-destructive">{error}</p>}
         </div>
 
         {/* Students Table */}

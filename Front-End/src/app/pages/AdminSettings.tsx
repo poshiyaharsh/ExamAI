@@ -189,62 +189,62 @@ export function AdminSettings() {
               </div>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Institution Name</label>
+                  <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground">Institution Name</label>
                   <input
                     type="text"
                     value={institutionSettings.name}
                     onChange={(e) => setInstitutionSettings({ ...institutionSettings, name: e.target.value })}
                     disabled={institutionLoading || institutionSaving}
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Institution Code</label>
+                  <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground">Institution Code</label>
                   <input
                     type="text"
                     value={institutionLoading ? "Loading..." : institutionSettings.code}
                     disabled
-                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                    className="w-full px-3.5 py-2 rounded-lg border border-border text-sm bg-muted text-muted-foreground cursor-not-allowed"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Address</label>
+                  <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground">Address</label>
                   <input
                     type="text"
                     value={institutionSettings.address}
                     onChange={(e) => setInstitutionSettings({ ...institutionSettings, address: e.target.value })}
                     disabled={institutionLoading || institutionSaving}
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
+                <div className="grid sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Phone</label>
+                    <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground">Phone</label>
                     <input
                       type="tel"
                       value={institutionSettings.phone}
                       onChange={(e) => setInstitutionSettings({ ...institutionSettings, phone: e.target.value })}
                       disabled={institutionLoading || institutionSaving}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Email</label>
+                    <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground">Email</label>
                     <input
                       type="email"
                       value={institutionLoading ? "Loading..." : institutionSettings.email}
                       disabled
-                      className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                      className="w-full px-3.5 py-2 rounded-lg border border-border text-sm bg-muted text-muted-foreground cursor-not-allowed"
                     />
                   </div>
                 </div>
-                {institutionError && <p className="text-sm text-destructive">{institutionError}</p>}
-                {institutionSuccess && <p className="text-sm text-green-600">{institutionSuccess}</p>}
-                <div className="pt-4">
+                {institutionError && <p className="text-xs sm:text-sm text-destructive">{institutionError}</p>}
+                {institutionSuccess && <p className="text-xs sm:text-sm text-emerald-600 font-medium">{institutionSuccess}</p>}
+                <div className="pt-2">
                   <button
                     onClick={handleSaveInstitution}
                     disabled={institutionLoading || institutionSaving}
-                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {institutionSaving ? "Saving..." : "Save Changes"}
                   </button>

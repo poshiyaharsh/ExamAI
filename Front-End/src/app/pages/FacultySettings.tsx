@@ -235,48 +235,48 @@ export function FacultySettings() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Settings</h1>
-          <p className="text-muted-foreground">Manage your account and preferences</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Settings</h1>
+          <p className="text-xs sm:text-sm text-muted-foreground">Manage your account and preferences</p>
         </div>
 
         <div className="grid gap-6">
           {/* Main Content - Full Width */}
           <div className="space-y-6">
             {/* Profile Section */}
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                  <User className="w-5 h-5 text-white" />
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+                  <User className="w-5 h-5" />
                 </div>
-                <h2 className="text-xl font-semibold">Profile Information</h2>
+                <h2 className="text-lg font-semibold text-foreground">Profile Information</h2>
               </div>
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Full Name</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Full Name</label>
                   <input
                     type="text"
                     value={profileLoading ? "Loading..." : profile.name}
                     disabled
-                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                    className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Email</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Email</label>
                   <input
                     type="email"
                     value={profileLoading ? "Loading..." : profile.email}
                     disabled
-                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                    className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                   />
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
+                <div className="grid sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Department</label>
+                    <label className="block text-xs font-medium text-foreground mb-1.5">Department</label>
                     <select
                       value={profile.department}
                       onChange={(e) => setProfile({ ...profile, department: e.target.value })}
                       disabled={profileLoading || savingProfile}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                     >
                       <option value="">Select Department</option>
                       {departmentOptions.map((department) => (
@@ -287,31 +287,31 @@ export function FacultySettings() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2">Employee ID</label>
+                    <label className="block text-xs font-medium text-foreground mb-1.5">Employee ID</label>
                     <input
                       type="text"
                       value={profileLoading ? "Loading..." : profile.employeeId}
                       disabled
-                      className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                      className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Institution</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Institution</label>
                   <input
                     type="text"
                     value={profileLoading ? "Loading..." : profile.institutionName}
                     disabled
-                    className="w-full px-4 py-2.5 rounded-lg border border-border bg-muted cursor-not-allowed"
+                    className="w-full px-3.5 py-2 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm cursor-not-allowed"
                   />
                 </div>
-                {profileError && <p className="text-sm text-destructive">{profileError}</p>}
-                {profileSuccess && <p className="text-sm text-green-600">{profileSuccess}</p>}
-                <div className="pt-4">
+                {profileError && <p className="text-xs sm:text-sm text-destructive font-medium">{profileError}</p>}
+                {profileSuccess && <p className="text-xs sm:text-sm text-emerald-600 font-medium">{profileSuccess}</p>}
+                <div className="pt-2">
                   <button
                     onClick={handleSaveProfile}
                     disabled={profileLoading || savingProfile}
-                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {savingProfile ? "Saving..." : "Save Changes"}
                   </button>
@@ -320,12 +320,12 @@ export function FacultySettings() {
             </div>
 
             {/* Notifications Section */}
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-white" />
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+                  <Bell className="w-5 h-5" />
                 </div>
-                <h2 className="text-xl font-semibold">Notification Preferences</h2>
+                <h2 className="text-lg font-semibold text-foreground">Notification Preferences</h2>
               </div>
               <div className="space-y-4">
                 {Object.entries({
@@ -334,17 +334,17 @@ export function FacultySettings() {
                   studentSubmissions: "Student Submission Alerts",
                   systemUpdates: "System Updates"
                 }).map(([key, label]) => (
-                  <label key={key} className="flex items-center justify-between cursor-pointer">
+                  <label key={key} className="flex items-center justify-between cursor-pointer py-1">
                     <div>
-                      <p className="font-medium">{label}</p>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-sm font-medium text-foreground">{label}</p>
+                      <p className="text-xs text-muted-foreground">
                         {key === "emailNotifications" && "Receive email notifications for important updates"}
                         {key === "examReminders" && "Get reminded about upcoming exams"}
                         {key === "studentSubmissions" && "Alert when students submit exams"}
                         {key === "systemUpdates" && "Stay informed about system changes"}
                       </p>
                     </div>
-                    <div className="relative">
+                    <div className="relative shrink-0 ml-4">
                       <input
                         type="checkbox"
                         checked={notifications[key as keyof typeof notifications]}
@@ -354,7 +354,7 @@ export function FacultySettings() {
                         })}
                         className="sr-only peer"
                       />
-                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                     </div>
                   </label>
                 ))}
@@ -362,20 +362,20 @@ export function FacultySettings() {
             </div>
 
             {/* Preferences Section */}
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                  <Settings className="w-5 h-5 text-white" />
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+                  <Settings className="w-5 h-5" />
                 </div>
-                <h2 className="text-xl font-semibold">Exam Preferences</h2>
+                <h2 className="text-lg font-semibold text-foreground">Exam Preferences</h2>
               </div>
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Default Exam Duration (minutes)</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Default Exam Duration (minutes)</label>
                   <select
                     value={preferences.defaultDuration}
                     onChange={(e) => setPreferences({ ...preferences, defaultDuration: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                   >
                     <option value="30">30 minutes</option>
                     <option value="45">45 minutes</option>
@@ -385,23 +385,23 @@ export function FacultySettings() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Default Difficulty Level</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Default Difficulty Level</label>
                   <select
                     value={preferences.defaultDifficulty}
                     onChange={(e) => setPreferences({ ...preferences, defaultDifficulty: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                   >
                     <option value="easy">Easy</option>
                     <option value="medium">Medium</option>
                     <option value="hard">Hard</option>
                   </select>
                 </div>
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-pointer py-1">
                   <div>
-                    <p className="font-medium">Auto-save Progress</p>
-                    <p className="text-sm text-muted-foreground">Automatically save your work while creating exams</p>
+                    <p className="text-sm font-medium text-foreground">Auto-save Progress</p>
+                    <p className="text-xs text-muted-foreground">Automatically save your work while creating exams</p>
                   </div>
-                  <div className="relative">
+                  <div className="relative shrink-0 ml-4">
                     <input
                       type="checkbox"
                       checked={preferences.autoSave}
@@ -411,85 +411,85 @@ export function FacultySettings() {
                       })}
                       className="sr-only peer"
                     />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                   </div>
                 </label>
               </div>
             </div>
 
             {/* Security Section */}
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                  <Lock className="w-5 h-5 text-white" />
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white shadow-xs">
+                  <Lock className="w-5 h-5" />
                 </div>
-                <h2 className="text-xl font-semibold">Security</h2>
+                <h2 className="text-lg font-semibold text-foreground">Security</h2>
               </div>
-              <div className="space-y-4">
+              <div className="space-y-3.5">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Current Password</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Current Password</label>
                   <div className="relative">
                     <input
                       type={showCurrentPassword ? "text" : "password"}
                       placeholder="Enter current password"
                       value={currentPassword}
                       onChange={(event) => setCurrentPassword(event.target.value)}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all pr-10"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all pr-10"
                     />
                     <button
                       type="button"
                       onClick={() => setShowCurrentPassword((prev) => !prev)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">New Password</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">New Password</label>
                   <div className="relative">
                     <input
                       type={showNewPassword ? "text" : "password"}
                       placeholder="Enter new password"
                       value={newPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all pr-10"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all pr-10"
                     />
                     <button
                       type="button"
                       onClick={() => setShowNewPassword((prev) => !prev)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Confirm New Password</label>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">Confirm New Password</label>
                   <div className="relative">
                     <input
                       type={showConfirmPassword ? "text" : "password"}
                       placeholder="Confirm new password"
                       value={confirmPassword}
                       onChange={(event) => setConfirmPassword(event.target.value)}
-                      className="w-full px-4 py-2.5 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all pr-10"
+                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all pr-10"
                     />
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword((prev) => !prev)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
-                {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-                {passwordSuccess && <p className="text-sm text-green-600">{passwordSuccess}</p>}
-                <div className="pt-4">
+                {passwordError && <p className="text-xs sm:text-sm text-destructive font-medium">{passwordError}</p>}
+                {passwordSuccess && <p className="text-xs sm:text-sm text-emerald-600 font-medium">{passwordSuccess}</p>}
+                <div className="pt-2">
                   <button
                     onClick={handlePasswordUpdate}
                     disabled={changingPassword}
-                    className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-semibold hover:shadow-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {changingPassword ? "Updating..." : "Update Password"}
                   </button>

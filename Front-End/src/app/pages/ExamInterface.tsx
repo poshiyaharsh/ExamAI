@@ -113,29 +113,29 @@ export function ExamInterface() {
               )}
             </div>
             {/* Timer */}
-            <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent">
-              <Clock className="w-5 h-5 text-accent-foreground" />
-              <span className="font-semibold text-accent-foreground">{formatTime(timeLeft)}</span>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-primary/10 border border-primary/20">
+              <Clock className="w-4 h-4 text-primary" />
+              <span className="font-semibold text-primary text-sm">{formatTime(timeLeft)}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-6">
+      <div className="max-w-7xl mx-auto p-4 sm:p-6">
         <div className="grid lg:grid-cols-4 gap-6">
           {/* Main Question Area */}
           <div className="lg:col-span-3">
-            <div className="bg-white rounded-xl shadow-sm border border-border p-8">
+            <div className="bg-white rounded-xl shadow-sm border border-border p-6 sm:p-8">
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-foreground">
+                  <h2 className="text-lg sm:text-xl font-semibold text-foreground">
                     Question {currentQuestion + 1} of {sampleQuestions.length}
                   </h2>
-                  <span className="px-3 py-1 rounded-full bg-accent text-accent-foreground text-sm">
+                  <span className="px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 text-xs sm:text-sm font-semibold">
                     {question.marks} marks
                   </span>
                 </div>
-                <p className="text-lg text-foreground leading-relaxed">{question.question}</p>
+                <p className="text-base sm:text-lg text-foreground leading-relaxed">{question.question}</p>
               </div>
 
               {question.type === "mcq" ? (
@@ -143,10 +143,10 @@ export function ExamInterface() {
                   {question.options?.map((option, index) => (
                     <label
                       key={index}
-                      className={`flex items-start gap-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                      className={`flex items-start gap-4 p-3.5 sm:p-4 rounded-xl border-2 cursor-pointer transition-all ${
                         answers[question.id] === option
-                          ? "border-primary bg-accent"
-                          : "border-border hover:border-primary/50"
+                          ? "border-primary bg-primary/5 ring-1 ring-primary shadow-xs"
+                          : "border-border hover:border-primary/40 bg-white"
                       }`}
                     >
                       <input
@@ -155,9 +155,9 @@ export function ExamInterface() {
                         value={option}
                         checked={answers[question.id] === option}
                         onChange={(e) => handleAnswerChange(question.id, e.target.value)}
-                        className="mt-1 w-5 h-5 text-primary"
+                        className="mt-0.5 w-4 h-4 text-primary accent-primary"
                       />
-                      <span className="flex-1 text-foreground">{option}</span>
+                      <span className="flex-1 text-sm font-medium text-foreground">{option}</span>
                     </label>
                   ))}
                 </div>
@@ -168,38 +168,38 @@ export function ExamInterface() {
                     placeholder="Type your answer here..."
                     value={answers[question.id] || ""}
                     onChange={(e) => handleAnswerChange(question.id, e.target.value)}
-                    className="w-full px-4 py-3 rounded-lg bg-input-background border border-border focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                    className="w-full px-4 py-3 rounded-xl bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all resize-none"
                   />
-                  <p className="text-sm text-muted-foreground mt-2">
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-2">
                     {answers[question.id]?.length || 0} characters
                   </p>
                 </div>
               )}
 
               {/* Navigation Buttons */}
-              <div className="flex items-center justify-between mt-8 pt-6 border-t border-border">
+              <div className="flex flex-wrap items-center justify-between gap-3 mt-8 pt-6 border-t border-border">
                 <button
                   onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
                   disabled={currentQuestion === 0}
-                  className="px-6 py-2 rounded-lg border border-border text-foreground hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-5 py-2.5 rounded-lg border border-border text-foreground font-medium text-xs sm:text-sm hover:bg-muted/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
-                <div className="flex gap-3">
-                  <button className="px-6 py-2 rounded-lg border border-border text-foreground hover:bg-accent transition-colors">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button className="px-4 py-2.5 rounded-lg border border-border text-foreground font-medium text-xs sm:text-sm hover:bg-muted/50 transition-colors">
                     Save & Mark for Review
                   </button>
                   {currentQuestion < sampleQuestions.length - 1 ? (
                     <button
                       onClick={() => setCurrentQuestion(currentQuestion + 1)}
-                      className="px-6 py-2 rounded-lg bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 transition-opacity"
+                      className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-xs sm:text-sm hover:opacity-90 shadow-md transition-all"
                     >
                       Next
                     </button>
                   ) : (
                     <button
                       onClick={handleSubmit}
-                      className="px-6 py-2 rounded-lg bg-gradient-to-r from-green-600 to-green-700 text-white hover:opacity-90 transition-opacity"
+                      className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-xs sm:text-sm hover:opacity-90 shadow-md transition-all"
                     >
                       Submit Exam
                     </button>
@@ -211,19 +211,19 @@ export function ExamInterface() {
 
           {/* Question Navigation Panel */}
           <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl shadow-sm border border-border p-6 sticky top-24">
-              <h3 className="font-semibold mb-4">Question Navigator</h3>
+            <div className="bg-white rounded-xl shadow-sm border border-border p-5 sm:p-6 sticky top-24">
+              <h3 className="font-semibold text-foreground mb-4">Question Navigator</h3>
               <div className="grid grid-cols-5 gap-2 mb-6">
                 {sampleQuestions.map((q, index) => (
                   <button
                     key={q.id}
                     onClick={() => setCurrentQuestion(index)}
-                    className={`aspect-square rounded-lg flex items-center justify-center text-sm transition-all ${
+                    className={`aspect-square rounded-lg flex items-center justify-center text-xs sm:text-sm transition-all ${
                       currentQuestion === index
-                        ? "bg-gradient-to-r from-primary to-secondary text-white"
+                        ? "bg-gradient-to-r from-primary to-secondary text-white font-bold shadow-xs"
                         : answers[q.id] !== undefined
-                        ? "bg-green-100 text-green-700 border border-green-300"
-                        : "bg-muted text-muted-foreground hover:bg-accent"
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-300 font-medium"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
                     }`}
                   >
                     {index + 1}
@@ -231,28 +231,28 @@ export function ExamInterface() {
                 ))}
               </div>
 
-              <div className="space-y-2 text-sm">
+              <div className="space-y-2 text-xs sm:text-sm">
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-green-100 border border-green-300"></div>
+                  <div className="w-3.5 h-3.5 rounded bg-emerald-100 border border-emerald-300"></div>
                   <span className="text-muted-foreground">
                     Answered ({Object.keys(answers).length})
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-muted"></div>
+                  <div className="w-3.5 h-3.5 rounded bg-muted border border-border"></div>
                   <span className="text-muted-foreground">
                     Not Answered ({sampleQuestions.length - Object.keys(answers).length})
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-gradient-to-r from-primary to-secondary"></div>
+                  <div className="w-3.5 h-3.5 rounded bg-gradient-to-r from-primary to-secondary"></div>
                   <span className="text-muted-foreground">Current</span>
                 </div>
               </div>
 
               <button
                 onClick={handleSubmit}
-                className="w-full mt-6 px-6 py-3 rounded-lg bg-gradient-to-r from-green-600 to-green-700 text-white hover:opacity-90 transition-opacity"
+                className="w-full mt-6 px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all"
               >
                 Submit Exam
               </button>
