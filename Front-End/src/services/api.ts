@@ -1526,3 +1526,23 @@ export const adminDashboardApi = {
   },
 };
 
+export type PublicStatsData = {
+  total_students: number;
+  total_faculty: number;
+  total_exams: number;
+  total_departments: number;
+};
+
+export type PublicStatsResponse = {
+  status: string;
+  data: PublicStatsData;
+};
+
+export const publicStatsApi = {
+  getStats: async (): Promise<PublicStatsResponse> => {
+    const response = await apiClient.get<PublicStatsResponse>('/api/public/stats/');
+    return response.data;
+  },
+};
+
+

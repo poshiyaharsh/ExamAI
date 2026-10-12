@@ -422,3 +422,31 @@ class DepartmentListAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class PublicStatsAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .models import Exam
+        from students.models import StudentProfile
+        from faculty.models import FacultyProfile
+
+        total_students = StudentProfile.objects.count()
+        total_faculty = FacultyProfile.objects.count()
+        total_exams = Exam.objects.filter(status=Exam.Status.PUBLISHED).count()
+        total_departments = len(DEFAULT_DEPARTMENT_NAMES)
+
+        return Response(
+            {
+                'status': 'success',
+                'data': {
+                    'total_students': total_students,
+                    'total_faculty': total_faculty,
+                    'total_exams': total_exams,
+                    'total_departments': total_departments,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+

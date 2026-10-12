@@ -24,6 +24,7 @@ from .views import (
     DepartmentListAPIView,
     ForgotPasswordAPIView,
     InstitutionListAPIView,
+    PublicStatsAPIView,
     ResetPasswordAPIView,
     TestAPIView,
     VerifyOTPAPIView,
@@ -31,6 +32,8 @@ from .views import (
 
 urlpatterns = [
     path('test/', TestAPIView.as_view(), name='test-api'),
+    path('public/stats', PublicStatsAPIView.as_view(), name='public-stats-no-slash'),
+    path('public/stats/', PublicStatsAPIView.as_view(), name='public-stats'),
     path('admin/dashboard', AdminDashboardView.as_view(), name='api-admin-dashboard-no-slash'),
     path('admin/dashboard/', AdminDashboardView.as_view(), name='api-admin-dashboard'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
