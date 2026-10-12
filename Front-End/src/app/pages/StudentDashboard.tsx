@@ -152,7 +152,6 @@ export function StudentDashboard() {
                 <p className="text-xs sm:text-sm text-muted-foreground">
                   {profile?.roll_number ? `Roll No: ${profile.roll_number}` : ""}
                   {profile?.year_semester ? ` · ${profile.year_semester}` : ""}
-                  {profile?.email ? ` · ${profile.email}` : ""}
                 </p>
               </div>
 
