@@ -125,9 +125,39 @@ def get_tenant_object_or_404(klass, institution, **kwargs):
         raise Http404('Resource not found in this institution.')
 
 
-def get_tenant_cache_key(institution_id, key, user_id=None, version=2):
+def get_tenant_cache_version(institution_id):
     """
-    Generate an institution-isolated cache key with optional user scope and versioning.
+    Retrieve current cache version integer for an institution.
     """
+    from django.core.cache import cache
+    key = f"tenant:{institution_id}:cache_ver"
+    v = cache.get(key)
+    if v is None:
+        v = 1
+        cache.set(key, v, timeout=86400 * 30)
+    return v
+
+
+def bump_tenant_cache_version(institution_id):
+    """
+    Increment cache version for an institution, instantly invalidating all
+    cached student exam lists, dashboards, and stats within this tenant.
+    """
+    from django.core.cache import cache
+    key = f"tenant:{institution_id}:cache_ver"
+    try:
+        cache.incr(key)
+    except Exception:
+        current = cache.get(key) or 1
+        cache.set(key, current + 1, timeout=86400 * 30)
+
+
+def get_tenant_cache_key(institution_id, key, user_id=None, version=None):
+    """
+    Generate an institution-isolated cache key with user scope and live tenant version.
+    Format: tenant:{inst_id}:ver_{v}[:u:{user_id}]:{key}
+    """
+    v = version if version is not None else get_tenant_cache_version(institution_id)
     u_part = f":u:{user_id}" if user_id else ""
-    return f"tenant:{institution_id}{u_part}:{key}:v{version}"
+    return f"tenant:{institution_id}:ver_{v}{u_part}:{key}"
+

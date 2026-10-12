@@ -10,6 +10,7 @@ from .views import (
     AdminFacultyDetailAPIView,
     AdminExamsAPIView,
     AdminExamDetailAPIView,
+    AdminExamAuditAPIView,
     AdminStudentResultsAPIView,
 )
 from api.admin_dashboard import AdminDashboardView
@@ -33,6 +34,8 @@ urlpatterns = [
     path('faculty/<int:faculty_id>/', AdminFacultyDetailAPIView.as_view(), name='admin-faculty-detail'),
     path('exams', AdminExamsAPIView.as_view(), name='admin-exams-no-slash'),
     path('exams/', AdminExamsAPIView.as_view(), name='admin-exams'),
+    path('exams/audit', AdminExamAuditAPIView.as_view(), name='admin-exams-audit-no-slash'),
+    path('exams/audit/', AdminExamAuditAPIView.as_view(), name='admin-exams-audit'),
     path('exams/<int:exam_id>', AdminExamDetailAPIView.as_view(), name='admin-exam-detail-no-slash'),
     path('exams/<int:exam_id>/', AdminExamDetailAPIView.as_view(), name='admin-exam-detail'),
 ]

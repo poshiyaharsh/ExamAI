@@ -27,6 +27,9 @@ class MultiTenantIsolationTestSuite(TestCase):
 
         # ----------------------------------------------------
         # Seed Institute A (GLS)
+        from django.core.cache import cache
+        cache.clear()
+
         # ----------------------------------------------------
         self.admin_user_a = User.objects.create_user(
             username='admin_a@gls.edu', email='admin_a@gls.edu', password='Password123!',
@@ -363,3 +366,165 @@ class MultiTenantIsolationTestSuite(TestCase):
         from api.utils.scoring import is_objective_answer_correct
         self.assertTrue(is_objective_answer_correct(self.q_a1, 'FIFO'))
         self.assertFalse(is_objective_answer_correct(self.q_a1, 'LIFO'))
+
+    def test_14_atmiya_exam_visible_to_same_dept_student(self):
+        """14. Exam created by faculty is visible to students of same institute and department."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_stu_a}')
+        resp_exams = self.client.get('/api/student/exams/')
+        self.assertEqual(resp_exams.status_code, status.HTTP_200_OK)
+        exam_ids = [item['exam']['id'] for item in resp_exams.data]
+        self.assertIn(self.exam_a.id, exam_ids)
+
+        # Check student dashboard
+        resp_dash = self.client.get('/api/student/dashboard/')
+        self.assertEqual(resp_dash.status_code, status.HTTP_200_OK)
+        ongoing_or_upcoming = [e['id'] for e in resp_dash.data['data']['ongoing_exams']] + [e['id'] for e in resp_dash.data['data']['upcoming_exams']]
+        self.assertIn(self.exam_a.id, ongoing_or_upcoming)
+
+    def test_15_different_department_student_does_not_see_exam(self):
+        """15. Student of same institute but DIFFERENT department does NOT see the exam."""
+        diff_dept_user = User.objects.create_user(
+            username='diff_dept@gls.edu', email='diff_dept@gls.edu', password='Password123!',
+        )
+        diff_profile = StudentProfile.objects.create(
+            user=diff_dept_user, institution=self.inst_a, department='Mechanical Engineering', student_id='STU-DIFF-01'
+        )
+        token_diff = _create_token(diff_dept_user, 'student', self.inst_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_diff}')
+
+        resp_exams = self.client.get('/api/student/exams/')
+        self.assertEqual(resp_exams.status_code, status.HTTP_200_OK)
+        exam_ids = [item['exam']['id'] for item in resp_exams.data]
+        self.assertNotIn(self.exam_a.id, exam_ids)
+
+        resp_dash = self.client.get('/api/student/dashboard/')
+        self.assertEqual(resp_dash.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp_dash.data['data']['stats']['total_available'], 0)
+
+        # Starting the exam returns 404 (IDOR protection)
+        resp_start = self.client.post(f'/api/student/exams/{self.exam_a.id}/start/')
+        self.assertEqual(resp_start.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_16_other_institute_student_does_not_see_and_returns_404(self):
+        """16. Student of ANOTHER institute with same department does not see exam and gets 404 on ID."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_stu_b}')
+        resp_exams = self.client.get('/api/student/exams/')
+        self.assertEqual(resp_exams.status_code, status.HTTP_200_OK)
+        exam_ids = [item['exam']['id'] for item in resp_exams.data]
+        self.assertNotIn(self.exam_a.id, exam_ids)
+
+        resp_start = self.client.post(f'/api/student/exams/{self.exam_a.id}/start/')
+        self.assertEqual(resp_start.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_17_exam_visibility_checker_and_publish_flow(self):
+        """17. Faculty visibility checker displays student count and reasons; publish invalidates cache."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+
+        # View exam detail with visibility
+        resp_detail = self.client.get(f'/api/faculty/exams/{self.exam_a.id}/')
+        self.assertEqual(resp_detail.status_code, status.HTTP_200_OK)
+        self.assertIn('visibility', resp_detail.data)
+        vis = resp_detail.data['visibility']
+        self.assertTrue(vis['is_visible'])
+        self.assertEqual(vis['eligible_students_count'], 1)
+        self.assertIn('Computer Science', vis['status_summary'])
+
+        # Create draft exam and publish
+        draft_exam = Exam.objects.create(
+            institution=self.inst_a,
+            title='New Draft Exam',
+            created_by=self.fac_user_a,
+            department='Computer Science',
+            duration_minutes=30,
+            total_marks=1,
+            status=Exam.Status.DRAFT,
+        )
+        Question.objects.create(
+            exam=draft_exam,
+            institution=self.inst_a,
+            order=1,
+            question_type=Question.QuestionType.MCQ,
+            difficulty=Question.Difficulty.EASY,
+            text='Draft Q?',
+            marks=1,
+        )
+
+        resp_pub = self.client.post(f'/api/faculty/exams/{draft_exam.id}/publish/')
+        self.assertEqual(resp_pub.status_code, status.HTTP_200_OK)
+        self.assertIn('Visible to', resp_pub.data['message'])
+
+        # Student immediately sees it after publish (cache invalidated)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_stu_a}')
+        resp_student = self.client.get('/api/student/exams/')
+        self.assertEqual(resp_student.status_code, status.HTTP_200_OK)
+        exam_ids = [item['exam']['id'] for item in resp_student.data]
+        self.assertIn(draft_exam.id, exam_ids)
+
+    def test_18_exam_schedule_rules(self):
+        """18. Future scheduled exam is shown as upcoming but cannot start; ended exam cannot start."""
+        from datetime import timedelta
+        from django.utils import timezone
+        now = timezone.now()
+
+        # Future exam
+        future_exam = Exam.objects.create(
+            institution=self.inst_a,
+            title='Future Midterm',
+            created_by=self.fac_user_a,
+            department='Computer Science',
+            duration_minutes=45,
+            total_marks=1,
+            status=Exam.Status.PUBLISHED,
+            starts_at=now + timedelta(days=2),
+            ends_at=now + timedelta(days=3),
+        )
+        Question.objects.create(
+            exam=future_exam, institution=self.inst_a, order=1,
+            question_type=Question.QuestionType.MCQ, difficulty=Question.Difficulty.EASY,
+            text='Q1', marks=1,
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_stu_a}')
+        resp_student = self.client.get('/api/student/exams/')
+        self.assertEqual(resp_student.status_code, status.HTTP_200_OK)
+        future_entry = next((e for e in resp_student.data if e['exam']['id'] == future_exam.id), None)
+        self.assertIsNotNone(future_entry)
+        self.assertFalse(future_entry['available'])
+        self.assertIn('scheduled for', future_entry['availability_reason'].lower())
+
+        # Attempt to start future exam -> rejected with 400
+        resp_start = self.client.post(f'/api/student/exams/{future_exam.id}/start/')
+        self.assertEqual(resp_start.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('scheduled', resp_start.data['detail'].lower())
+
+        # Ended exam
+        ended_exam = Exam.objects.create(
+            institution=self.inst_a,
+            title='Ended Exam',
+            created_by=self.fac_user_a,
+            department='Computer Science',
+            duration_minutes=30,
+            total_marks=1,
+            status=Exam.Status.PUBLISHED,
+            starts_at=now - timedelta(days=5),
+            ends_at=now - timedelta(days=1),
+        )
+        Question.objects.create(
+            exam=ended_exam, institution=self.inst_a, order=1,
+            question_type=Question.QuestionType.MCQ, difficulty=Question.Difficulty.EASY,
+            text='Q1', marks=1,
+        )
+        resp_start_ended = self.client.post(f'/api/student/exams/{ended_exam.id}/start/')
+        self.assertEqual(resp_start_ended.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_19_admin_exam_audit_endpoint(self):
+        """19. Admin audit endpoint scans exams and reports health metrics."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_admin_a}')
+        resp_audit = self.client.get('/api/admin/exams/audit/')
+        self.assertEqual(resp_audit.status_code, status.HTTP_200_OK)
+        audit_data = resp_audit.data['data']
+        self.assertIn('total_exams', audit_data)
+        self.assertIn('healthy_exams_count', audit_data)
+        self.assertIn('issue_exams_count', audit_data)
+        self.assertGreaterEqual(audit_data['healthy_exams_count'], 1)
+

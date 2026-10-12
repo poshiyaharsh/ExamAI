@@ -1125,11 +1125,14 @@ class AdminExamDetailAPIView(APIView):
                     {'status': 'error', 'message': 'Exam not found.'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            from api.utils.departments import get_exam_visibility_status_for_faculty
             serializer = AdminExamDetailSerializer(exam)
+            data = dict(serializer.data)
+            data['visibility'] = get_exam_visibility_status_for_faculty(exam)
             return Response(
                 {
                     'status': 'success',
-                    'data': serializer.data,
+                    'data': data,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -1307,3 +1310,72 @@ class AdminStudentResultsAPIView(APIView):
                 f'Unexpected admin student results error for student_id={student_id}',
                 'Unable to fetch student results.',
             )
+
+
+class AdminExamAuditAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        institution = _get_admin_institution(request.user)
+        if not institution:
+            return Response({'status': 'error', 'message': 'No institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from api.utils.departments import get_exam_visibility_status_for_faculty, get_faculty_department
+
+        exams = Exam.objects.filter(institution=institution).select_related('created_by', 'institution')
+        issues = []
+        clean_count = 0
+
+        for exam in exams:
+            visibility = get_exam_visibility_status_for_faculty(exam)
+            exam_dept = (exam.department or '').strip()
+            faculty_dept = get_faculty_department(exam.created_by)
+            has_issue = False
+            item_issues = []
+
+            if not exam_dept:
+                has_issue = True
+                item_issues.append('Exam department is missing')
+
+            if faculty_dept and exam_dept and faculty_dept.lower() != exam_dept.lower():
+                has_issue = True
+                item_issues.append(f'Department mismatch with creating faculty ({exam_dept} vs {faculty_dept})')
+
+            if exam.questions.count() == 0:
+                has_issue = True
+                item_issues.append('Exam has zero questions')
+
+            if exam.starts_at and exam.ends_at and exam.starts_at > exam.ends_at:
+                has_issue = True
+                item_issues.append('Start date is after end date')
+
+            if has_issue:
+                issues.append({
+                    'exam_id': exam.id,
+                    'title': exam.title,
+                    'status': exam.status,
+                    'department': exam.department,
+                    'faculty_email': exam.created_by.email,
+                    'faculty_department': faculty_dept,
+                    'issues': item_issues,
+                    'visibility': visibility,
+                })
+            else:
+                clean_count += 1
+
+        return Response({
+            'status': 'success',
+            'data': {
+                'total_exams': exams.count(),
+                'healthy_exams_count': clean_count,
+                'issue_exams_count': len(issues),
+                'issues': issues,
+            }
+        }, status=status.HTTP_200_OK)
+

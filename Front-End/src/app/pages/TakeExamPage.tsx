@@ -7,7 +7,7 @@ import { studentExamApi, type StudentExamStartResponse } from "../../services/ap
 
 const optionLabels = ["A", "B", "C", "D"];
 
-type SaveState = "idle" | "saving" | "saved" | "error";
+type SaveState = "idle" | "saving" | "saved" | "retrying" | "error";
 
 function formatCountdown(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -70,21 +70,95 @@ export function TakeExamPage() {
     if (secondsLeft === 0 && session && !submitLock.current) setShowSubmitDialog(true);
   }, [secondsLeft, session]);
 
+  // Serial save queue & debouncing
+  const pendingAnswersRef = useRef<Record<number, string>>({});
+  const isSavingRef = useRef(false);
+  const debounceTimerRef = useRef<number | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+  const retryCountRef = useRef(0);
+  const unmountedRef = useRef(false);
+
+  const flushPendingAnswers = async (): Promise<boolean> => {
+    if (!session || isSavingRef.current) return true;
+    const batch = { ...pendingAnswersRef.current };
+    const questionIds = Object.keys(batch).map(Number);
+    if (!questionIds.length) {
+      if (!unmountedRef.current) setSaveState("saved");
+      return true;
+    }
+
+    isSavingRef.current = true;
+    if (!unmountedRef.current) setSaveState("saving");
+
+    const payload = questionIds.map((qid) => ({
+      question_id: qid,
+      answer_text: batch[qid],
+    }));
+
+    try {
+      await studentExamApi.saveAnswersBatch(session.attempt_id, payload);
+      // Remove successfully saved answers from pendingAnswersRef
+      for (const qid of questionIds) {
+        if (pendingAnswersRef.current[qid] === batch[qid]) {
+          delete pendingAnswersRef.current[qid];
+        }
+      }
+      retryCountRef.current = 0;
+      isSavingRef.current = false;
+
+      // If more changes arrived during in-flight request, process them
+      if (Object.keys(pendingAnswersRef.current).length > 0) {
+        return flushPendingAnswers();
+      } else {
+        if (!unmountedRef.current) setSaveState("saved");
+        return true;
+      }
+    } catch {
+      isSavingRef.current = false;
+      const retryCount = retryCountRef.current;
+      if (retryCount < 5) {
+        retryCountRef.current += 1;
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+        if (!unmountedRef.current) setSaveState("retrying");
+        if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = window.setTimeout(() => {
+          if (!unmountedRef.current) flushPendingAnswers();
+        }, delay);
+        return false;
+      } else {
+        if (!unmountedRef.current) setSaveState("error");
+        return false;
+      }
+    }
+  };
+
   useEffect(() => {
-    if (!session || !Object.keys(answers).length) return;
-    setSaveState("saving");
-    const timer = window.setTimeout(async () => {
-      const results = await Promise.allSettled(
-        Object.entries(answers).map(([questionId, answer]) => studentExamApi.saveAnswer(session.attempt_id, Number(questionId), answer)),
-      );
-      setSaveState(results.every((result) => result.status === "fulfilled") ? "saved" : "error");
-    }, 15000);
-    return () => window.clearTimeout(timer);
-  }, [answers, session]);
+    unmountedRef.current = false;
+    const handleBeforeUnload = () => {
+      if (Object.keys(pendingAnswersRef.current).length > 0 && session) {
+        flushPendingAnswers();
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      unmountedRef.current = true;
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
+      if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+    };
+  }, [session]);
 
   const setAnswer = (questionId: number, value: string) => {
     setAnswers((current) => ({ ...current, [questionId]: value }));
-    setSaveState("idle");
+    pendingAnswersRef.current[questionId] = value;
+    setSaveState("saving");
+
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      flushPendingAnswers();
+    }, 600);
   };
 
   const submitAttempt = async () => {
@@ -92,7 +166,8 @@ export function TakeExamPage() {
     submitLock.current = true;
     setSubmitting(true);
     try {
-      await Promise.allSettled(Object.entries(answers).map(([questionId, answer]) => studentExamApi.saveAnswer(session.attempt_id, Number(questionId), answer)));
+      if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
+      await flushPendingAnswers();
       await studentExamApi.submitAttempt(session.attempt_id);
       navigate(`/student/results/${session.attempt_id}`);
     } catch (error) {
@@ -119,7 +194,17 @@ export function TakeExamPage() {
           <div className="min-w-0"><h1 className="truncate font-semibold">{session.exam.title}</h1><p className="text-sm text-muted-foreground">Answered {answeredCount}/{questions.length} · {answeredMarks}/{session.exam.total_marks} marks</p></div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">
-              {saveState === "saving" ? "Saving..." : saveState === "saved" ? <span className="inline-flex items-center gap-1 text-emerald-600 font-medium"><Check className="h-3 w-3" /> Saved</span> : saveState === "error" ? <span className="text-rose-600 font-medium">Save failed</span> : "Autosave in 15s"}
+              {saveState === "saving" ? (
+                <span className="inline-flex items-center gap-1 text-amber-600 font-medium">Saving...</span>
+              ) : saveState === "saved" ? (
+                <span className="inline-flex items-center gap-1 text-emerald-600 font-medium"><Check className="h-3 w-3" /> Saved</span>
+              ) : saveState === "retrying" ? (
+                <span className="inline-flex items-center gap-1 text-amber-600 font-medium">Offline, will retry</span>
+              ) : saveState === "error" ? (
+                <span className="inline-flex items-center gap-1 text-rose-600 font-medium" role="button" onClick={() => flushPendingAnswers()}>Save failed (retry)</span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-muted-foreground">All changes saved</span>
+              )}
             </span>
             <span className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold border ${isWarning ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-primary/10 text-primary border-primary/20"}`}>
               <Clock className="h-4 w-4" />{formatCountdown(secondsLeft)}

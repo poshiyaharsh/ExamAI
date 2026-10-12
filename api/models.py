@@ -73,6 +73,35 @@ class Exam(models.Model):
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
+	def clean(self):
+		from django.core.exceptions import ValidationError
+		if self.starts_at and self.ends_at and self.starts_at > self.ends_at:
+			raise ValidationError({'ends_at': 'Exam end date cannot precede start date.'})
+		if self.institution_id and self.created_by_id:
+			fac_profile = getattr(self.created_by, 'faculty_profile', None)
+			if fac_profile and fac_profile.institution_id and fac_profile.institution_id != self.institution_id:
+				raise ValidationError({'institution': 'Exam institution must match creating faculty institution.'})
+
+	def save(self, *args, **kwargs):
+		super().save(*args, **kwargs)
+		if self.institution_id:
+			try:
+				from api.tenant import bump_tenant_cache_version
+				bump_tenant_cache_version(self.institution_id)
+			except Exception:
+				pass
+
+	def delete(self, *args, **kwargs):
+		inst_id = self.institution_id
+		res = super().delete(*args, **kwargs)
+		if inst_id:
+			try:
+				from api.tenant import bump_tenant_cache_version
+				bump_tenant_cache_version(inst_id)
+			except Exception:
+				pass
+		return res
+
 	class Meta:
 		ordering = ['-created_at']
 		indexes = [
@@ -160,6 +189,9 @@ class StudentAnswer(models.Model):
 	ai_feedback = models.TextField(blank=True, default='')
 
 	class Meta:
+		constraints = [
+			models.UniqueConstraint(fields=['attempt', 'question'], name='unique_attempt_question'),
+		]
 		indexes = [
 			models.Index(fields=['institution', 'attempt']),
 		]

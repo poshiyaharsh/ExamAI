@@ -263,6 +263,13 @@ class GeneratePaperView(APIView):
         faculty_dept = get_faculty_department(request.user)
         client_dept = normalize_department(request.data.get('department'))
         assigned_dept = faculty_dept or client_dept
+        if not assigned_dept:
+            return Response(
+                {
+                    'detail': 'A valid department is required to create an exam. Please set your department in your profile settings or specify a department in the request.'
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             exam = Exam.objects.create(
@@ -279,6 +286,8 @@ class GeneratePaperView(APIView):
                 source_syllabus_text=syllabus_text,
                 status=Exam.Status.GENERATING,
             )
+            from api.tenant import bump_tenant_cache_version
+            bump_tenant_cache_version(tenant_inst.id)
         except Exception as exc:
             logger.exception('Generated paper could not be initialized')
             return Response(

@@ -55,35 +55,169 @@ def get_faculty_department(user) -> str:
     return ''
 
 
-def check_student_exam_access(user, exam) -> Tuple[bool, str]:
+from django.db import models
+from django.utils import timezone
+
+
+def is_exam_visible_to_student(exam, user) -> Tuple[bool, bool, str]:
     """
-    Check if a student has permission to view or take an exam based on department.
-    Returns (allowed: bool, reason_or_error_message: str).
+    Determine if an exam is visible to a student and whether they can start it now.
+    Returns:
+        (visible: bool, can_start: bool, reason_message: str)
+    Rules:
+        - Only published exams are visible to students.
+        - Tenant isolation: student and exam must belong to the exact same institution.
+        - Department matching: student department must match exam department
+          (or creating faculty's department as an approved fallback).
+        - Schedule window:
+          * If scheduled in the future: visible as upcoming, but can_start is False.
+          * If ended: visible=False (or not startable if viewing past results).
+          * If active: visible=True, can_start=True.
     """
     if not user or not user.is_authenticated:
-        return False, 'Authentication required.'
+        return False, False, 'Authentication required.'
 
     from api.tenant import get_user_institution
     stu_inst = get_user_institution(user)
     exam_inst_id = getattr(exam, 'institution_id', None)
-    if stu_inst and exam_inst_id and stu_inst.id != exam_inst_id:
-        return False, 'Access denied. This exam belongs to a different institution.'
+    if not stu_inst or not exam_inst_id or stu_inst.id != exam_inst_id:
+        return False, False, 'Exam not found.'
+
+    # Only published exams are visible to students
+    if getattr(exam, 'status', '') != 'published':
+        return False, False, 'Exam is not published.'
 
     student_dept = get_student_department(user)
     if not student_dept:
-        return False, 'Your student profile does not have a department assigned.'
+        return False, False, 'Student does not have an assigned department.'
 
     exam_dept = normalize_department(getattr(exam, 'department', ''))
     if not exam_dept:
-        # Fallback to creating faculty's department if exam.department is not set
         faculty = getattr(exam, 'created_by', None)
         if faculty:
             exam_dept = get_faculty_department(faculty)
 
-    if not exam_dept:
-        return False, 'This exam has no department assigned.'
+    if not exam_dept or exam_dept.lower() != student_dept.lower():
+        return False, False, 'Department mismatch.'
 
-    if student_dept.lower() != exam_dept.lower():
-        return False, f'Access denied. This exam belongs to {exam_dept}, but your department is {student_dept}.'
+    # Schedule validation
+    now = timezone.now()
+    if exam.starts_at and exam.starts_at > now:
+        # Scheduled in the future: visible to students in list, but cannot start yet
+        formatted_start = exam.starts_at.strftime('%d %b %Y, %I:%M %p UTC')
+        return True, False, f'Exam is scheduled for {formatted_start}. You cannot start it yet.'
 
+    if exam.ends_at and exam.ends_at < now:
+        formatted_end = exam.ends_at.strftime('%d %b %Y, %I:%M %p UTC')
+        return False, False, f'Exam window ended on {formatted_end}.'
+
+    return True, True, ''
+
+
+def get_student_accessible_exams_queryset(user, tenant=None):
+    """
+    Return a queryset of published exams belonging to the student's tenant and department.
+    Guarantees that students only see exams for their specific institution and department,
+    with automatic fallback matching to the creating faculty's department.
+    """
+    from api.models import Exam
+    from api.tenant import get_user_institution
+
+    if not tenant:
+        tenant = get_user_institution(user)
+    if not tenant:
+        return Exam.objects.none()
+
+    student_dept = get_student_department(user)
+    if not student_dept:
+        return Exam.objects.none()
+
+    return Exam.objects.filter(
+        institution=tenant,
+        status=Exam.Status.PUBLISHED,
+    ).filter(
+        models.Q(department__iexact=student_dept) |
+        (models.Q(department='') & models.Q(created_by__faculty_profile__department__iexact=student_dept))
+    )
+
+
+def check_student_exam_access(user, exam) -> Tuple[bool, str]:
+    """
+    Backward-compatible gatekeeper for starting/saving exam attempts.
+    Returns (allowed: bool, reason: str).
+    """
+    visible, can_start, reason = is_exam_visible_to_student(exam, user)
+    if not visible:
+        return False, reason or 'Access denied. Exam is not available.'
+    if not can_start:
+        return False, reason or 'Exam is not currently available for taking.'
     return True, ''
+
+
+def get_exam_visibility_status_for_faculty(exam) -> dict:
+    """
+    Diagnostic helper for faculty and admin: explains exactly why students can
+    or cannot see this exam, and displays eligible student counts.
+    """
+    from students.models import StudentProfile
+    reasons = []
+
+    # 1. Status check
+    is_published = getattr(exam, 'status', '') == 'published'
+    if not is_published:
+        reasons.append(f"Not published (current status is '{getattr(exam, 'status', 'draft')}')")
+
+    # 2. Questions check
+    questions_count = exam.questions.count()
+    if questions_count == 0:
+        reasons.append("Exam has 0 questions")
+
+    # 3. Department check
+    exam_dept = normalize_department(getattr(exam, 'department', ''))
+    if not exam_dept:
+        faculty = getattr(exam, 'created_by', None)
+        if faculty:
+            exam_dept = get_faculty_department(faculty)
+    if not exam_dept:
+        reasons.append("No department assigned to this exam")
+
+    # 4. Schedule check
+    now = timezone.now()
+    schedule_state = 'active'
+    if exam.starts_at and exam.starts_at > now:
+        schedule_state = 'upcoming'
+        reasons.append(f"Scheduled in future (starts {exam.starts_at.strftime('%d %b %Y, %I:%M %p UTC')})")
+    elif exam.ends_at and exam.ends_at < now:
+        schedule_state = 'ended'
+        reasons.append(f"Exam window closed (ended {exam.ends_at.strftime('%d %b %Y, %I:%M %p UTC')})")
+
+    # 5. Eligible students count
+    eligible_students = 0
+    inst = getattr(exam, 'institution', None)
+    inst_name = inst.institution_name if inst else "Unknown Institution"
+    if inst and exam_dept:
+        eligible_students = StudentProfile.objects.filter(
+            institution=inst,
+            department__iexact=exam_dept,
+            user__is_active=True,
+        ).count()
+
+    is_visible_now = is_published and (schedule_state in {'active', 'upcoming'}) and bool(exam_dept) and questions_count > 0
+    can_start_now = is_published and schedule_state == 'active' and bool(exam_dept) and questions_count > 0
+
+    if is_visible_now:
+        status_summary = f"Visible to {eligible_students} student{'s' if eligible_students != 1 else ''} of {exam_dept}, {inst_name}"
+    else:
+        status_summary = f"Hidden from students: {', '.join(reasons)}"
+
+    return {
+        'is_visible': is_visible_now,
+        'can_start_now': can_start_now,
+        'schedule_state': schedule_state,
+        'department': exam_dept,
+        'institution_name': inst_name,
+        'eligible_students_count': eligible_students,
+        'status_summary': status_summary,
+        'reasons': reasons,
+    }
+

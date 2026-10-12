@@ -931,6 +931,12 @@ export const studentExamApi = {
     });
     return response.data;
   },
+  saveAnswersBatch: async (attemptId: number, answers: Array<{ question_id: number; answer_text: string }>): Promise<{ saved: boolean; count?: number }> => {
+    const response = await apiClient.post<{ saved: boolean; count?: number }>(`/api/student/attempts/${attemptId}/save/`, {
+      answers,
+    });
+    return response.data;
+  },
   submitAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
     const response = await apiClient.post<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/submit/`, {});
     return response.data;

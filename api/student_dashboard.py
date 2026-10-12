@@ -39,10 +39,16 @@ class StudentDashboardView(APIView):
     def get(self, request):
         user = request.user
         now = timezone.now()
-        from api.tenant import get_user_institution
+        from api.tenant import get_tenant_cache_key, get_user_institution
+        from django.core.cache import cache
         tenant = getattr(request, 'tenant', None) or get_user_institution(user)
         if not tenant:
             return Response({'status': 'error', 'message': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = get_tenant_cache_key(tenant.id, 'student_dashboard', user_id=user.id)
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
 
         student_profile = getattr(user, 'student_profile', None)
         student_dept = get_student_department(user)
@@ -68,14 +74,8 @@ class StudentDashboardView(APIView):
         }
 
         # 2. Department-scoped published exams
-        if student_dept:
-            dept_exams = Exam.objects.filter(
-                institution=tenant,
-                status=Exam.Status.PUBLISHED,
-                department__iexact=student_dept,
-            ).select_related('created_by')
-        else:
-            dept_exams = Exam.objects.none()
+        from .utils.departments import get_student_accessible_exams_queryset
+        dept_exams = get_student_accessible_exams_queryset(user, tenant).select_related('created_by')
 
         total_available = dept_exams.count()
 
@@ -238,7 +238,7 @@ class StudentDashboardView(APIView):
             else None
         )
 
-        return Response({
+        response_data = {
             'status': 'success',
             'data': {
                 'profile': profile_data,
@@ -254,4 +254,6 @@ class StudentDashboardView(APIView):
                 },
                 'announcements': [],
             }
-        })
+        }
+        cache.set(cache_key, response_data, timeout=60)
+        return Response(response_data)
