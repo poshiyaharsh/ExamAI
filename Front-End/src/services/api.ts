@@ -1531,6 +1531,8 @@ export type PublicStatsData = {
   total_faculty: number;
   total_exams: number;
   total_departments: number;
+  total_institutes?: number;
+  institutes?: number;
 };
 
 export type PublicStatsResponse = {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -47,6 +47,159 @@ import {
 import { useAuth } from "../context/useAuth";
 import { DEPARTMENTS } from "../../constants/departments";
 import { publicStatsApi, type PublicStatsData } from "../../services/api";
+import { formatStat } from "../../utils/formatStat";
+
+function StatCounter({
+  value,
+  shouldAnimate,
+}: {
+  value: number;
+  shouldAnimate: boolean;
+}) {
+  const [displayValue, setDisplayValue] = useState<number>(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return value;
+    }
+    return 0;
+  });
+
+  useEffect(() => {
+    if (!shouldAnimate) return;
+
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      setDisplayValue(value);
+      return;
+    }
+
+    if (value <= 0) {
+      setDisplayValue(0);
+      return;
+    }
+
+    let start: number | null = null;
+    const duration = 1500;
+    let rafId: number;
+
+    const step = (timestamp: number) => {
+      if (!start) start = timestamp;
+      const elapsed = timestamp - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      setDisplayValue(Math.floor(ease * value));
+
+      if (progress < 1) {
+        rafId = requestAnimationFrame(step);
+      } else {
+        setDisplayValue(value);
+      }
+    };
+
+    rafId = requestAnimationFrame(step);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [shouldAnimate, value]);
+
+  return <>{formatStat(shouldAnimate ? displayValue : 0)}</>;
+}
+
+function StatsStrip({ stats }: { stats: PublicStatsData }) {
+  const containerRef = useRef<HTMLElement | null>(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    if (inView) return;
+    const node = containerRef.current;
+    if (!node) return;
+
+    if (typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [inView]);
+
+  const statItems = [
+    {
+      id: "institutes",
+      label: "Partner Institutes",
+      value: stats.institutes ?? stats.total_institutes ?? 0,
+      colorClass: "text-primary",
+    },
+    {
+      id: "students",
+      label: "Enrolled Students",
+      value: stats.total_students ?? 0,
+      colorClass: "text-foreground",
+    },
+    {
+      id: "faculty",
+      label: "Faculty Instructors",
+      value: stats.total_faculty ?? 0,
+      colorClass: "text-primary",
+    },
+    {
+      id: "exams",
+      label: "Exams Published",
+      value: stats.total_exams ?? 0,
+      colorClass: "text-foreground",
+    },
+    {
+      id: "departments",
+      label: "Academic Departments",
+      value: stats.total_departments ?? 0,
+      colorClass: "text-secondary",
+    },
+  ];
+
+  return (
+    <section
+      ref={containerRef}
+      aria-label="Platform statistics"
+      className="border-b border-border bg-card/60 py-8"
+    >
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 text-center">
+          {statItems.map((item, index) => (
+            <div
+              key={item.id}
+              className={`space-y-1 ${
+                index === 4 ? "col-span-2 md:col-span-1" : "col-span-1"
+              }`}
+            >
+              <div
+                className={`text-3xl sm:text-4xl font-extrabold ${item.colorClass} tracking-tight`}
+              >
+                <StatCounter value={item.value} shouldAnimate={inView} />
+              </div>
+              <div className="text-xs sm:text-sm font-medium text-muted-foreground">
+                {item.label}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function Landing() {
   const { session } = useAuth();
@@ -607,49 +760,30 @@ export function Landing() {
         </section>
 
         {/* 3. STATS STRIP (Real counts from GET /api/public/stats) */}
-        {!statsLoading && stats && (
-          <section className="border-b border-border bg-card/60 py-8">
+        {statsLoading && (
+          <section
+            aria-label="Loading statistics"
+            className="border-b border-border bg-card/60 py-8"
+          >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-                <div className="space-y-1">
-                  <div className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight">
-                    {stats.total_students}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 text-center">
+                {Array.from({ length: 5 }).map((_, idx) => (
+                  <div
+                    key={idx}
+                    className={`space-y-2 flex flex-col items-center justify-center ${
+                      idx === 4 ? "col-span-2 md:col-span-1" : "col-span-1"
+                    }`}
+                  >
+                    <div className="h-9 w-20 bg-muted/60 animate-pulse rounded-md" />
+                    <div className="h-4 w-28 bg-muted/40 animate-pulse rounded-md" />
                   </div>
-                  <div className="text-xs sm:text-sm font-medium text-muted-foreground">
-                    Enrolled Students
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-3xl sm:text-4xl font-extrabold text-primary tracking-tight">
-                    {stats.total_faculty}
-                  </div>
-                  <div className="text-xs sm:text-sm font-medium text-muted-foreground">
-                    Faculty Instructors
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-3xl sm:text-4xl font-extrabold text-foreground tracking-tight">
-                    {stats.total_exams}
-                  </div>
-                  <div className="text-xs sm:text-sm font-medium text-muted-foreground">
-                    Exams Published
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-3xl sm:text-4xl font-extrabold text-secondary tracking-tight">
-                    {stats.total_departments}
-                  </div>
-                  <div className="text-xs sm:text-sm font-medium text-muted-foreground">
-                    Academic Departments
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </section>
         )}
+
+        {!statsLoading && stats && <StatsStrip stats={stats} />}
 
         {/* 4. FEATURES (Grid of 6 Cards) */}
         <section id="features" className="py-16 sm:py-24 border-b border-border">
