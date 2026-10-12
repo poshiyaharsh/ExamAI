@@ -69,6 +69,7 @@ function getPerformanceBadge(status?: string, average?: number | null) {
   if (average === null || average === undefined || status === "N/A") {
     return {
       label: "N/A",
+      tooltip: "No exam attempts",
       bg: "bg-slate-100 text-slate-700 border-slate-200",
       barColor: "bg-slate-300",
     };
@@ -76,6 +77,7 @@ function getPerformanceBadge(status?: string, average?: number | null) {
   if (average >= 80) {
     return {
       label: "Excellent",
+      tooltip: "Excellent (≥80%)",
       bg: "bg-emerald-50 text-emerald-700 border-emerald-200",
       barColor: "bg-emerald-500",
     };
@@ -83,6 +85,7 @@ function getPerformanceBadge(status?: string, average?: number | null) {
   if (average >= 65) {
     return {
       label: "Good",
+      tooltip: "Good (65-79%)",
       bg: "bg-blue-50 text-blue-700 border-blue-200",
       barColor: "bg-blue-500",
     };
@@ -90,12 +93,14 @@ function getPerformanceBadge(status?: string, average?: number | null) {
   if (average >= 50) {
     return {
       label: "Average",
+      tooltip: "Average (50-64%)",
       bg: "bg-amber-50 text-amber-700 border-amber-200",
       barColor: "bg-amber-500",
     };
   }
   return {
-    label: "Needs Improvement",
+    label: "Needs Work",
+    tooltip: "Needs Improvement (<50%)",
     bg: "bg-rose-50 text-rose-700 border-rose-200",
     barColor: "bg-rose-500",
   };
@@ -771,14 +776,14 @@ export function AdminStudents() {
             <table className="w-full text-left border-collapse table-fixed">
               <thead className="bg-muted/50 border-b border-border text-xs uppercase font-semibold text-muted-foreground tracking-wider">
                 <tr>
-                  <th className="px-3.5 py-3 w-[30%] lg:w-[26%] xl:w-[24%]">Student</th>
-                  <th className="px-3.5 py-3 w-[16%] lg:w-[13%] xl:w-[11%]">Roll No</th>
-                  <th className="px-3.5 py-3 hidden xl:table-cell xl:w-[13%]">Department</th>
-                  <th className="px-3.5 py-3 text-center w-[16%] lg:w-[13%] xl:w-[11%]">Exams</th>
-                  <th className="px-3.5 py-3 w-[20%] lg:w-[18%] xl:w-[16%]">Avg Score</th>
-                  <th className="px-3.5 py-3 text-center hidden 2xl:table-cell 2xl:w-[11%]">High / Low</th>
-                  <th className="px-3.5 py-3 hidden lg:table-cell lg:w-[16%] xl:w-[13%]">Status</th>
-                  <th className="px-3.5 py-3 text-right w-[18%] lg:w-[14%] xl:w-[12%]">Actions</th>
+                  <th className="px-3 py-3 w-[28%] xl:w-[24%]">Student</th>
+                  <th className="px-3 py-3 w-[14%] xl:w-[11%]">Roll No</th>
+                  <th className="px-3 py-3 hidden xl:table-cell xl:w-[12%]">Department</th>
+                  <th className="px-3 py-3 text-center w-[10%] xl:w-[7%]">Exams</th>
+                  <th className="px-3 py-3 w-[16%] xl:w-[13%]">Avg Score</th>
+                  <th className="px-3 py-3 text-center hidden xl:table-cell xl:w-[9%]">High / Low</th>
+                  <th className="px-3 py-3 w-[14%] xl:w-[10%]">Status</th>
+                  <th className="px-3 py-3 text-right w-[18%] xl:w-[14%]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border text-sm">
@@ -805,7 +810,7 @@ export function AdminStudents() {
                     return (
                       <tr key={student.id} className="hover:bg-muted/30 transition-colors">
                         {/* Student Name & Email */}
-                        <td className="px-3.5 py-3 min-w-0">
+                        <td className="px-3 py-3 min-w-0">
                           <div className="flex items-center gap-2.5 min-w-0">
                             <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
                               {student.full_name?.charAt(0) || "S"}
@@ -822,26 +827,26 @@ export function AdminStudents() {
                         </td>
 
                         {/* Roll No */}
-                        <td className="px-3.5 py-3 text-xs font-mono text-foreground truncate" title={student.roll_number || "-"}>
+                        <td className="px-3 py-3 text-xs font-mono text-foreground truncate" title={student.roll_number || "-"}>
                           {student.roll_number || "-"}
                         </td>
 
                         {/* Department */}
-                        <td className="px-3.5 py-3 text-xs text-foreground truncate hidden xl:table-cell" title={student.department || "-"}>
+                        <td className="px-3 py-3 text-xs text-foreground truncate hidden xl:table-cell" title={student.department || "-"}>
                           {student.department || "-"}
                         </td>
 
                         {/* Exams Attempted */}
-                        <td className="px-3.5 py-3 text-xs text-center font-semibold text-foreground">
+                        <td className="px-3 py-3 text-xs text-center font-semibold text-foreground">
                           <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs font-semibold">
                             {student.number_of_exams}
                           </span>
                         </td>
 
                         {/* Average Score */}
-                        <td className="px-3.5 py-3 min-w-0">
+                        <td className="px-3 py-3 min-w-0">
                           {typeof student.average_score === "number" ? (
-                            <div className="space-y-1 max-w-[110px]">
+                            <div className="space-y-1 max-w-[95px]">
                               <div className="flex justify-between items-center text-xs">
                                 <span className="font-bold text-foreground">{student.average_score.toFixed(1)}%</span>
                               </div>
@@ -858,7 +863,7 @@ export function AdminStudents() {
                         </td>
 
                         {/* Highest / Lowest */}
-                        <td className="px-3.5 py-3 text-xs text-center truncate hidden 2xl:table-cell">
+                        <td className="px-3 py-3 text-xs text-center truncate hidden xl:table-cell">
                           {typeof student.highest_score === "number" ? (
                             <span className="text-foreground">
                               <span className="text-emerald-600 font-semibold">{student.highest_score}%</span>
@@ -871,61 +876,62 @@ export function AdminStudents() {
                         </td>
 
                         {/* Status Badge */}
-                        <td className="px-3.5 py-3 hidden lg:table-cell min-w-0">
+                        <td className="px-3 py-3 min-w-0">
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border truncate ${badge.bg}`}
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border whitespace-nowrap ${badge.bg}`}
+                            title={badge.tooltip || badge.label}
                           >
                             {badge.label}
                           </span>
                         </td>
 
                         {/* Actions */}
-                        <td className="px-3.5 py-3 text-right">
-                          <div className="inline-flex items-center justify-end gap-1">
+                        <td className="px-3 py-3 text-right">
+                          <div className="inline-flex items-center justify-end gap-1.5 shrink-0">
                             {/* View Results Button */}
                             <button
-                              className="p-1.5 rounded-md hover:bg-primary/10 text-primary transition-colors"
+                              className="p-1 rounded-md hover:bg-primary/10 text-primary transition-colors shrink-0"
                               title="View Exam Results & Breakdown"
                               onClick={() => void handleOpenResults(student.id)}
                             >
-                              <BarChart3 className="w-4 h-4" />
+                              <BarChart3 className="w-3.5 h-3.5" />
                             </button>
 
                             {/* View Profile */}
                             <button
-                              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                              className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
                               title="View Student Profile"
                               onClick={() => void handleViewStudent(student.id)}
                             >
-                              <Eye className="w-4 h-4" />
+                              <Eye className="w-3.5 h-3.5" />
                             </button>
 
                             {/* Edit */}
                             <button
-                              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
+                              className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
                               title="Edit Student"
                               onClick={() => void handleEditStudent(student.id)}
                             >
-                              <Edit className="w-4 h-4" />
+                              <Edit className="w-3.5 h-3.5" />
                             </button>
 
                             {/* Email */}
                             <a
-                              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors hidden sm:inline-flex"
+                              className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
                               title="Send Email"
                               href={`mailto:${student.email}`}
                             >
-                              <Mail className="w-4 h-4" />
+                              <Mail className="w-3.5 h-3.5" />
                             </a>
 
                             {/* Delete */}
                             <button
-                              className="p-1.5 rounded-md hover:bg-rose-50 text-rose-600 transition-colors disabled:opacity-50"
+                              className="p-1 rounded-md hover:bg-rose-50 text-rose-600 transition-colors disabled:opacity-50 shrink-0"
                               title="Delete Student"
                               onClick={() => void handleDeleteStudent(student)}
                               disabled={deletingId === student.id}
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>
