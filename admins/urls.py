@@ -12,10 +12,13 @@ from .views import (
     AdminExamDetailAPIView,
     AdminStudentResultsAPIView,
 )
+from api.admin_dashboard import AdminDashboardView
 
 urlpatterns = [
     path('signup/', AdminSignupAPIView.as_view(), name='admin-signup'),
     path('login/', AdminLoginAPIView.as_view(), name='admin-login'),
+    path('dashboard', AdminDashboardView.as_view(), name='admin-dashboard-no-slash'),
+    path('dashboard/', AdminDashboardView.as_view(), name='admin-dashboard'),
     path('institution', AdminInstitutionAPIView.as_view(), name='admin-institution-no-slash'),
     path('institution/', AdminInstitutionAPIView.as_view(), name='admin-institution'),
     path('students', AdminStudentsAPIView.as_view(), name='admin-students-no-slash'),

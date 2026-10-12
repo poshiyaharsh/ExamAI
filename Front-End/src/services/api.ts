@@ -1378,3 +1378,151 @@ export const adminExamsApi = {
   },
 };
 
+export type AdminDashboardProfile = {
+  name: string;
+  email: string;
+  institution_name: string;
+  institution_code: string;
+};
+
+export type AdminDashboardStats = {
+  total_students: number;
+  total_faculty: number;
+  total_departments: number;
+  total_exams: number;
+  published_exams: number;
+  draft_exams: number;
+  upcoming_exams: number;
+  ongoing_exams: number;
+  completed_exams: number;
+  total_attempts: number;
+  overall_average: number | null;
+  overall_pass_rate: number | null;
+  new_students_this_week: number;
+  new_faculty_this_week: number;
+  new_exams_this_week: number;
+  new_attempts_this_week: number;
+};
+
+export type AdminOngoingExam = {
+  id: number;
+  title: string;
+  department: string;
+  faculty_name: string;
+  duration_minutes: number;
+  total_marks: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  submitted_count: number;
+  eligible_students: number;
+};
+
+export type AdminUpcomingExam = {
+  id: number;
+  title: string;
+  department: string;
+  faculty_name: string;
+  duration_minutes: number;
+  total_marks: number;
+  starts_at: string | null;
+  ends_at: string | null;
+};
+
+export type AdminDepartmentOverview = {
+  department: string;
+  students_count: number;
+  faculty_count: number;
+  exams_count: number;
+  attempts_count: number;
+  average_score: number | null;
+  pass_rate: number | null;
+};
+
+export type AdminFacultyRanking = {
+  faculty_id: number;
+  name: string;
+  email: string;
+  department: string;
+  employee_id: string;
+  total_exams: number;
+  published_exams: number;
+  total_attempts: number;
+};
+
+export type AdminTopStudent = {
+  student_id: number;
+  name: string;
+  roll_number: string;
+  department: string;
+  average_score: number;
+  exams_taken: number;
+};
+
+export type AdminAtRiskStudent = {
+  student_id: number;
+  name: string;
+  roll_number: string;
+  department: string;
+  average_score: number | null;
+  exams_taken: number;
+  type: 'low_score' | 'unattempted';
+  issue: string;
+};
+
+export type AdminActivityTrendItem = {
+  date: string;
+  exams_created: number;
+  attempts: number;
+};
+
+export type AdminScoreDistributionItem = {
+  range: string;
+  count: number;
+  label: string;
+};
+
+export type AdminRecentActivityItem = {
+  type: string;
+  title: string;
+  department: string;
+  actor: string;
+  timestamp: string;
+};
+
+export type AdminPendingActions = {
+  draft_exams_count: number;
+  empty_exams_count: number;
+  unassigned_students_count: number;
+};
+
+export type AdminDashboardData = {
+  profile: AdminDashboardProfile;
+  stats: AdminDashboardStats;
+  ongoing_exams: AdminOngoingExam[];
+  upcoming_exams: AdminUpcomingExam[];
+  department_overview: AdminDepartmentOverview[];
+  exams_per_faculty: AdminFacultyRanking[];
+  top_students: AdminTopStudent[];
+  at_risk_students: {
+    low_scorers: AdminAtRiskStudent[];
+    unattempted_students: AdminAtRiskStudent[];
+  };
+  activity_trend: AdminActivityTrendItem[];
+  score_distribution: AdminScoreDistributionItem[];
+  recent_activity: AdminRecentActivityItem[];
+  pending_actions: AdminPendingActions;
+  departments: string[];
+};
+
+export type AdminDashboardResponse = {
+  status: string;
+  data: AdminDashboardData;
+};
+
+export const adminDashboardApi = {
+  getDashboard: async (params?: { department?: string; range?: string }): Promise<AdminDashboardResponse> => {
+    const response = await apiClient.get<AdminDashboardResponse>('/api/admin/dashboard/', { params });
+    return response.data;
+  },
+};
+
