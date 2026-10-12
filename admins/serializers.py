@@ -13,6 +13,7 @@ from rest_framework import serializers
 from .models import AdminDepartment, AdminInstitution, AdminProfile
 from students.models import StudentProfile
 from faculty.models import FacultyProfile
+from api.models import Exam, Question
 
 
 logger = logging.getLogger(__name__)
@@ -583,3 +584,94 @@ class AdminFacultyUpdateSerializer(serializers.Serializer):
         instance.save(update_fields=['employee_id', 'department', 'designation'])
         instance.refresh_from_db()
         return instance
+
+
+class AdminExamFacultySerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    department = serializers.SerializerMethodField()
+    employee_id = serializers.SerializerMethodField()
+    designation = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ('id', 'name', 'first_name', 'last_name', 'email', 'department', 'employee_id', 'designation')
+
+    def get_name(self, obj):
+        full_name = f"{obj.first_name} {obj.last_name}".strip()
+        return full_name or obj.username or obj.email
+
+    def get_department(self, obj):
+        profile = getattr(obj, 'faculty_profile', None)
+        return profile.department if profile else ''
+
+    def get_employee_id(self, obj):
+        profile = getattr(obj, 'faculty_profile', None)
+        return profile.employee_id if profile else ''
+
+    def get_designation(self, obj):
+        profile = getattr(obj, 'faculty_profile', None)
+        return profile.designation if profile else ''
+
+
+class AdminExamQuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Question
+        fields = (
+            'id', 'order', 'question_type', 'difficulty', 'text', 'options',
+            'correct_answer', 'model_answer', 'marks', 'topic',
+        )
+
+
+class AdminExamListSerializer(serializers.ModelSerializer):
+    faculty = AdminExamFacultySerializer(source='created_by', read_only=True)
+    question_count = serializers.IntegerField(read_only=True)
+    attempts_count = serializers.IntegerField(read_only=True)
+    subject = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Exam
+        fields = (
+            'id', 'title', 'subject', 'topics', 'duration_minutes', 'total_marks',
+            'difficulty_distribution', 'question_types', 'ai_model_used',
+            'status', 'error_message', 'starts_at', 'ends_at', 'created_at', 'updated_at',
+            'question_count', 'attempts_count', 'faculty',
+        )
+
+    def get_subject(self, obj):
+        if isinstance(obj.topics, list) and obj.topics:
+            return ", ".join(str(t) for t in obj.topics)
+        return ""
+
+
+class AdminExamDetailSerializer(serializers.ModelSerializer):
+    faculty = AdminExamFacultySerializer(source='created_by', read_only=True)
+    questions = AdminExamQuestionSerializer(many=True, read_only=True)
+    question_count = serializers.SerializerMethodField()
+    attempts_count = serializers.SerializerMethodField()
+    subject = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Exam
+        fields = (
+            'id', 'title', 'subject', 'topics', 'duration_minutes', 'total_marks',
+            'difficulty_distribution', 'question_types', 'ai_model_used',
+            'source_syllabus_text', 'status', 'error_message', 'starts_at', 'ends_at',
+            'created_at', 'updated_at', 'question_count', 'attempts_count',
+            'faculty', 'questions',
+        )
+
+    def get_subject(self, obj):
+        if isinstance(obj.topics, list) and obj.topics:
+            return ", ".join(str(t) for t in obj.topics)
+        return ""
+
+    def get_question_count(self, obj):
+        return obj.questions.count()
+
+    def get_attempts_count(self, obj):
+        return obj.attempts.count()
+
+
+class AdminExamStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Exam.Status.choices)
+

@@ -403,15 +403,15 @@ function rejectQueuedRequests(error: unknown) {
 }
 
 apiClient.interceptors.request.use((config) => {
-  const session = authStorage.getSession();
+  const token = authStorage.getToken();
   const requestUrl = config.url ?? "";
   const isPublicAuthCall =
     requestUrl.includes("/login/") ||
     requestUrl.includes("/signup/") ||
     requestUrl.includes("/api/token/refresh/");
 
-  if (session?.access && !isPublicAuthCall) {
-    config.headers.Authorization = `Bearer ${session.access}`;
+  if (token && !isPublicAuthCall) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
@@ -838,3 +838,116 @@ export const forgotPasswordApi = {
     return response.data;
   },
 };
+
+export type AdminExamFaculty = {
+  id: number;
+  name: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  department: string;
+  employee_id: string | null;
+  designation: string;
+};
+
+export type AdminExamQuestion = {
+  id: number;
+  order: number;
+  question_type: string;
+  difficulty: string;
+  text: string;
+  options: string[] | null;
+  correct_answer: unknown;
+  model_answer: string;
+  marks: number;
+  topic: string;
+};
+
+export type AdminExamItem = {
+  id: number;
+  title: string;
+  subject: string;
+  topics: string[];
+  duration_minutes: number;
+  total_marks: number;
+  difficulty_distribution: Record<string, number>;
+  question_types: string[];
+  ai_model_used: string;
+  status: string;
+  error_message: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_at: string;
+  updated_at: string;
+  question_count: number;
+  attempts_count: number;
+  faculty: AdminExamFaculty;
+};
+
+export type AdminExamDetail = AdminExamItem & {
+  source_syllabus_text: string;
+  questions: AdminExamQuestion[];
+};
+
+export type AdminExamListResponse = {
+  status: string;
+  data: AdminExamItem[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
+  stats: {
+    total_exams: number;
+    published_exams: number;
+    draft_exams: number;
+    created_this_week: number;
+  };
+  filter_options: {
+    faculties: { id: number; name: string; email: string }[];
+    departments: string[];
+    subjects: string[];
+    statuses: { value: string; label: string }[];
+  };
+};
+
+export type AdminExamDetailResponse = {
+  status: string;
+  data: AdminExamDetail;
+};
+
+export type AdminExamsQueryParams = {
+  page?: number;
+  page_size?: number;
+  search?: string;
+  faculty?: string | number;
+  subject?: string;
+  department?: string;
+  status?: string;
+  start_date?: string;
+  end_date?: string;
+  sort?: string;
+};
+
+export const adminExamsApi = {
+  getExams: async (params?: AdminExamsQueryParams): Promise<AdminExamListResponse> => {
+    const response = await apiClient.get<AdminExamListResponse>('/api/admin/exams', { params });
+    return response.data;
+  },
+  getExamDetail: async (examId: number): Promise<AdminExamDetailResponse> => {
+    const response = await apiClient.get<AdminExamDetailResponse>(`/api/admin/exams/${examId}`);
+    return response.data;
+  },
+  updateExamStatus: async (examId: number, status: string): Promise<AdminExamDetailResponse> => {
+    const response = await apiClient.patch<AdminExamDetailResponse>(`/api/admin/exams/${examId}`, { status });
+    return response.data;
+  },
+  deleteExam: async (examId: number): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.delete<{ status: string; message: string }>(`/api/admin/exams/${examId}`);
+    return response.data;
+  },
+};
+

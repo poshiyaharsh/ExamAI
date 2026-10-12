@@ -8,6 +8,8 @@ from .views import (
     AdminSignupAPIView,
     AdminFacultyAPIView,
     AdminFacultyDetailAPIView,
+    AdminExamsAPIView,
+    AdminExamDetailAPIView,
 )
 
 urlpatterns = [
@@ -23,4 +25,8 @@ urlpatterns = [
     path('faculty/', AdminFacultyAPIView.as_view(), name='admin-faculty'),
     path('faculty/<int:faculty_id>', AdminFacultyDetailAPIView.as_view(), name='admin-faculty-detail-no-slash'),
     path('faculty/<int:faculty_id>/', AdminFacultyDetailAPIView.as_view(), name='admin-faculty-detail'),
+    path('exams', AdminExamsAPIView.as_view(), name='admin-exams-no-slash'),
+    path('exams/', AdminExamsAPIView.as_view(), name='admin-exams'),
+    path('exams/<int:exam_id>', AdminExamDetailAPIView.as_view(), name='admin-exam-detail-no-slash'),
+    path('exams/<int:exam_id>/', AdminExamDetailAPIView.as_view(), name='admin-exam-detail'),
 ]
