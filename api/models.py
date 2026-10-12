@@ -49,6 +49,7 @@ class Exam(models.Model):
 
 	title = models.CharField(max_length=255)
 	created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_exams')
+	department = models.CharField(max_length=120, blank=True, default='', db_index=True)
 	duration_minutes = models.PositiveIntegerField()
 	total_marks = models.PositiveIntegerField()
 	topics = models.JSONField(default=list)

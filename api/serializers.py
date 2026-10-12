@@ -108,7 +108,7 @@ class ExamListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'duration_minutes', 'total_marks', 'topics',
+            'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'status', 'error_message', 'starts_at', 'ends_at', 'created_at', 'updated_at',
             'question_count', 'attempts_count',
@@ -121,7 +121,7 @@ class ExamDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'duration_minutes', 'total_marks', 'topics',
+            'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'starts_at', 'ends_at',
             'error_message', 'created_at', 'updated_at', 'questions',
@@ -133,7 +133,7 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'title', 'duration_minutes', 'total_marks', 'topics',
+            'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'starts_at', 'ends_at', 'status',
         )
 
@@ -158,7 +158,7 @@ class StudentExamSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Exam
-        fields = ('id', 'title', 'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at', 'questions')
+        fields = ('id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at', 'questions')
 
 
 class StudentAnswerSerializer(serializers.ModelSerializer):

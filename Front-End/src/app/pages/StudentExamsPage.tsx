@@ -41,7 +41,7 @@ export function StudentExamsPage() {
           <p className="text-sm text-muted-foreground">Loading exams...</p>
         ) : exams.length === 0 ? (
           <div className="rounded-xl border border-border bg-white p-8 text-center text-sm text-muted-foreground shadow-sm">
-            No published exams are available.
+            No exams available for your department right now.
           </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
@@ -49,8 +49,15 @@ export function StudentExamsPage() {
               <article key={exam.id} className="rounded-xl border border-border bg-white p-5 sm:p-6 shadow-sm hover:shadow-md transition-all">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h2 className="text-base sm:text-lg font-semibold text-foreground">{exam.title}</h2>
-                    <p className="mt-1 text-xs sm:text-sm text-muted-foreground">{exam.topics.join(", ")}</p>
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <h2 className="text-base sm:text-lg font-semibold text-foreground">{exam.title}</h2>
+                      {exam.department && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+                          {exam.department}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs sm:text-sm text-muted-foreground">{exam.topics.join(", ")}</p>
                   </div>
                   <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <FileText className="h-5 w-5 text-primary" />

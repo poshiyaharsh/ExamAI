@@ -95,7 +95,7 @@ export function StudentExams() {
             ) : filteredExams.length === 0 ? (
               <div className="text-center py-12">
                 <FileText className="w-12 h-12 text-muted-foreground/60 mx-auto mb-3" />
-                <p className="text-xs sm:text-sm text-muted-foreground">No available exams at the moment</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">No exams available for your department right now.</p>
               </div>
             ) : (
               <div className="space-y-3.5">
@@ -108,7 +108,14 @@ export function StudentExams() {
                             <FileText className="w-5 h-5 text-white" />
                           </div>
                           <div>
-                            <h4 className="font-semibold text-base sm:text-lg text-foreground mb-1">{exam.title}</h4>
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <h4 className="font-semibold text-base sm:text-lg text-foreground">{exam.title}</h4>
+                              {exam.department && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20">
+                                  {exam.department}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs sm:text-sm text-muted-foreground">{exam.faculty}</p>
                           </div>
                         </div>

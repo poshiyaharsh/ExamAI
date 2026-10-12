@@ -789,7 +789,7 @@ class AdminExamListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'subject', 'topics', 'duration_minutes', 'total_marks',
+            'id', 'title', 'department', 'subject', 'topics', 'duration_minutes', 'total_marks',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'status', 'error_message', 'starts_at', 'ends_at', 'created_at', 'updated_at',
             'question_count', 'attempts_count', 'faculty',
@@ -811,7 +811,7 @@ class AdminExamDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'subject', 'topics', 'duration_minutes', 'total_marks',
+            'id', 'title', 'department', 'subject', 'topics', 'duration_minutes', 'total_marks',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'error_message', 'starts_at', 'ends_at',
             'created_at', 'updated_at', 'question_count', 'attempts_count',

@@ -963,7 +963,10 @@ class AdminExamsAPIView(APIView):
 
             department_filter = request.query_params.get('department', '').strip()
             if department_filter:
-                queryset = queryset.filter(created_by__faculty_profile__department__iexact=department_filter)
+                queryset = queryset.filter(
+                    Q(department__iexact=department_filter) |
+                    Q(created_by__faculty_profile__department__iexact=department_filter)
+                )
 
             status_filter = request.query_params.get('status', '').strip().lower()
             if status_filter and status_filter != 'all':

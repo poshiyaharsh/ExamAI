@@ -281,6 +281,7 @@ export type GenerateExamResponse = {
 export type StudentExam = {
   id: number;
   title: string;
+  department?: string;
   duration_minutes: number;
   total_marks: number;
   topics: string[];

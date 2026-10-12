@@ -21,12 +21,19 @@ class StudentExamPermissionMixin:
     permission_classes = [IsAuthenticated, IsStudentUser]
 
 
-def _available_exam_queryset():
+def _available_exam_queryset(user=None):
     now = timezone.now()
-    return Exam.objects.filter(status=Exam.Status.PUBLISHED).filter(
+    qs = Exam.objects.filter(status=Exam.Status.PUBLISHED).filter(
         Q(starts_at__isnull=True) | Q(starts_at__lte=now),
         Q(ends_at__isnull=True) | Q(ends_at__gte=now),
     ).prefetch_related('questions')
+    if user:
+        from .utils.departments import get_student_department
+        dept = get_student_department(user)
+        if not dept:
+            return qs.none()
+        qs = qs.filter(department__iexact=dept)
+    return qs
 
 
 def _deadline(attempt):
@@ -48,7 +55,16 @@ def _objective_correct(question, answer_text):
 
 class StudentExamListView(StudentExamPermissionMixin, APIView):
     def get(self, request):
-        exams = Exam.objects.filter(status=Exam.Status.PUBLISHED).prefetch_related('questions')
+        from .utils.departments import get_student_department
+        student_dept = get_student_department(request.user)
+        if not student_dept:
+            return Response([])
+
+        exams = Exam.objects.filter(
+            status=Exam.Status.PUBLISHED,
+            department__iexact=student_dept,
+        ).prefetch_related('questions')
+
         attempts = {
             attempt.exam_id: attempt
             for attempt in StudentAttempt.objects.filter(student=request.user, exam__in=exams)
@@ -73,9 +89,19 @@ class StudentExamListView(StudentExamPermissionMixin, APIView):
 
 class StartAttemptView(StudentExamPermissionMixin, APIView):
     def post(self, request, exam_id):
-        exam = _available_exam_queryset().filter(id=exam_id).first()
+        from .utils.departments import check_student_exam_access
+        exam = Exam.objects.filter(id=exam_id).first()
         if not exam:
-            return Response({'detail': 'Exam is not available.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed, reason = check_student_exam_access(request.user, exam)
+        if not allowed:
+            return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        if exam.status != Exam.Status.PUBLISHED or (exam.starts_at and exam.starts_at > now) or (exam.ends_at and exam.ends_at < now):
+            return Response({'detail': 'Exam is not currently available.'}, status=status.HTTP_400_BAD_REQUEST)
+
         attempt, created = StudentAttempt.objects.get_or_create(
             exam=exam,
             student=request.user,
@@ -104,6 +130,11 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
         attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).select_related('exam').first()
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        from .utils.departments import check_student_exam_access
+        allowed, reason = check_student_exam_access(request.user, attempt.exam)
+        if not allowed:
+            return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
+
         if attempt.status != StudentAttempt.Status.IN_PROGRESS:
             return Response({'detail': 'This attempt is no longer active.'}, status=status.HTTP_400_BAD_REQUEST)
         if timezone.now() >= _deadline(attempt):
@@ -135,6 +166,11 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
         attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).select_related('exam').prefetch_related('answers__question').first()
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        from .utils.departments import check_student_exam_access
+        allowed, reason = check_student_exam_access(request.user, attempt.exam)
+        if not allowed:
+            return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
+
         if attempt.status != StudentAttempt.Status.IN_PROGRESS:
             return Response({'detail': 'This attempt has already been submitted.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -148,7 +184,11 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
 
 class StudentAttemptDetailView(StudentExamPermissionMixin, APIView):
     def get(self, request, attempt_id):
-        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).prefetch_related('answers__question').first()
+        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user).select_related('exam').prefetch_related('answers__question').first()
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+        from .utils.departments import check_student_exam_access
+        allowed, reason = check_student_exam_access(request.user, attempt.exam)
+        if not allowed:
+            return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
         return Response(StudentAttemptSerializer(attempt).data)

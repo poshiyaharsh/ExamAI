@@ -253,10 +253,16 @@ class GeneratePaperView(APIView):
         else:
             logger.debug('No syllabus uploaded; generation will use topics only.')
 
+        from .utils.departments import get_faculty_department, normalize_department
+        faculty_dept = get_faculty_department(request.user)
+        client_dept = normalize_department(request.data.get('department'))
+        assigned_dept = faculty_dept or client_dept
+
         try:
             exam = Exam.objects.create(
                 title=title,
                 created_by=request.user,
+                department=assigned_dept,
                 duration_minutes=duration_minutes,
                 total_marks=total_marks,
                 topics=topics,
