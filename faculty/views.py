@@ -111,11 +111,24 @@ def _faculty_or_error(request):
 
 def _validate_syllabus_file(uploaded_file):
     filename = uploaded_file.name or ''
-    extension = os.path.splitext(filename)[1].lower()
+    clean_filename = os.path.basename(filename)
+    extension = os.path.splitext(clean_filename)[1].lower()
     if extension not in ('.pdf', '.docx'):
         return 'Only PDF and DOCX syllabus files are supported.'
     if uploaded_file.size > 10 * 1024 * 1024:
         return 'Syllabus file must be 10MB or smaller.'
+
+    # Magic byte signature verification to prevent masqueraded files
+    try:
+        header = uploaded_file.read(2048)
+        uploaded_file.seek(0)
+        if extension == '.pdf' and not header.startswith(b'%PDF-'):
+            return 'Invalid file: The uploaded file is not a valid PDF document.'
+        if extension == '.docx' and not (header.startswith(b'PK\x03\x04') or header.startswith(b'PK\x05\x06')):
+            return 'Invalid file: The uploaded file is not a valid DOCX document.'
+    except Exception:
+        return 'Unable to verify uploaded file contents.'
+
     return None
 
 

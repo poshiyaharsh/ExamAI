@@ -67,9 +67,15 @@ class FacultyProfile(models.Model):
         return f'Faculty: {self.user.username}'
 
 
+import os
+import re
+
+
 def faculty_syllabus_upload_path(instance, filename):
     inst_id = getattr(instance, 'institution_id', None) or 'general'
-    return f'syllabi/inst_{inst_id}/faculty_{instance.faculty_id}/{filename}'
+    safe_name = os.path.basename(filename)
+    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', safe_name)
+    return f'syllabi/inst_{inst_id}/faculty_{instance.faculty_id}/{safe_name}'
 
 
 class SyllabusUpload(models.Model):
