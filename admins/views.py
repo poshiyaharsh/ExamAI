@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from api.permissions import IsAdminUser
 from api.models import Exam, Question, StudentAttempt
+from api.throttling import AuthRateThrottle
 
 from students.models import StudentProfile
 from .models import AdminInstitution, AdminProfile
@@ -85,6 +86,7 @@ def _get_admin_institution(user):
 class AdminSignupAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = AdminSignupSerializer(data=request.data)
@@ -111,6 +113,7 @@ class AdminSignupAPIView(APIView):
 class AdminLoginAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = AdminLoginSerializer(data=request.data)

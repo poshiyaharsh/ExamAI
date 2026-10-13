@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from api.permissions import IsStudentUser
+from api.throttling import AuthRateThrottle
 
 from admins.models import AdminInstitution
 from faculty.models import Paper
@@ -103,6 +104,7 @@ def _calculate_score(paper, answers):
 class StudentSignupAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = StudentSignupSerializer(data=request.data)
@@ -129,6 +131,7 @@ class StudentSignupAPIView(APIView):
 class StudentLoginAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = StudentLoginSerializer(data=request.data)

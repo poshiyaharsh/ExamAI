@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from api.permissions import IsFacultyUser
+from api.throttling import AuthRateThrottle, PaperGenerationThrottle
 
 from admins.models import AdminInstitution
 from backend.services.ollama_service import (
@@ -553,6 +554,7 @@ class OllamaStatusAPIView(APIView):
 class FacultySignupAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = FacultySignupSerializer(data=request.data)
@@ -579,6 +581,7 @@ class FacultySignupAPIView(APIView):
 class FacultyLoginAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = FacultyLoginSerializer(data=request.data)
@@ -724,6 +727,7 @@ class SyllabusUploadAPIView(APIView):
 
 class GeneratePaperAPIView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
+    throttle_classes = [PaperGenerationThrottle]
 
     def post(self, request):
         logger.info('[GeneratePaper] POST request received')

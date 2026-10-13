@@ -25,6 +25,7 @@ from admins.models import AdminProfile
 from faculty.models import FacultyProfile
 from students.models import StudentProfile
 from .permissions import IsAdminUser
+from api.throttling import AuthRateThrottle
 
 
 DEFAULT_DEPARTMENT_NAMES = [
@@ -162,6 +163,7 @@ class ChangePasswordAPIView(APIView):
 class ForgotPasswordAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
@@ -216,6 +218,7 @@ class ForgotPasswordAPIView(APIView):
 class VerifyOTPAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
@@ -283,6 +286,7 @@ class VerifyOTPAPIView(APIView):
 class ResetPasswordAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
