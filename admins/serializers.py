@@ -35,7 +35,7 @@ class AdminSignupSerializer(serializers.Serializer):
     def validate_email(self, value):
         normalized = value.lower().strip()
         if User.objects.filter(username=normalized).exists():
-            raise serializers.ValidationError('An account with this email already exists.')
+            raise serializers.ValidationError('Registration could not be completed with this email. If you have an account, please sign in or reset your password.')
         return normalized
 
     def create(self, validated_data):
@@ -71,11 +71,8 @@ class AdminLoginSerializer(serializers.Serializer):
         password = attrs['password']
         user = authenticate(username=email, password=password)
 
-        if not user:
-            raise serializers.ValidationError('Invalid email or password.')
-
-        if not AdminProfile.objects.filter(user=user).exists():
-            raise serializers.ValidationError('This account is not registered as admin.')
+        if not user or not AdminProfile.objects.filter(user=user).exists():
+            raise serializers.ValidationError('Invalid email, password, or unauthorized role.')
 
         attrs['user'] = user
         return attrs

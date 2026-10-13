@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/useAuth";
 import { ADMIN_SIDEBAR_ITEMS, AdminSidebar } from "./AdminSidebar";
+import { authApi } from "../../services/api";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -64,7 +65,12 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
     session?.user.institution?.name ||
     "";
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // Fallback
+    }
     clearAuthenticatedSession();
     navigate("/", { replace: true });
   };

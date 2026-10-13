@@ -32,6 +32,7 @@ from .views import (
     DepartmentListAPIView,
     ForgotPasswordAPIView,
     InstitutionListAPIView,
+    LogoutAPIView,
     PublicStatsAPIView,
     ResetPasswordAPIView,
     TestAPIView,
@@ -85,4 +86,6 @@ urlpatterns = [
     path('auth/verify-otp/', VerifyOTPAPIView.as_view(), name='auth-verify-otp'),
     path('auth/reset-password', ResetPasswordAPIView.as_view(), name='auth-reset-password-no-slash'),
     path('auth/reset-password/', ResetPasswordAPIView.as_view(), name='auth-reset-password'),
+    path('auth/logout', LogoutAPIView.as_view(), name='auth-logout-no-slash'),
+    path('auth/logout/', LogoutAPIView.as_view(), name='auth-logout'),
 ]

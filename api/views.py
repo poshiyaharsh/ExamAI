@@ -170,12 +170,13 @@ class ForgotPasswordAPIView(APIView):
 
         user = User.objects.filter(username=email).first()
         if not user:
+            # Generic response to prevent user enumeration
             return Response(
                 {
-                    'status': 'error',
-                    'message': 'Email is not registered.',
+                    'status': 'success',
+                    'message': 'If an account exists with this email, password reset instructions have been sent.',
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_200_OK,
             )
 
         PasswordResetOTP.objects.filter(user=user, is_used=False).update(is_used=True)
@@ -201,7 +202,7 @@ class ForgotPasswordAPIView(APIView):
 
         response_payload = {
             'status': 'success',
-            'message': 'Reset instructions have been sent to your email.',
+            'message': 'If an account exists with this email, password reset instructions have been sent.',
         }
         if settings.DEBUG and settings.EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend':
             response_payload['debug_otp'] = otp_code
@@ -228,7 +229,7 @@ class VerifyOTPAPIView(APIView):
             return Response(
                 {
                     'status': 'error',
-                    'message': 'Email is not registered.',
+                    'message': 'Invalid verification code or email.',
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -296,7 +297,7 @@ class ResetPasswordAPIView(APIView):
             return Response(
                 {
                     'status': 'error',
-                    'message': 'Email is not registered.',
+                    'message': 'Invalid or expired reset session.',
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -346,6 +347,36 @@ class ResetPasswordAPIView(APIView):
             {
                 'status': 'success',
                 'message': 'Password has been reset successfully.',
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class LogoutAPIView(APIView):
+    """
+    Invalidates authentication session:
+    - Blacklists the SimpleJWT refresh token on the server side
+    - Flushes Django session cookies if present
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh') or request.data.get('refresh_token')
+        if refresh_token:
+            try:
+                from rest_framework_simplejwt.tokens import RefreshToken
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception as exc:
+                logger.info('Token blacklist during logout: %s', exc)
+
+        from django.contrib.auth import logout
+        logout(request)
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Successfully logged out.',
             },
             status=status.HTTP_200_OK,
         )

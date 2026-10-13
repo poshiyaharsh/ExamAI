@@ -926,6 +926,17 @@ export const authApi = {
     const response = await apiClient.get<AuthMeResponse>("/api/auth/me");
     return response.data;
   },
+  logout: async (): Promise<void> => {
+    const refresh = authStorage.getRefreshToken();
+    if (refresh) {
+      try {
+        await apiClient.post("/api/auth/logout/", { refresh });
+      } catch {
+        // Silently proceed with local storage wipe
+      }
+    }
+    authStorage.clearAuth();
+  },
 };
 
 export const studentProfileApi = {
