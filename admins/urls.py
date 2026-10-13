@@ -13,7 +13,7 @@ from .views import (
     AdminExamAuditAPIView,
     AdminStudentResultsAPIView,
 )
-from api.admin_dashboard import AdminDashboardView
+from api.admin_dashboard import AdminDashboardView, LiveRosterView
 
 urlpatterns = [
     path('signup/', AdminSignupAPIView.as_view(), name='admin-signup'),
@@ -38,5 +38,7 @@ urlpatterns = [
     path('exams/audit/', AdminExamAuditAPIView.as_view(), name='admin-exams-audit'),
     path('exams/<int:exam_id>', AdminExamDetailAPIView.as_view(), name='admin-exam-detail-no-slash'),
     path('exams/<int:exam_id>/', AdminExamDetailAPIView.as_view(), name='admin-exam-detail'),
+    path('exams/<int:exam_id>/live-roster', LiveRosterView.as_view(), name='admin-exam-live-roster-no-slash'),
+    path('exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='admin-exam-live-roster'),
     path('question-bank/', include('api.urls_question_bank')),
 ]

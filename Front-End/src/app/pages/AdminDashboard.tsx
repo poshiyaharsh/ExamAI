@@ -15,17 +15,23 @@ import {
   FileText,
   Filter,
   GraduationCap,
+  Info,
   Layers,
   PlayCircle,
   Plus,
   RefreshCw,
+  Search,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   TrendingDown,
   TrendingUp,
   UserCheck,
   Users,
+  X,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   Area,
@@ -45,6 +51,10 @@ import {
   adminDashboardApi,
   type AdminDashboardData,
   type AdminDepartmentOverview,
+  type AdminOngoingExam,
+  type LiveRosterResponse,
+  type LiveRosterStudent,
+  type IneligibleAttempt,
 } from "../../services/api";
 
 const SCORE_DIST_COLORS = ["#EF4444", "#F59E0B", "#3B82F6", "#10B981"];
@@ -127,6 +137,121 @@ export function AdminDashboard() {
     void fetchDashboard();
   }, [fetchDashboard]);
 
+  // Auto-refresh every 20 seconds, pausing when document is hidden
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void fetchDashboard(true);
+      }
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [fetchDashboard]);
+
+  // Real-time second countdown ticker for live ongoing exams
+  const [countdownOffsets, setCountdownOffsets] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdownOffsets((prev) => {
+        const next = { ...prev };
+        (data?.ongoing_exams || []).forEach((exam) => {
+          next[exam.id] = (next[exam.id] || 0) + 1;
+        });
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data?.ongoing_exams]);
+
+  const formatLiveCountdown = (exam: AdminOngoingExam): string => {
+    let remainingSec = exam.seconds_remaining;
+    if (remainingSec === null || remainingSec === undefined) {
+      if (exam.ends_at) {
+        remainingSec = Math.max(0, Math.floor((new Date(exam.ends_at).getTime() - Date.now()) / 1000));
+      } else {
+        return `${exam.duration_minutes}m duration`;
+      }
+    }
+    const offset = countdownOffsets[exam.id] || 0;
+    const currentRem = Math.max(0, remainingSec - offset);
+    if (currentRem <= 0) return "Ending now";
+    const hrs = Math.floor(currentRem / 3600);
+    const mins = Math.floor((currentRem % 3600) / 60);
+    const secs = currentRem % 60;
+    if (hrs > 0) return `${hrs}h ${mins}m ${secs < 10 ? "0" : ""}${secs}s`;
+    return `${mins}m ${secs < 10 ? "0" : ""}${secs}s`;
+  };
+
+  // Live Roster Modal state
+  const [selectedExamForRoster, setSelectedExamForRoster] = useState<AdminOngoingExam | null>(null);
+  const [rosterData, setRosterData] = useState<LiveRosterResponse["data"] | null>(null);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [rosterStatusFilter, setRosterStatusFilter] = useState<string>("all");
+  const [rosterSearch, setRosterSearch] = useState<string>("");
+  const [rosterPage, setRosterPage] = useState<number>(1);
+
+  const loadLiveRoster = useCallback(
+    async (examId: number, page = 1, status = "all", search = "") => {
+      try {
+        setRosterLoading(true);
+        setRosterError(null);
+        const params: { page: number; page_size: number; status?: string; search?: string } = {
+          page,
+          page_size: 10,
+        };
+        if (status !== "all" && status !== "ineligible") {
+          params.status = status;
+        }
+        if (search.trim()) {
+          params.search = search.trim();
+        }
+        const res = await adminDashboardApi.getLiveRoster(examId, params);
+        setRosterData(res.data);
+      } catch (err: any) {
+        console.error("Failed to load live roster:", err);
+        setRosterError(err?.response?.data?.error || err?.message || "Failed to load live roster");
+      } finally {
+        setRosterLoading(false);
+      }
+    },
+    []
+  );
+
+  const openLiveRoster = (exam: AdminOngoingExam) => {
+    setSelectedExamForRoster(exam);
+    setRosterPage(1);
+    setRosterStatusFilter("all");
+    setRosterSearch("");
+    void loadLiveRoster(exam.id, 1, "all", "");
+  };
+
+  const closeLiveRoster = () => {
+    setSelectedExamForRoster(null);
+    setRosterData(null);
+    setRosterError(null);
+  };
+
+  const handleRosterPageChange = (newPage: number) => {
+    if (!selectedExamForRoster) return;
+    setRosterPage(newPage);
+    void loadLiveRoster(selectedExamForRoster.id, newPage, rosterStatusFilter, rosterSearch);
+  };
+
+  const handleRosterFilterChange = (status: string) => {
+    if (!selectedExamForRoster) return;
+    setRosterStatusFilter(status);
+    setRosterPage(1);
+    void loadLiveRoster(selectedExamForRoster.id, 1, status, rosterSearch);
+  };
+
+  const handleRosterSearchChange = (val: string) => {
+    setRosterSearch(val);
+    if (!selectedExamForRoster) return;
+    setRosterPage(1);
+    void loadLiveRoster(selectedExamForRoster.id, 1, rosterStatusFilter, val);
+  };
+
   const profile = data?.profile;
   const stats = data?.stats;
   const ongoingExams = data?.ongoing_exams || [];
@@ -176,15 +301,19 @@ export function AdminDashboard() {
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-muted-foreground">
-              <span className="flex items-center gap-1 font-medium text-foreground">
+              <span className="flex items-center gap-1.5 font-semibold text-foreground bg-muted/60 px-2 py-0.5 rounded-md border border-border">
                 <Building className="w-3.5 h-3.5 text-primary" />
                 {profile?.institution_name || "ExamAI Central"}
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                Tenant Isolated
               </span>
               {profile?.institution_code && (
                 <>
                   <span>•</span>
                   <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs">
-                    {profile.institution_code}
+                    Code: {profile.institution_code}
                   </span>
                 </>
               )}
@@ -487,18 +616,29 @@ export function AdminDashboard() {
             </div>
 
             {/* LIVE Ongoing Exams Spotlight */}
-            {ongoingExams.length > 0 && (
-              <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-blue-500/10 border border-emerald-500/20 rounded-xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <span className="relative flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
-                    </span>
-                    <h3 className="font-bold text-sm sm:text-base text-foreground">
-                      Active Live Examinations ({ongoingExams.length})
-                    </h3>
+            <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-blue-500/10 border border-emerald-500/20 rounded-xl p-5 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-sm sm:text-base text-foreground">
+                        Active Live Examinations ({ongoingExams.length})
+                      </h3>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100/80 text-emerald-800 border border-emerald-300/40">
+                        <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                        {profile?.institution_name || "Institutional Roster"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Real-time live monitoring strictly scoped to active students in your institution
+                    </p>
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
                   <Link
                     to="/admin/exams"
                     className="text-xs text-primary hover:underline font-semibold flex items-center gap-1"
@@ -506,57 +646,136 @@ export function AdminDashboard() {
                     View All in Exam Manager <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>
+              </div>
 
+              {/* Institution Live Summary Counters */}
+              {data?.live_summary && ongoingExams.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4 bg-card/60 backdrop-blur-xs p-3 rounded-lg border border-emerald-500/20">
+                  <div className="text-center sm:text-left sm:pl-2">
+                    <div className="text-[11px] text-muted-foreground font-medium">Eligible Students</div>
+                    <div className="text-lg font-bold text-foreground">
+                      {data.live_summary.total_eligible_unique}
+                    </div>
+                  </div>
+                  <div className="text-center sm:text-left sm:pl-2 border-l border-border/60">
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">In-Progress Now</div>
+                    <div className="text-lg font-bold text-amber-700 dark:text-amber-400">
+                      {data.live_summary.total_in_progress}
+                    </div>
+                  </div>
+                  <div className="text-center sm:text-left sm:pl-2 border-l border-border/60">
+                    <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">Submitted</div>
+                    <div className="text-lg font-bold text-emerald-700 dark:text-emerald-400">
+                      {data.live_summary.total_submitted}
+                    </div>
+                  </div>
+                  <div className="text-center sm:text-left sm:pl-2 border-l border-border/60">
+                    <div className="text-[11px] text-muted-foreground font-medium">Not Started</div>
+                    <div className="text-lg font-bold text-muted-foreground">
+                      {data.live_summary.total_not_started}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {ongoingExams.length === 0 ? (
+                <div className="bg-card/70 border border-border/80 rounded-xl p-6 text-center">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mx-auto mb-2 text-muted-foreground">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-foreground">No Live Examinations In Session</h4>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                    There are no exams currently active in the schedule window for {profile?.institution_name || "your institution"}. Once an exam starts, real-time rosters and participation metrics will appear here automatically.
+                  </p>
+                </div>
+              ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {ongoingExams.map((exam) => {
-                    const pct =
-                      exam.eligible_students > 0
-                        ? Math.min(100, Math.round((exam.submitted_count / exam.eligible_students) * 100))
-                        : 0;
+                    const countdown = formatLiveCountdown(exam);
+                    const participationPct = exam.participation_percent ?? 0;
                     return (
                       <div
                         key={exam.id}
-                        className="bg-card rounded-xl p-4 border border-border shadow-xs hover:border-emerald-500/40 transition-all flex flex-col justify-between"
+                        className="bg-card rounded-xl p-4 border border-border shadow-xs hover:border-emerald-500/50 hover:shadow-md transition-all flex flex-col justify-between group"
                       >
                         <div>
                           <div className="flex items-center justify-between gap-2 mb-2">
-                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                               {exam.department}
                             </span>
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {exam.duration_minutes}m
+                            <span className="text-xs font-mono font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/50 flex items-center gap-1">
+                              <Clock className="w-3 h-3 animate-pulse" />
+                              {countdown}
                             </span>
                           </div>
-                          <h4 className="font-bold text-sm text-foreground line-clamp-1">
+                          <h4 className="font-bold text-sm text-foreground line-clamp-1 group-hover:text-primary transition-colors">
                             {exam.title}
                           </h4>
                           <p className="text-xs text-muted-foreground mt-0.5">
                             By {exam.faculty_name} • {exam.total_marks} Marks
                           </p>
+
+                          {/* 4 Invariant Breakdown Chips */}
+                          <div className="grid grid-cols-2 gap-1.5 mt-3 pt-3 border-t border-border/80">
+                            <div className="flex items-center justify-between px-2 py-1 rounded bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/50 text-[11px]">
+                              <span className="text-blue-700 dark:text-blue-300 font-medium">Eligible</span>
+                              <span className="font-bold text-blue-800 dark:text-blue-200">{exam.eligible_count}</span>
+                            </div>
+                            <div className="flex items-center justify-between px-2 py-1 rounded bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/50 text-[11px]">
+                              <span className="text-amber-700 dark:text-amber-300 font-medium">In Progress</span>
+                              <span className="font-bold text-amber-800 dark:text-amber-200">{exam.in_progress_count}</span>
+                            </div>
+                            <div className="flex items-center justify-between px-2 py-1 rounded bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/50 text-[11px]">
+                              <span className="text-emerald-700 dark:text-emerald-300 font-medium">Submitted</span>
+                              <span className="font-bold text-emerald-800 dark:text-emerald-200">{exam.submitted_count}</span>
+                            </div>
+                            <div className="flex items-center justify-between px-2 py-1 rounded bg-muted/60 border border-border text-[11px]">
+                              <span className="text-muted-foreground font-medium">Not Started</span>
+                              <span className="font-bold text-foreground">{exam.not_started_count}</span>
+                            </div>
+                          </div>
+
+                          {/* Ineligible attempts warning if present */}
+                          {exam.ineligible_attempts > 0 && (
+                            <div className="mt-2 flex items-center justify-between px-2 py-1 rounded bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-700 dark:text-rose-300">
+                              <span className="flex items-center gap-1 font-medium">
+                                <AlertTriangle className="w-3 h-3 text-rose-500" />
+                                Ineligible Attempts
+                              </span>
+                              <span className="font-bold">{exam.ineligible_attempts}</span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="mt-4 pt-3 border-t border-border">
                           <div className="flex items-center justify-between text-xs mb-1.5">
-                            <span className="text-muted-foreground">Student Participation</span>
-                            <span className="font-semibold text-foreground">
-                              {exam.submitted_count} submitted
-                              {exam.eligible_students > 0 ? ` / ${exam.eligible_students} eligible` : ""}
+                            <span className="text-muted-foreground font-medium">Participation Rate</span>
+                            <span className="font-bold text-foreground">
+                              {participationPct}% ({exam.submitted_count}/{exam.eligible_count})
                             </span>
                           </div>
-                          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                          <div className="w-full bg-muted rounded-full h-2 overflow-hidden mb-3">
                             <div
                               className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
-                              style={{ width: `${Math.max(5, pct)}%` }}
+                              style={{ width: `${Math.max(4, Math.min(100, participationPct))}%` }}
                             />
                           </div>
+
+                          <button
+                            type="button"
+                            onClick={() => openLiveRoster(exam)}
+                            className="w-full py-1.5 px-3 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-2xs"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            View Live Student Roster
+                          </button>
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Department Performance Overview */}
             <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
@@ -1258,6 +1477,258 @@ export function AdminDashboard() {
               </Link>
             </div>
           </>
+        )}
+
+        {/* Live Roster Modal Dialog */}
+        {selectedExamForRoster && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-background/80 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-card w-full max-w-4xl max-h-[90vh] rounded-2xl border border-border shadow-2xl flex flex-col overflow-hidden">
+              {/* Modal Header */}
+              <div className="p-5 border-b border-border flex items-start justify-between gap-4 bg-muted/30">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      {selectedExamForRoster.department}
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                      {profile?.institution_name || "Institution Isolated"}
+                    </span>
+                    <span className="text-xs font-mono font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                      <Clock className="w-3 h-3 animate-pulse" />
+                      {formatLiveCountdown(selectedExamForRoster)}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-bold text-foreground">
+                    {selectedExamForRoster.title} — Live Student Roster
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Faculty: {selectedExamForRoster.faculty_name} • Total Marks: {selectedExamForRoster.total_marks} • Real-time attendance & submission status
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeLiveRoster}
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Metrics Summary Strip */}
+              <div className="p-4 bg-muted/20 border-b border-border grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+                <div className="bg-card p-2 rounded-lg border border-border/80">
+                  <div className="text-[10px] text-blue-600 font-semibold uppercase">Eligible</div>
+                  <div className="text-base font-bold text-foreground">
+                    {rosterData?.metrics.eligible_count ?? selectedExamForRoster.eligible_count}
+                  </div>
+                </div>
+                <div className="bg-card p-2 rounded-lg border border-border/80">
+                  <div className="text-[10px] text-amber-600 font-semibold uppercase">In Progress</div>
+                  <div className="text-base font-bold text-amber-600">
+                    {rosterData?.metrics.in_progress_count ?? selectedExamForRoster.in_progress_count}
+                  </div>
+                </div>
+                <div className="bg-card p-2 rounded-lg border border-border/80">
+                  <div className="text-[10px] text-emerald-600 font-semibold uppercase">Submitted</div>
+                  <div className="text-base font-bold text-emerald-600">
+                    {rosterData?.metrics.submitted_count ?? selectedExamForRoster.submitted_count}
+                  </div>
+                </div>
+                <div className="bg-card p-2 rounded-lg border border-border/80">
+                  <div className="text-[10px] text-muted-foreground font-semibold uppercase">Not Started</div>
+                  <div className="text-base font-bold text-muted-foreground">
+                    {rosterData?.metrics.not_started_count ?? selectedExamForRoster.not_started_count}
+                  </div>
+                </div>
+                <div className="bg-card p-2 rounded-lg border border-border/80 col-span-2 sm:col-span-1">
+                  <div className="text-[10px] text-rose-600 font-semibold uppercase">Ineligible</div>
+                  <div className="text-base font-bold text-rose-600">
+                    {rosterData?.metrics.ineligible_attempts ?? selectedExamForRoster.ineligible_attempts}
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters & Search Toolbar */}
+              <div className="p-4 border-b border-border flex flex-col sm:flex-row items-center justify-between gap-3 bg-card">
+                {/* Status Tabs */}
+                <div className="flex flex-wrap items-center gap-1 w-full sm:w-auto">
+                  {(["all", "not_started", "in_progress", "submitted"] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => handleRosterFilterChange(st)}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium capitalize transition-all cursor-pointer ${
+                        rosterStatusFilter === st
+                          ? "bg-primary text-white font-semibold shadow-xs"
+                          : "text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {st.replace("_", " ")}
+                    </button>
+                  ))}
+                  {(rosterData?.ineligible_attempts?.length || 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRosterFilterChange("ineligible")}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                        rosterStatusFilter === "ineligible"
+                          ? "bg-rose-600 text-white font-semibold shadow-xs"
+                          : "text-rose-600 hover:bg-rose-50"
+                      }`}
+                    >
+                      Ineligible ({rosterData?.ineligible_attempts.length})
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Input */}
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search name, roll number..."
+                    value={rosterSearch}
+                    onChange={(e) => handleRosterSearchChange(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-border bg-muted/40 focus:bg-background focus:outline-hidden focus:ring-1 focus:ring-primary"
+                  />
+                  {rosterSearch && (
+                    <button
+                      type="button"
+                      onClick={() => handleRosterSearchChange("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Roster Table Content */}
+              <div className="flex-1 overflow-y-auto p-4 min-h-[260px]">
+                {rosterLoading ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+                    <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+                    <span className="text-xs">Loading live roster...</span>
+                  </div>
+                ) : rosterError ? (
+                  <div className="p-4 rounded-xl bg-destructive/10 text-destructive text-xs border border-destructive/20 text-center">
+                    {rosterError}
+                  </div>
+                ) : rosterStatusFilter === "ineligible" ? (
+                  /* Ineligible Attempts Tab */
+                  <div>
+                    <div className="p-3 mb-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 text-xs text-amber-800 dark:text-amber-200">
+                      These attempts were submitted by students outside the eligible cohort (different institution or inactive account). They are isolated and excluded from institutional invariant metrics.
+                    </div>
+                    {(!rosterData?.ineligible_attempts || rosterData.ineligible_attempts.length === 0) ? (
+                      <div className="text-center py-8 text-xs text-muted-foreground">
+                        No ineligible attempts recorded.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-border">
+                        {rosterData.ineligible_attempts.map((att) => (
+                          <div key={att.attempt_id} className="py-2.5 flex items-center justify-between text-xs">
+                            <div>
+                              <div className="font-semibold text-foreground">{att.student_name}</div>
+                              <div className="text-[11px] text-muted-foreground">
+                                Roll: {att.student_roll || "N/A"} • Reason: <span className="text-rose-600 font-medium">{att.reason}</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                                Status: {att.status}
+                              </span>
+                              {att.score !== null && (
+                                <div className="text-[11px] font-bold mt-0.5">{att.score} pts</div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (!rosterData?.roster || rosterData.roster.length === 0) ? (
+                  <div className="text-center py-12 text-muted-foreground text-xs">
+                    No students match the current criteria.
+                  </div>
+                ) : (
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground font-semibold">
+                        <th className="pb-2">Student</th>
+                        <th className="pb-2">Roll Number</th>
+                        <th className="pb-2">Department</th>
+                        <th className="pb-2">Live Status</th>
+                        <th className="pb-2 text-right">Score</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {rosterData.roster.map((s) => (
+                        <tr key={s.student_id} className="hover:bg-muted/30 transition-colors">
+                          <td className="py-2.5 font-medium text-foreground">
+                            <div>{s.full_name}</div>
+                            <div className="text-[10px] text-muted-foreground">{s.email}</div>
+                          </td>
+                          <td className="py-2.5 font-mono text-muted-foreground">{s.roll_number || "—"}</td>
+                          <td className="py-2.5 text-muted-foreground">{s.department}</td>
+                          <td className="py-2.5">
+                            {s.status === "submitted" && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                Submitted
+                              </span>
+                            )}
+                            {s.status === "in_progress" && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                                In Progress
+                              </span>
+                            )}
+                            {s.status === "not_started" && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground border border-border">
+                                Not Started
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 text-right font-medium">
+                            {s.score !== null && s.score !== undefined ? `${s.score} pts` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Modal Footer & Pagination */}
+              {rosterData && rosterStatusFilter !== "ineligible" && rosterData.pagination.total_pages > 1 && (
+                <div className="p-3 border-t border-border flex items-center justify-between text-xs bg-muted/20">
+                  <span className="text-muted-foreground">
+                    Page {rosterData.pagination.page} of {rosterData.pagination.total_pages} ({rosterData.pagination.total_items} students)
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={rosterData.pagination.page <= 1 || rosterLoading}
+                      onClick={() => handleRosterPageChange(rosterData.pagination.page - 1)}
+                      className="p-1 rounded-md border border-border bg-card hover:bg-muted disabled:opacity-40 transition-all cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={rosterData.pagination.page >= rosterData.pagination.total_pages || rosterLoading}
+                      onClick={() => handleRosterPageChange(rosterData.pagination.page + 1)}
+                      className="p-1 rounded-md border border-border bg-card hover:bg-muted disabled:opacity-40 transition-all cursor-pointer"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </DashboardLayout>

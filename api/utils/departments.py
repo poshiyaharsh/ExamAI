@@ -77,28 +77,10 @@ def is_exam_visible_to_student(exam, user) -> Tuple[bool, bool, str]:
     if not user or not user.is_authenticated:
         return False, False, 'Authentication required.'
 
-    from api.tenant import get_user_institution
-    stu_inst = get_user_institution(user)
-    exam_inst_id = getattr(exam, 'institution_id', None)
-    if not stu_inst or not exam_inst_id or stu_inst.id != exam_inst_id:
-        return False, False, 'Exam not found.'
-
-    # Only published exams are visible to students
-    if getattr(exam, 'status', '') != 'published':
-        return False, False, 'Exam is not published.'
-
-    student_dept = get_student_department(user)
-    if not student_dept:
-        return False, False, 'Student does not have an assigned department.'
-
-    exam_dept = normalize_department(getattr(exam, 'department', ''))
-    if not exam_dept:
-        faculty = getattr(exam, 'created_by', None)
-        if faculty:
-            exam_dept = get_faculty_department(faculty)
-
-    if not exam_dept or exam_dept.lower() != student_dept.lower():
-        return False, False, 'Department mismatch.'
+    from api.exams.eligibility import is_student_eligible
+    eligible, reason = is_student_eligible(exam, user)
+    if not eligible:
+        return False, False, reason
 
     # Schedule validation
     now = timezone.now()

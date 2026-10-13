@@ -1469,8 +1469,63 @@ export type AdminOngoingExam = {
   total_marks: number;
   starts_at: string | null;
   ends_at: string | null;
-  submitted_count: number;
+  seconds_remaining?: number | null;
+  eligible_count: number;
   eligible_students: number;
+  submitted_count: number;
+  in_progress_count?: number;
+  not_started_count?: number;
+  participation_percent?: number;
+  ineligible_attempts?: number;
+};
+
+export type LiveRosterStudent = {
+  student_id: string;
+  user_id: number;
+  name: string;
+  email: string;
+  department: string;
+  status: 'not_started' | 'in_progress' | 'submitted';
+  started_at: string | null;
+  submitted_at: string | null;
+  score: number | null;
+};
+
+export type IneligibleAttempt = {
+  student_id: string;
+  user_id: number;
+  name: string;
+  email: string;
+  department: string;
+  status: string;
+  started_at: string | null;
+  submitted_at: string | null;
+  score: number | null;
+  reason: string;
+};
+
+export type LiveRosterResponse = {
+  status: string;
+  data: {
+    exam: {
+      id: number;
+      title: string;
+      department: string;
+      faculty_name: string;
+      starts_at: string | null;
+      ends_at: string | null;
+      seconds_remaining: number | null;
+    };
+    metrics: AdminOngoingExam;
+    roster: LiveRosterStudent[];
+    ineligible_attempts: IneligibleAttempt[];
+    pagination: {
+      page: number;
+      page_size: number;
+      total_items: number;
+      total_pages: number;
+    };
+  };
 };
 
 export type AdminUpcomingExam = {
@@ -1551,9 +1606,18 @@ export type AdminPendingActions = {
   unassigned_students_count: number;
 };
 
+export type AdminLiveSummary = {
+  live_exams_count: number;
+  total_eligible_unique: number;
+  total_in_progress: number;
+  total_submitted: number;
+  total_not_started: number;
+};
+
 export type AdminDashboardData = {
   profile: AdminDashboardProfile;
   stats: AdminDashboardStats;
+  live_summary?: AdminLiveSummary;
   ongoing_exams: AdminOngoingExam[];
   upcoming_exams: AdminUpcomingExam[];
   department_overview: AdminDepartmentOverview[];
@@ -1578,6 +1642,13 @@ export type AdminDashboardResponse = {
 export const adminDashboardApi = {
   getDashboard: async (params?: { department?: string; range?: string }): Promise<AdminDashboardResponse> => {
     const response = await apiClient.get<AdminDashboardResponse>('/api/admin/dashboard/', { params });
+    return response.data;
+  },
+  getLiveRoster: async (
+    examId: number,
+    params?: { page?: number; page_size?: number; status?: string; search?: string }
+  ): Promise<LiveRosterResponse> => {
+    const response = await apiClient.get<LiveRosterResponse>(`/api/admin/exams/${examId}/live-roster/`, { params });
     return response.data;
   },
 };

@@ -144,32 +144,26 @@ class AdminDashboardView(APIView):
             'new_attempts_this_week': new_attempts_this_week,
         }
 
-        # 4. Ongoing Exams (currently live with submission progress)
+        # 4. Ongoing Exams (strictly institution-scoped live metrics)
+        from api.exams.eligibility import compute_batch_live_exam_metrics
+
         ongoing_qs = filtered_exams.filter(
             status=Exam.Status.PUBLISHED
         ).filter(
             Q(starts_at__isnull=True) | Q(starts_at__lte=now),
-            Q(ends_at__isnull=True) | Q(ends_at__gte=now),
-        ).order_by('ends_at', '-created_at')[:5]
+            Q(ends_at__isnull=True) | Q(ends_at__gt=now),
+        ).order_by('ends_at', '-created_at')[:10]
 
-        ongoing_exams_list = []
-        for e in ongoing_qs:
-            sub_count = StudentAttempt.objects.filter(exam=e, status__in=COMPLETED_STATUSES).count()
-            dept_students = StudentProfile.objects.filter(department__iexact=e.department).count() if e.department else 0
-            u = e.created_by
-            f_name = f"{u.first_name} {u.last_name}".strip() or u.username
-            ongoing_exams_list.append({
-                'id': e.id,
-                'title': e.title,
-                'department': e.department,
-                'faculty_name': f_name,
-                'duration_minutes': e.duration_minutes,
-                'total_marks': e.total_marks,
-                'starts_at': e.starts_at.isoformat() if e.starts_at else None,
-                'ends_at': e.ends_at.isoformat() if e.ends_at else None,
-                'submitted_count': sub_count,
-                'eligible_students': dept_students,
-            })
+        ongoing_exams_list, live_summary = compute_batch_live_exam_metrics(
+            exams=list(ongoing_qs),
+            institution=institution,
+            now=now,
+        )
+        stats_data.update({
+            'live_exams_count': live_summary['live_exams_count'],
+            'total_eligible_unique': live_summary['total_eligible_unique'],
+            'total_in_progress': live_summary['total_in_progress'],
+        })
 
         # 5. Upcoming Exams
         upcoming_qs = filtered_exams.filter(
@@ -457,6 +451,7 @@ class AdminDashboardView(APIView):
             'data': {
                 'profile': profile_data,
                 'stats': stats_data,
+                'live_summary': live_summary,
                 'ongoing_exams': ongoing_exams_list,
                 'upcoming_exams': upcoming_exams_list,
                 'department_overview': dept_overview,
@@ -471,5 +466,152 @@ class AdminDashboardView(APIView):
                 'recent_activity': recent_activity,
                 'pending_actions': pending_actions,
                 'departments': DEFAULT_DEPARTMENT_NAMES,
+            }
+        })
+
+
+class LiveRosterView(APIView):
+    """
+    Drill-down endpoint for Admin: returns the student roster for a specific live exam.
+    Returns eligible students categorized as not_started, in_progress, or submitted.
+    Excludes students from other institutions and reports any ineligible attempts separately.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request, exam_id):
+        from api.tenant import get_user_institution
+        institution = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not institution:
+            return Response(
+                {'detail': 'Admin institution not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Multi-tenant isolation: strictly verify exam belongs to this institution
+        exam = Exam.objects.filter(id=exam_id, institution=institution).select_related('created_by', 'institution').first()
+        if not exam:
+            return Response(
+                {'detail': 'Exam not found or does not belong to your institution.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from api.exams.eligibility import (
+            COMPLETED_STATUSES,
+            compute_live_exam_metrics,
+            eligible_students_queryset,
+            get_exam_canonical_department,
+        )
+
+        eligible_qs = eligible_students_queryset(exam).order_by('student_id', 'user__first_name')
+        metrics = compute_live_exam_metrics(exam, eligible_students_qs=eligible_qs)
+
+        # Attempts for this exam
+        attempts = StudentAttempt.objects.filter(
+            exam=exam,
+        ).select_related('student', 'student__student_profile')
+
+        attempts_map = {a.student_id: a for a in attempts}
+        eligible_user_ids = set(eligible_qs.values_list('user_id', flat=True))
+
+        status_filter = request.query_params.get('status', 'all').strip().lower()
+        search_query = request.query_params.get('search', '').strip().lower()
+
+        roster = []
+        for sp in eligible_qs:
+            att = attempts_map.get(sp.user_id)
+            if att and att.status in COMPLETED_STATUSES:
+                st = 'submitted'
+            elif att and att.status == StudentAttempt.Status.IN_PROGRESS:
+                st = 'in_progress'
+            else:
+                st = 'not_started'
+
+            if status_filter != 'all' and st != status_filter:
+                continue
+
+            full_name = f"{sp.user.first_name} {sp.user.last_name}".strip() or sp.user.username
+            roll = sp.student_id or '-'
+
+            if search_query:
+                if (
+                    search_query not in full_name.lower()
+                    and search_query not in roll.lower()
+                    and search_query not in sp.user.email.lower()
+                ):
+                    continue
+
+            roster.append({
+                'student_id': roll,
+                'user_id': sp.user_id,
+                'name': full_name,
+                'email': sp.user.email,
+                'department': sp.department,
+                'status': st,
+                'started_at': att.started_at.isoformat() if att else None,
+                'submitted_at': att.submitted_at.isoformat() if att and att.submitted_at else None,
+                'score': att.total_score if att and att.status in COMPLETED_STATUSES else None,
+            })
+
+        # Track any attempts by students no longer eligible (e.g. transferred, deactivated, cross-tenant)
+        ineligible_roster = []
+        for att in attempts:
+            if att.student_id not in eligible_user_ids:
+                u = att.student
+                sp = getattr(u, 'student_profile', None)
+                if sp and sp.institution_id != exam.institution_id:
+                    reason = 'Student belongs to a different institution'
+                elif not u.is_active:
+                    reason = 'Student account is inactive'
+                else:
+                    reason = 'Student department mismatch or transferred'
+
+                ineligible_roster.append({
+                    'student_id': sp.student_id if sp else '-',
+                    'user_id': u.id,
+                    'name': f"{u.first_name} {u.last_name}".strip() or u.username,
+                    'email': u.email,
+                    'department': sp.department if sp else 'Unknown',
+                    'status': att.status,
+                    'started_at': att.started_at.isoformat() if att else None,
+                    'submitted_at': att.submitted_at.isoformat() if att and att.submitted_at else None,
+                    'score': att.total_score if att.status in COMPLETED_STATUSES else None,
+                    'reason': reason,
+                })
+
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            page_size = max(1, min(100, int(request.query_params.get('page_size', 20))))
+        except (TypeError, ValueError):
+            page_size = 20
+
+        total_items = len(roster)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_roster = roster[start_idx:end_idx]
+
+        return Response({
+            'status': 'success',
+            'data': {
+                'exam': {
+                    'id': exam.id,
+                    'title': exam.title,
+                    'department': get_exam_canonical_department(exam),
+                    'faculty_name': metrics['faculty_name'],
+                    'starts_at': metrics['starts_at'],
+                    'ends_at': metrics['ends_at'],
+                    'seconds_remaining': metrics['seconds_remaining'],
+                },
+                'metrics': metrics,
+                'roster': paginated_roster,
+                'ineligible_attempts': ineligible_roster,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_items': total_items,
+                    'total_pages': max(1, (total_items + page_size - 1) // page_size),
+                },
             }
         })

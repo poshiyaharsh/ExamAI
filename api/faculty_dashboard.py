@@ -122,23 +122,15 @@ class FacultyDashboardView(APIView):
             Q(ends_at__isnull=True) | Q(ends_at__gte=now),
         ).order_by('ends_at', '-created_at')[:5]
 
+        from api.exams.eligibility import compute_live_exam_metrics
+
         ongoing_exams_list = []
         for e in ongoing_qs:
-            sub_count = StudentAttempt.objects.filter(exam=e, status__in=COMPLETED_STATUSES).count()
+            m = compute_live_exam_metrics(e, now=now)
             topics = e.topics
             subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
-            ongoing_exams_list.append({
-                'id': e.id,
-                'title': e.title,
-                'subject': subject,
-                'department': e.department,
-                'duration_minutes': e.duration_minutes,
-                'total_marks': e.total_marks,
-                'starts_at': e.starts_at.isoformat() if e.starts_at else None,
-                'ends_at': e.ends_at.isoformat() if e.ends_at else None,
-                'submitted_count': sub_count,
-                'eligible_students': total_students,
-            })
+            m['subject'] = subject
+            ongoing_exams_list.append(m)
 
         # 4. Upcoming Exams (scheduled for future or next unattempted)
         upcoming_qs = faculty_exams.filter(

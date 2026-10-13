@@ -1,6 +1,6 @@
 from django.urls import include, path
 
-from .admin_dashboard import AdminDashboardView
+from .admin_dashboard import AdminDashboardView, LiveRosterView
 from .exam_management import (
     ClearFacultyPaperCacheView,
     ExamDetailView,
@@ -44,6 +44,7 @@ urlpatterns = [
     path('public/stats/', PublicStatsAPIView.as_view(), name='public-stats'),
     path('admin/dashboard', AdminDashboardView.as_view(), name='api-admin-dashboard-no-slash'),
     path('admin/dashboard/', AdminDashboardView.as_view(), name='api-admin-dashboard'),
+    path('admin/exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='api-admin-exam-live-roster'),
     path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
