@@ -20,14 +20,28 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / '.env')
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-ov-n5f(4(&em6f*7a9xzqi5--=#uj+dwq4q2-ym65d8#8%1o#n')
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.getenv('SECRET_KEY')
+
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        "CRITICAL SECURITY CONFIGURATION ERROR: The SECRET_KEY environment variable is missing. "
+        "Define SECRET_KEY in your .env file or server environment."
+    )
+
+if not DEBUG and (SECRET_KEY.startswith('django-insecure-') or len(SECRET_KEY) < 32):
+    raise ImproperlyConfigured(
+        "CRITICAL SECURITY CONFIGURATION ERROR: An insecure or weak SECRET_KEY was detected while DEBUG=False. "
+        "Set a strong 50+ character random secret key in environment variables."
+    )
 
 # Application definition
 
@@ -84,12 +98,17 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite').strip().lower()
 
 if DB_ENGINE == 'mysql':
+    db_password = os.getenv('DB_PASSWORD', '')
+    if not DEBUG and not db_password:
+        raise ImproperlyConfigured(
+            "CRITICAL SECURITY CONFIGURATION ERROR: DB_PASSWORD must be configured in environment for MySQL."
+        )
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
             'NAME': os.getenv('DB_NAME', 'examai'),
             'USER': os.getenv('DB_USER', 'examai_user'),
-            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'PASSWORD': db_password,
             'HOST': os.getenv('DB_HOST', '127.0.0.1'),
             'PORT': os.getenv('DB_PORT', '3306'),
             'CONN_MAX_AGE': 60,

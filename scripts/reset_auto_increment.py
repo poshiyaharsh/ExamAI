@@ -1,11 +1,16 @@
-import os
-import MySQLdb
+from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 host = os.getenv('DB_HOST', '127.0.0.1')
 user = os.getenv('DB_USER', 'examai_user')
-password = os.getenv('DB_PASSWORD', 'ExamAI_Secure_Pass2026!')
+password = os.getenv('DB_PASSWORD')
+if not password:
+    raise RuntimeError("DB_PASSWORD environment variable must be configured in .env.")
 db_name = os.getenv('DB_NAME', 'examai')
-port = int(os.getenv('DB_PORT', 3306))
+port = int(os.getenv('DB_PORT', '3306'))
 
 conn = MySQLdb.connect(host=host, user=user, passwd=password, db=db_name, port=port)
 c = conn.cursor()
