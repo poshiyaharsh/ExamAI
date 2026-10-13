@@ -172,27 +172,27 @@ flowchart TD
         Axios["Axios Client (api.ts)"]
         Queue["Token Refresh Queue"]
         UI --> Axios
-        Axios -.->|401 Token Expired| Queue
-        Queue -.->|POST /api/token/refresh/| Axios
+        Axios -.->|"401 Token Expired"| Queue
+        Queue -.->|"POST /api/token/refresh/"| Axios
     end
 
     subgraph Backend["Django 6.0 REST Framework"]
-        Auth["TenantJWTAuthentication (Anti-Spoofing)"]
+        Auth["TenantJWTAuthentication"]
         Mixin["TenantScopedMixin"]
         Cache["LocMemCache / Redis Layer"]
-        Retry["@retry_on_deadlock Decorator"]
+        Retry["retry_on_deadlock Decorator"]
         
-        Axios -->|Bearer JWT + institution_id| Auth
+        Axios -->|"Bearer JWT + institution_id"| Auth
         Auth --> Mixin
-        Mixin <-->|Key: t{version}:inst_{id}| Cache
+        Mixin <-->|"Key: tenant_version + institution_id"| Cache
         Mixin --> Retry
     end
 
     subgraph Database["Persistence Layer"]
-        MySQL[("MySQL 8.4 LTS InnoDB (utf8mb4)")]
-        SQLite[("SQLite 3 (Instant Fallback)")]
+        MySQL[("MySQL 8.4 LTS InnoDB")]
+        SQLite[("SQLite 3 Fallback")]
         Retry --> MySQL
-        Retry -.->|DB_ENGINE=sqlite| SQLite
+        Retry -.->|"DB_ENGINE=sqlite"| SQLite
     end
 ```
 
@@ -200,30 +200,30 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    AdminInstitution ||--o{ AdminDepartment : contains
-    AdminInstitution ||--o{ AdminProfile : managed_by
-    AdminInstitution ||--o{ FacultyProfile : employs
-    AdminInstitution ||--o{ StudentProfile : enrolls
-    AdminInstitution ||--o{ Subject : offers
-    AdminInstitution ||--o{ Exam : administers
-    AdminInstitution ||--o{ Question : owns
+    AdminInstitution ||--o{ AdminDepartment : "contains"
+    AdminInstitution ||--o{ AdminProfile : "managed_by"
+    AdminInstitution ||--o{ FacultyProfile : "employs"
+    AdminInstitution ||--o{ StudentProfile : "enrolls"
+    AdminInstitution ||--o{ Subject : "offers"
+    AdminInstitution ||--o{ Exam : "administers"
+    AdminInstitution ||--o{ Question : "owns"
     
-    User ||--o| AdminProfile : has
-    User ||--o| FacultyProfile : has
-    User ||--o| StudentProfile : has
+    User ||--o| AdminProfile : "has"
+    User ||--o| FacultyProfile : "has"
+    User ||--o| StudentProfile : "has"
     
-    Subject ||--o{ Topic : contains
-    Subject ||--o{ Question : categorizes
-    Topic ||--o{ Question : groups
+    Subject ||--o{ Topic : "contains"
+    Subject ||--o{ Question : "categorizes"
+    Topic ||--o{ Question : "groups"
     
-    Question ||--o{ Option : has
-    Question ||--o{ QuestionAuditLog : audits
+    Question ||--o{ Option : "has"
+    Question ||--o{ QuestionAuditLog : "audits"
     
-    Exam ||--o{ Question : includes
-    Exam ||--o{ StudentAttempt : taken_in
+    Exam ||--o{ Question : "includes"
+    Exam ||--o{ StudentAttempt : "taken_in"
     
-    StudentAttempt ||--o{ StudentAnswer : records
-    Question ||--o{ StudentAnswer : answers
+    StudentAttempt ||--o{ StudentAnswer : "records"
+    Question ||--o{ StudentAnswer : "answers"
 ```
 
 ### Multi-Tenancy & Tenant Scoping

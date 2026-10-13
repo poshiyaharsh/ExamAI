@@ -11,7 +11,7 @@ flowchart TD
         Axios["Axios Client (api.ts)"]
         Refresh["Auto 401 Refresh Queue"]
         UI --> Axios
-        Axios -.->|On 401 Unauthorized| Refresh
+        Axios -.->|"On 401 Unauthorized"| Refresh
     end
 
     subgraph Gateway["Django 6.0 REST Backend"]
@@ -20,9 +20,9 @@ flowchart TD
         CacheLayer["LocMemCache / Redis Layer"]
         DBRetry["db_retry Decorator (Deadlock Guard)"]
         
-        Axios -->|Bearer JWT + institution_id| AuthMiddleware
+        Axios -->|"Bearer JWT + institution_id"| AuthMiddleware
         AuthMiddleware --> TenantMixin
-        TenantMixin <-->|Key: t{version}:inst_{id}| CacheLayer
+        TenantMixin <-->|"Key: tenant_version + institution_id"| CacheLayer
         TenantMixin --> DBRetry
     end
 
@@ -30,7 +30,7 @@ flowchart TD
         MySQL[("MySQL 8.4 LTS InnoDB")]
         SQLite[("SQLite 3 Fallback")]
         DBRetry --> MySQL
-        DBRetry -.->|DB_ENGINE=sqlite| SQLite
+        DBRetry -.->|"DB_ENGINE=sqlite"| SQLite
     end
 ```
 
@@ -89,36 +89,36 @@ This increments the tenant version counter in cache (e.g. `t1` -> `t2`), instant
 ```mermaid
 flowchart TD
     Req["Paper Generation Request (Blueprint)"] --> Hash["Compute Deterministic Request Hash (SHA-256)"]
-    Hash --> CacheCheck{"Cache Hit & Valid?"}
-    CacheCheck -- Yes --> ReturnCache["Return Cached Exam Snapshot (<200ms)"]
+    Hash --> CacheCheck{"Cache Hit and Valid?"}
+    CacheCheck -->|"Yes"| ReturnCache["Return Cached Exam Snapshot (under 200ms)"]
     
-    CacheCheck -- No --> Pool["Fetch Candidate Question Pool (Scoped by Inst/Dept/Subject)"]
+    CacheCheck -->|"No"| Pool["Fetch Candidate Question Pool"]
     Pool --> Dedupe["7-Tier Deduplication Pipeline"]
     
     subgraph DedupePipeline["Deduplication Engine (dedupe.py)"]
         D1["Tier 1: Exact Question ID Check"]
         D2["Tier 2: Normalized Text Hash (SHA-256)"]
-        D3["Tier 3: Near-Duplicate 3-Shingles & Jaccard Similarity (>= 0.85)"]
-        D4["Tier 4: Same-Concept Topic + >= 75% Option Overlap"]
+        D3["Tier 3: Near-Duplicate 3-Shingles and Jaccard Similarity (0.85+)"]
+        D4["Tier 4: Same-Concept Topic and Option Overlap (75%+)"]
         D5["Tier 5: Intra-Question Duplicate Options Check"]
-        D6["Tier 6: Cross-Paper Repeat Avoidance (Faculty last 30 days)"]
+        D6["Tier 6: Cross-Paper Repeat Avoidance (Last 30 Days)"]
         D1 --> D2 --> D3 --> D4 --> D5 --> D6
     end
     
-    Dedupe --> Balance["Constraint Balancer (Difficulty & Question Types)"]
+    Dedupe --> Balance["Constraint Balancer (Difficulty and Types)"]
     Balance --> Validate["Validation Pipeline (validator.py)"]
     
     subgraph ValidationPipeline["Validation Pipeline"]
-        V1["Exact Marks Check (Decimal precision)"]
+        V1["Exact Marks Check (Decimal Precision)"]
         V2["Question Count Match per Section"]
         V3["Difficulty Distribution Tolerance"]
-        V4["Negative Marks Guard (0 <= neg <= marks)"]
+        V4["Negative Marks Guard (0 to marks range)"]
         V5["Estimated Time vs Duration Ratio"]
     end
     
-    Validate --> Persist["Transactional Database Save (db_retry protected)"]
+    Validate --> Persist["Transactional Database Save"]
     Persist --> CacheStore["Store in Tenant Cache"]
-    CacheStore --> Final["Return Exam Detail + ValidationReport JSON"]
+    CacheStore --> Final["Return Exam Detail and ValidationReport"]
 ```
 
 ---
@@ -127,28 +127,28 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    AdminInstitution ||--o{ AdminDepartment : contains
-    AdminInstitution ||--o{ AdminProfile : managed_by
-    AdminInstitution ||--o{ FacultyProfile : employs
-    AdminInstitution ||--o{ StudentProfile : enrolls
-    AdminInstitution ||--o{ Subject : offers
-    AdminInstitution ||--o{ Exam : administers
-    AdminInstitution ||--o{ Question : owns
+    AdminInstitution ||--o{ AdminDepartment : "contains"
+    AdminInstitution ||--o{ AdminProfile : "managed_by"
+    AdminInstitution ||--o{ FacultyProfile : "employs"
+    AdminInstitution ||--o{ StudentProfile : "enrolls"
+    AdminInstitution ||--o{ Subject : "offers"
+    AdminInstitution ||--o{ Exam : "administers"
+    AdminInstitution ||--o{ Question : "owns"
     
-    User ||--o| AdminProfile : has
-    User ||--o| FacultyProfile : has
-    User ||--o| StudentProfile : has
+    User ||--o| AdminProfile : "has"
+    User ||--o| FacultyProfile : "has"
+    User ||--o| StudentProfile : "has"
     
-    Subject ||--o{ Topic : contains
-    Subject ||--o{ Question : categorizes
-    Topic ||--o{ Question : groups
+    Subject ||--o{ Topic : "contains"
+    Subject ||--o{ Question : "categorizes"
+    Topic ||--o{ Question : "groups"
     
-    Question ||--o{ Option : has
-    Question ||--o{ QuestionAuditLog : audits
+    Question ||--o{ Option : "has"
+    Question ||--o{ QuestionAuditLog : "audits"
     
-    Exam ||--o{ Question : includes
-    Exam ||--o{ StudentAttempt : taken_in
+    Exam ||--o{ Question : "includes"
+    Exam ||--o{ StudentAttempt : "taken_in"
     
-    StudentAttempt ||--o{ StudentAnswer : records
-    Question ||--o{ StudentAnswer : answers
+    StudentAttempt ||--o{ StudentAnswer : "records"
+    Question ||--o{ StudentAnswer : "answers"
 ```
