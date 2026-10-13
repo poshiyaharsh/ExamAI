@@ -21,8 +21,8 @@ out = {
 payload = {
     "first_name": "Test",
     "last_name": "User",
-    "email": "debug_auth_user@example.com",
-    "password": "Harsh@2102",
+    "email": os.getenv("DEBUG_TEST_EMAIL", "debug_auth_user@example.com"),
+    "password": os.getenv("DEBUG_TEST_PASSWORD", "Pass@Test123456"),
 }
 
 roles = ["students", "faculty", "admins"]

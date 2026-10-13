@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.urls import include, path
 
 from .admin_dashboard import AdminDashboardView, LiveRosterView
@@ -40,7 +41,6 @@ from .views import (
 )
 
 urlpatterns = [
-    path('test/', TestAPIView.as_view(), name='test-api'),
     path('public/stats', PublicStatsAPIView.as_view(), name='public-stats-no-slash'),
     path('public/stats/', PublicStatsAPIView.as_view(), name='public-stats'),
     path('admin/dashboard', AdminDashboardView.as_view(), name='api-admin-dashboard-no-slash'),
@@ -89,3 +89,7 @@ urlpatterns = [
     path('auth/logout', LogoutAPIView.as_view(), name='auth-logout-no-slash'),
     path('auth/logout/', LogoutAPIView.as_view(), name='auth-logout'),
 ]
+
+if settings.DEBUG:
+    urlpatterns.insert(0, path('test/', TestAPIView.as_view(), name='test-api'))
+
