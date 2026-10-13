@@ -1058,15 +1058,18 @@ class QuestionBulkImportAPIView(APIView):
                     correct_opts = [o['text'] for o in opts_data if o.get('is_correct')]
                     cleaned_payload['correct_answer'] = correct_opts[0] if len(correct_opts) == 1 else correct_opts
 
+                if not cleaned_payload.get('is_deleted') and cleaned_payload.get('subject') and cleaned_payload.get('text_hash'):
+                    cleaned_payload['active_hash'] = cleaned_payload['text_hash']
+                else:
+                    cleaned_payload['active_hash'] = None
                 q_inst = Question(**cleaned_payload)
                 created_questions.append((q_inst, opts_data))
 
-            # Batch create Questions in chunks of 100
+            # Create Questions and preserve PKs across all DB backends
             saved_questions = []
-            for i in range(0, len(created_questions), 100):
-                chunk = [item[0] for item in created_questions[i:i + 100]]
-                saved_chunk = Question.objects.bulk_create(chunk)
-                saved_questions.extend(saved_chunk)
+            for q_inst, _ in created_questions:
+                q_inst.save()
+                saved_questions.append(q_inst)
 
             # Create Option objects
             for (q_inst, opts_data), saved_q in zip(created_questions, saved_questions):

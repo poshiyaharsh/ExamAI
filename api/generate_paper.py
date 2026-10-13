@@ -175,51 +175,61 @@ def _run_generation(exam_id, model_name, topics, question_types, total_marks, di
             'Paper generation result exam_id=%s actual_total_marks=%s requested_total_marks=%s question_count=%s',
             exam_id, actual_total_marks, total_marks, len(generated_questions),
         )
-        with transaction.atomic():
-            exam = Exam.objects.select_for_update().get(id=exam_id)
-            from api.validators.question_bank import compute_text_hash
-            from api.models import Option
-            for question_order, generated_question in enumerate(generated_questions, start=1):
-                raw_options = generated_question.get('options')
-                correct_ans = generated_question.get('correct_answer')
-                q_obj = Question.objects.create(
-                    exam=exam,
-                    institution=exam.institution,
-                    department=exam.department,
-                    order=question_order,
-                    question_type=generated_question['type'],
-                    difficulty=generated_question['difficulty'],
-                    text=generated_question['text'],
-                    text_hash=compute_text_hash(generated_question['text']),
-                    status=Question.Status.ACTIVE,
-                    options=raw_options,
-                    correct_answer=correct_ans,
-                    model_answer=generated_question.get('model_answer') or '',
-                    marks=generated_question['marks'],
-                    topic_text=generated_question.get('topic') or '',
-                )
-                if raw_options and isinstance(raw_options, list):
-                    opts_to_create = []
-                    correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
-                    for opt_idx, opt_txt in enumerate(raw_options, start=1):
-                        is_corr = False
-                        if correct_ans is not None:
-                            if isinstance(correct_ans, list):
-                                is_corr = str(opt_txt).strip().lower() in [str(c).strip().lower() for c in correct_ans]
-                            else:
-                                is_corr = (str(opt_txt).strip().lower() == correct_str) or (str(opt_idx - 1) == correct_str)
-                        opts_to_create.append(Option(
-                            question=q_obj,
-                            text=str(opt_txt),
-                            is_correct=is_corr,
-                            order=opt_idx,
-                        ))
-                    if opts_to_create:
-                        Option.objects.bulk_create(opts_to_create)
-            exam.total_marks = actual_total_marks
-            exam.status = Exam.Status.DRAFT
-            exam.error_message = ''
-            exam.save(update_fields=['total_marks', 'status', 'error_message', 'updated_at'])
+        import time
+        from api.utils.db_retry import is_lock_or_deadlock
+        for attempt_idx in range(3):
+            try:
+                with transaction.atomic():
+                    exam = Exam.objects.select_for_update().get(id=exam_id)
+                    from api.validators.question_bank import compute_text_hash
+                    from api.models import Option
+                    for question_order, generated_question in enumerate(generated_questions, start=1):
+                        raw_options = generated_question.get('options')
+                        correct_ans = generated_question.get('correct_answer')
+                        q_obj = Question.objects.create(
+                            exam=exam,
+                            institution=exam.institution,
+                            department=exam.department,
+                            order=question_order,
+                            question_type=generated_question['type'],
+                            difficulty=generated_question['difficulty'],
+                            text=generated_question['text'],
+                            text_hash=compute_text_hash(generated_question['text']),
+                            status=Question.Status.ACTIVE,
+                            options=raw_options,
+                            correct_answer=correct_ans,
+                            model_answer=generated_question.get('model_answer') or '',
+                            marks=generated_question['marks'],
+                            topic_text=generated_question.get('topic') or '',
+                        )
+                        if raw_options and isinstance(raw_options, list):
+                            opts_to_create = []
+                            correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
+                            for opt_idx, opt_txt in enumerate(raw_options, start=1):
+                                is_corr = False
+                                if correct_ans is not None:
+                                    if isinstance(correct_ans, list):
+                                        is_corr = str(opt_txt).strip().lower() in [str(c).strip().lower() for c in correct_ans]
+                                    else:
+                                        is_corr = (str(opt_txt).strip().lower() == correct_str) or (str(opt_idx - 1) == correct_str)
+                                opts_to_create.append(Option(
+                                    question=q_obj,
+                                    text=str(opt_txt),
+                                    is_correct=is_corr,
+                                    order=opt_idx,
+                                ))
+                            if opts_to_create:
+                                Option.objects.bulk_create(opts_to_create)
+                    exam.total_marks = actual_total_marks
+                    exam.status = Exam.Status.DRAFT
+                    exam.error_message = ''
+                    exam.save(update_fields=['total_marks', 'status', 'error_message', 'updated_at'])
+                break
+            except Exception as e:
+                if is_lock_or_deadlock(e) and attempt_idx < 2:
+                    time.sleep(0.1 * (2 ** attempt_idx))
+                    continue
+                raise
     except Exception as exc:
         logger.exception('Background paper generation failed exam_id=%s', exam_id)
         Exam.objects.filter(id=exam_id).update(

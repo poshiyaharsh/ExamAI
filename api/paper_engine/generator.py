@@ -169,6 +169,7 @@ def generate_exam_paper(
                 difficulty=c.difficulty,
                 text=c.text,
                 text_hash=c.text_hash,
+                active_hash=c.text_hash if (subject_id or c.subject_id) else None,
                 marks=Decimal(str(c.marks)),
                 negative_marks=Decimal("0.0"),
                 status=Question.Status.ACTIVE,
@@ -180,7 +181,10 @@ def generate_exam_paper(
             questions_to_create.append(q_inst)
             options_data_map[order_idx] = c.options
 
-        saved_questions = Question.objects.bulk_create(questions_to_create)
+        saved_questions = []
+        for q_inst in questions_to_create:
+            q_inst.save()
+            saved_questions.append(q_inst)
 
         # Bulk create Options for the questions
         options_to_create = []

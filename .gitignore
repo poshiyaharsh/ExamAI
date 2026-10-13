@@ -11,6 +11,10 @@ __pycache__/
 *.py[cod]
 *.sqlite3*
 db.sqlite3*
+data.json
+data_exact.json
+*.backup*
+*.json.bak
 *.log
 .venv/
 venv/

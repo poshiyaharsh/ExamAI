@@ -28,13 +28,23 @@ def evaluate_attempt_subjectives(attempt_id):
                     answer.ai_feedback = f'Automatic evaluation failed: {exc}'
             answer.save(update_fields=['score_awarded', 'ai_feedback'])
 
-        with transaction.atomic():
-            attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
-            attempt.total_score = sum(
-                answer.score_awarded or 0
-                for answer in StudentAnswer.objects.filter(attempt=attempt)
-            )
-            attempt.status = StudentAttempt.Status.EVALUATED
-            attempt.save(update_fields=['total_score', 'status'])
+        import time
+        from api.utils.db_retry import is_lock_or_deadlock
+        for attempt_idx in range(3):
+            try:
+                with transaction.atomic():
+                    attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
+                    attempt.total_score = sum(
+                        answer.score_awarded or 0
+                        for answer in StudentAnswer.objects.filter(attempt=attempt)
+                    )
+                    attempt.status = StudentAttempt.Status.EVALUATED
+                    attempt.save(update_fields=['total_score', 'status'])
+                break
+            except Exception as e:
+                if is_lock_or_deadlock(e) and attempt_idx < 2:
+                    time.sleep(0.1 * (2 ** attempt_idx))
+                    continue
+                raise
     finally:
         close_old_connections()

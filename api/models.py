@@ -257,6 +257,7 @@ class Question(models.Model):
 	is_deleted = models.BooleanField(default=False, db_index=True)
 	deleted_at = models.DateTimeField(null=True, blank=True)
 	text_hash = models.CharField(max_length=64, db_index=True, blank=True, default='')
+	active_hash = models.CharField(max_length=64, null=True, blank=True, db_index=True)
 	version = models.PositiveIntegerField(default=1)
 	times_used = models.PositiveIntegerField(default=0)
 	last_used_at = models.DateTimeField(null=True, blank=True)
@@ -280,8 +281,7 @@ class Question(models.Model):
 		ordering = ['-created_at', 'order']
 		constraints = [
 			models.UniqueConstraint(
-				fields=['institution', 'subject', 'text_hash'],
-				condition=models.Q(is_deleted=False, subject__isnull=False) & ~models.Q(text_hash=''),
+				fields=['institution', 'subject', 'active_hash'],
 				name='unique_active_question_per_inst_subject_hash',
 			),
 			models.CheckConstraint(
@@ -302,6 +302,13 @@ class Question(models.Model):
 			models.Index(fields=['institution', 'department', 'status', 'is_deleted']),
 			models.Index(fields=['exam', 'order']),
 		]
+
+	def save(self, *args, **kwargs):
+		if not self.is_deleted and self.subject_id is not None and self.text_hash:
+			self.active_hash = self.text_hash
+		else:
+			self.active_hash = None
+		super().save(*args, **kwargs)
 
 	def __str__(self):
 		return f"Q{self.id} ({self.get_question_type_display()}): {self.text[:40]}"

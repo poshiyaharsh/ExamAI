@@ -224,17 +224,17 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
                 return Response({'saved': True, 'count': len(validated_items)})
 
             except OperationalError as exc:
-                err_msg = str(exc).lower()
-                if 'database is locked' in err_msg or 'database table is locked' in err_msg:
+                from .utils.db_retry import is_lock_or_deadlock
+                if is_lock_or_deadlock(exc):
                     if attempt_idx < max_retries - 1:
                         sleep_time = (0.1 * (2 ** attempt_idx)) + random.uniform(0.02, 0.08)
                         logger.warning(
-                            'SQLite database locked on save answer, retrying in %.3fs (retry %d/%d)',
-                            sleep_time, attempt_idx + 1, max_retries
+                            'Database lock/deadlock on save answer, retrying in %.3fs (retry %d/%d): %s',
+                            sleep_time, attempt_idx + 1, max_retries, exc
                         )
                         time.sleep(sleep_time)
                         continue
-                    logger.error('SQLite database locked after %d retries on save answer attempt_id=%s', max_retries, attempt_id)
+                    logger.error('Database lock/deadlock after %d retries on save answer attempt_id=%s', max_retries, attempt_id)
                     return Response(
                         {'detail': 'Database busy, please retry.'},
                         status=status.HTTP_503_SERVICE_UNAVAILABLE,
