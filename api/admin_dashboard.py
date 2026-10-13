@@ -1,5 +1,6 @@
 import datetime
 import logging
+from django.core.cache import cache
 from django.db.models import Avg, Count, ExpressionWrapper, F, FloatField, Q
 from django.utils import timezone
 from rest_framework import status
@@ -14,6 +15,7 @@ from .utils.scoring import PASSING_PERCENTAGE
 from admins.models import AdminInstitution
 from faculty.models import FacultyProfile
 from students.models import StudentProfile
+from api.tenant import get_tenant_cache_key, get_user_institution
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,20 @@ class AdminDashboardView(APIView):
             exams_qs = exams_qs.filter(department__iexact=dept_param)
 
         range_param = request.query_params.get('range', 'all').strip().lower()
+
+        cache_key = None
+        try:
+            cache_key = get_tenant_cache_key(
+                institution.id,
+                f"admin_dashboard:dept_{dept_param.lower() or 'all'}:range_{range_param or 'all'}"
+            )
+            if request.query_params.get('refresh') != 'true':
+                cached_payload = cache.get(cache_key)
+                if cached_payload is not None:
+                    return Response(cached_payload)
+        except Exception as e:
+            logger.warning(f"Dashboard cache lookup failed: {e}")
+
         range_start = None
         if range_param == '7d':
             range_start = now - datetime.timedelta(days=7)
@@ -144,20 +160,33 @@ class AdminDashboardView(APIView):
             'new_attempts_this_week': new_attempts_this_week,
         }
 
-        # 4. Ongoing Exams (strictly institution-scoped live metrics)
+        # 4. Ongoing Exams (strictly institution-scoped live metrics, showing at most 6)
         from api.exams.eligibility import compute_batch_live_exam_metrics
 
-        ongoing_qs = filtered_exams.filter(
+        all_live_qs = exams_qs.filter(
             status=Exam.Status.PUBLISHED
         ).filter(
             Q(starts_at__isnull=True) | Q(starts_at__lte=now),
             Q(ends_at__isnull=True) | Q(ends_at__gt=now),
-        ).order_by('ends_at', '-created_at')[:10]
+        )
+        live_total = all_live_qs.count()
+
+        # Database query slice to at most 6 exams, ordered by most recently started (-starts_at, -id)
+        shown_live_qs = all_live_qs.order_by(
+            F('starts_at').desc(nulls_last=True),
+            '-id',
+        )[:6]
+        shown_live_exams = list(shown_live_qs)
+        shown_count = len(shown_live_exams)
+        has_more = live_total > shown_count
+
+        all_live_exams_list = list(all_live_qs) if has_more else shown_live_exams
 
         ongoing_exams_list, live_summary = compute_batch_live_exam_metrics(
-            exams=list(ongoing_qs),
+            exams=shown_live_exams,
             institution=institution,
             now=now,
+            all_live_exams=all_live_exams_list,
         )
         stats_data.update({
             'live_exams_count': live_summary['live_exams_count'],
@@ -446,12 +475,15 @@ class AdminDashboardView(APIView):
             'institution_code': institution.institution_code if institution else '',
         }
 
-        return Response({
+        response_payload = {
             'status': 'success',
             'data': {
                 'profile': profile_data,
                 'stats': stats_data,
                 'live_summary': live_summary,
+                'live_total': live_total,
+                'shown_count': shown_count,
+                'has_more': has_more,
                 'ongoing_exams': ongoing_exams_list,
                 'upcoming_exams': upcoming_exams_list,
                 'department_overview': dept_overview,
@@ -467,7 +499,15 @@ class AdminDashboardView(APIView):
                 'pending_actions': pending_actions,
                 'departments': DEFAULT_DEPARTMENT_NAMES,
             }
-        })
+        }
+
+        if cache_key:
+            try:
+                cache.set(cache_key, response_payload, timeout=20)
+            except Exception as e:
+                logger.warning(f"Dashboard cache write failed: {e}")
+
+        return Response(response_payload)
 
 
 class LiveRosterView(APIView):

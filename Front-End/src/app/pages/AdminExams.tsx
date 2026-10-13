@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import {
   FileText,
@@ -38,6 +39,8 @@ type StatusColorMap = {
 
 function getStatusBadgeStyle(status: string): StatusColorMap {
   switch (status.toLowerCase()) {
+    case "live":
+      return { bg: "bg-emerald-100 text-emerald-800", text: "text-emerald-800", border: "border-emerald-300" };
     case "published":
       return { bg: "bg-emerald-50 text-emerald-700", text: "text-emerald-700", border: "border-emerald-200" };
     case "draft":
@@ -77,12 +80,33 @@ export function AdminExams() {
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [facultyFilter, setFacultyFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "all");
   const [subjectFilter, setSubjectFilter] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+
+  useEffect(() => {
+    const urlStatus = searchParams.get("status") || "all";
+    if (urlStatus !== statusFilter) {
+      setStatusFilter(urlStatus);
+      setPage(1);
+    }
+  }, [searchParams]);
+
+  const handleStatusChange = (newStatus: string) => {
+    setStatusFilter(newStatus);
+    setPage(1);
+    const newParams = new URLSearchParams(searchParams);
+    if (newStatus === "all") {
+      newParams.delete("status");
+    } else {
+      newParams.set("status", newStatus);
+    }
+    setSearchParams(newParams);
+  };
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -234,6 +258,9 @@ export function AdminExams() {
     setStartDate("");
     setEndDate("");
     setPage(1);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete("status");
+    setSearchParams(newParams);
   };
 
   const hasActiveFilters = useMemo(() => {
@@ -338,13 +365,11 @@ export function AdminExams() {
             <div className="w-full sm:w-48">
               <select
                 value={statusFilter}
-                onChange={(e) => {
-                  setStatusFilter(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => handleStatusChange(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all text-foreground"
               >
                 <option value="all">All Statuses</option>
+                <option value="live">Live / Active Now</option>
                 <option value="published">Published</option>
                 <option value="draft">Draft</option>
                 <option value="closed">Closed / Completed</option>

@@ -1388,6 +1388,7 @@ export type AdminExamListResponse = {
     published_exams: number;
     draft_exams: number;
     created_this_week: number;
+    live_exams?: number;
   };
   filter_options: {
     faculties: { id: number; name: string; email: string }[];
@@ -1483,6 +1484,8 @@ export type LiveRosterStudent = {
   student_id: string;
   user_id: number;
   name: string;
+  full_name?: string;
+  roll_number?: string;
   email: string;
   department: string;
   status: 'not_started' | 'in_progress' | 'submitted';
@@ -1495,6 +1498,9 @@ export type IneligibleAttempt = {
   student_id: string;
   user_id: number;
   name: string;
+  student_name?: string;
+  student_roll?: string;
+  attempt_id?: number | string;
   email: string;
   department: string;
   status: string;
@@ -1618,6 +1624,9 @@ export type AdminDashboardData = {
   profile: AdminDashboardProfile;
   stats: AdminDashboardStats;
   live_summary?: AdminLiveSummary;
+  live_total?: number;
+  shown_count?: number;
+  has_more?: boolean;
   ongoing_exams: AdminOngoingExam[];
   upcoming_exams: AdminUpcomingExam[];
   department_overview: AdminDepartmentOverview[];

@@ -940,12 +940,15 @@ class AdminExamsAPIView(APIView):
                 )
             )
 
+            from api.exams.eligibility import live_exams_queryset
+
             now = timezone.now()
             week_ago = now - datetime.timedelta(days=7)
             total_exams = base_queryset.count()
             published_exams = base_queryset.filter(status=Exam.Status.PUBLISHED).count()
             draft_exams = base_queryset.filter(status=Exam.Status.DRAFT).count()
             created_this_week = base_queryset.filter(created_at__gte=week_ago).count()
+            live_exams_count = live_exams_queryset(institution, now).count()
 
             faculty_list = []
             seen_faculty_ids = set()
@@ -1008,7 +1011,10 @@ class AdminExamsAPIView(APIView):
 
             status_filter = request.query_params.get('status', '').strip().lower()
             if status_filter and status_filter != 'all':
-                if status_filter == 'completed':
+                if status_filter == 'live':
+                    live_ids = live_exams_queryset(institution, now).values_list('id', flat=True)
+                    queryset = queryset.filter(id__in=live_ids)
+                elif status_filter == 'completed':
                     queryset = queryset.filter(status=Exam.Status.CLOSED)
                 else:
                     queryset = queryset.filter(status__iexact=status_filter)
@@ -1027,17 +1033,27 @@ class AdminExamsAPIView(APIView):
                 except Exception:
                     pass
 
-            sort = request.query_params.get('sort', '-created_at').strip()
+            sort = request.query_params.get('sort', '').strip()
+            if not sort:
+                sort = '-starts_at' if status_filter == 'live' else '-created_at'
+
             valid_sort_fields = {
                 '-created_at', 'created_at',
+                '-starts_at', 'starts_at',
                 '-title', 'title',
                 '-total_marks', 'total_marks',
                 '-duration_minutes', 'duration_minutes',
                 '-status', 'status',
             }
             if sort not in valid_sort_fields:
-                sort = '-created_at'
-            queryset = queryset.order_by(sort, '-id')
+                sort = '-starts_at' if status_filter == 'live' else '-created_at'
+
+            if sort == '-starts_at':
+                queryset = queryset.order_by(F('starts_at').desc(nulls_last=True), '-id')
+            elif sort == 'starts_at':
+                queryset = queryset.order_by(F('starts_at').asc(nulls_first=True), '-id')
+            else:
+                queryset = queryset.order_by(sort, '-id')
 
             filtered_count = queryset.count()
             try:
@@ -1072,6 +1088,7 @@ class AdminExamsAPIView(APIView):
                         'published_exams': published_exams,
                         'draft_exams': draft_exams,
                         'created_this_week': created_this_week,
+                        'live_exams': live_exams_count,
                     },
                     'filter_options': {
                         'faculties': faculty_list,
@@ -1079,6 +1096,7 @@ class AdminExamsAPIView(APIView):
                         'subjects': distinct_subjects,
                         'statuses': [
                             {'value': 'all', 'label': 'All Statuses'},
+                            {'value': 'live', 'label': 'Live / Active Now'},
                             {'value': 'published', 'label': 'Published'},
                             {'value': 'draft', 'label': 'Draft'},
                             {'value': 'closed', 'label': 'Closed / Completed'},

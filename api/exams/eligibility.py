@@ -194,14 +194,18 @@ def compute_batch_live_exam_metrics(
     exams: List[Exam],
     institution: Any,
     now: Optional[datetime] = None,
+    all_live_exams: Optional[List[Exam]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Computes live metrics for a list of exams in CONSTANT DATABASE QUERIES (O(1) queries).
+    If all_live_exams is provided, summary totals (live_exams_count, total_eligible_unique, etc.)
+    are aggregated across all_live_exams, while metrics_list is returned for the shown exams.
     Returns:
         (exams_metrics_list, summary_totals_dict)
     """
     now = now or timezone.now()
-    if not exams:
+    summary_source = all_live_exams if all_live_exams is not None else exams
+    if not exams and not summary_source:
         return [], {
             'live_exams_count': 0,
             'total_eligible_unique': 0,
@@ -227,29 +231,54 @@ def compute_batch_live_exam_metrics(
         students_by_dept.setdefault(d, []).append(sp)
 
     # Query 2: Fetch all attempts for these exams in ONE query
-    exam_ids = [e.id for e in exams]
+    needed_exam_ids = list({e.id for e in (exams + summary_source)})
     all_attempts = list(
         StudentAttempt.objects.filter(
-            exam_id__in=exam_ids,
+            exam_id__in=needed_exam_ids,
         ).values('exam_id', 'student_id', 'status')
-    )
+    ) if needed_exam_ids else []
 
     attempts_by_exam: Dict[int, List[Dict[str, Any]]] = {}
     for att in all_attempts:
         attempts_by_exam.setdefault(att['exam_id'], []).append(att)
 
-    metrics_list: List[Dict[str, Any]] = []
+    # Compute summary totals across summary_source (all live exams in institution)
     unique_eligible_users: Set[int] = set()
     total_in_progress = 0
     total_submitted = 0
     total_not_started = 0
 
-    for e in exams:
+    for e in summary_source:
         dept_key = get_exam_canonical_department(e).lower()
         dept_students = students_by_dept.get(dept_key, [])
         eligible_count = len(dept_students)
         eligible_user_ids = {s.user_id for s in dept_students}
         unique_eligible_users.update(eligible_user_ids)
+
+        e_attempts = attempts_by_exam.get(e.id, [])
+        submitted_cnt = 0
+        in_prog_cnt = 0
+        for att in e_attempts:
+            s_id = att['student_id']
+            st = att['status']
+            if s_id in eligible_user_ids:
+                if st in COMPLETED_STATUSES:
+                    submitted_cnt += 1
+                elif st == StudentAttempt.Status.IN_PROGRESS:
+                    in_prog_cnt += 1
+
+        not_started_cnt = max(0, eligible_count - (submitted_cnt + in_prog_cnt))
+        total_in_progress += in_prog_cnt
+        total_submitted += submitted_cnt
+        total_not_started += not_started_cnt
+
+    # Compute detailed metrics list for the shown exams
+    metrics_list: List[Dict[str, Any]] = []
+    for e in exams:
+        dept_key = get_exam_canonical_department(e).lower()
+        dept_students = students_by_dept.get(dept_key, [])
+        eligible_count = len(dept_students)
+        eligible_user_ids = {s.user_id for s in dept_students}
 
         e_attempts = attempts_by_exam.get(e.id, [])
         submitted_cnt = 0
@@ -268,11 +297,6 @@ def compute_batch_live_exam_metrics(
                 inelig_att += 1
 
         not_started_cnt = max(0, eligible_count - (submitted_cnt + in_prog_cnt))
-
-        total_in_progress += in_prog_cnt
-        total_submitted += submitted_cnt
-        total_not_started += not_started_cnt
-
         part_pct = round((submitted_cnt / eligible_count) * 100.0, 1) if eligible_count > 0 else 0.0
 
         seconds_remaining = None
@@ -302,7 +326,7 @@ def compute_batch_live_exam_metrics(
         })
 
     summary = {
-        'live_exams_count': len(metrics_list),
+        'live_exams_count': len(summary_source),
         'total_eligible_unique': len(unique_eligible_users),
         'total_in_progress': total_in_progress,
         'total_submitted': total_submitted,

@@ -392,3 +392,247 @@ class AdminLiveExamsIsolationTestCase(TestCase):
         batch_map = {item['id']: item for item in batch_results}
         self.assertEqual(batch_map[self.live_exam_a.id]['eligible_count'], 3)
         self.assertEqual(live_summary['live_exams_count'], 5)
+
+    def test_10_dashboard_limits_to_6_when_15_live_exams_and_orders_desc(self):
+        """Test 10: 15 live exams returns strictly 6, live_total=15, has_more=True,
+        and ordered by starts_at descending."""
+        # Remove live_exam_a to have exactly 15 clean live exams
+        Exam.objects.filter(institution=self.inst_a).delete()
+        cache.clear()
+
+        # Create 15 live exams with staggered starts_at
+        created_exams = []
+        for i in range(15):
+            e = Exam.objects.create(
+                institution=self.inst_a,
+                title=f'Live Exam #{i+1:02d}',
+                created_by=self.fac_user_a,
+                department='Computer Science',
+                duration_minutes=60,
+                total_marks=100,
+                starts_at=self.now - timedelta(minutes=15 - i),  # #15 started most recently (-0m), #01 started 15m ago
+                ends_at=self.now + timedelta(minutes=45 + i),
+                status=Exam.Status.PUBLISHED,
+            )
+            created_exams.append(e)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_admin_a}')
+        res = self.client.get('/api/admin/dashboard/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        data = res.data.get('data', res.data)
+
+        ongoing = data.get('ongoing_exams', [])
+        # Strictly limited to 6
+        self.assertEqual(len(ongoing), 6)
+        self.assertEqual(data.get('live_total'), 15)
+        self.assertEqual(data.get('shown_count'), 6)
+        self.assertTrue(data.get('has_more'))
+
+        # Check ordering: most recently started first (#15, #14, #13, #12, #11, #10)
+        expected_titles = [f'Live Exam #{i:02d}' for i in range(15, 9, -1)]
+        actual_titles = [item['title'] for item in ongoing]
+        self.assertEqual(actual_titles, expected_titles)
+
+        # live_summary must reflect all 15 live exams
+        summary = data.get('live_summary', {})
+        self.assertEqual(summary.get('live_exams_count'), 15)
+        self.assertEqual(summary.get('total_eligible_unique'), 3)
+
+    def test_11_dashboard_exact_counts_and_boundaries(self):
+        """Test 11: Boundaries: 6 exams (has_more=False), 3 exams (has_more=False),
+        0 exams (has_more=False), 7 exams (has_more=True)."""
+        Exam.objects.filter(institution=self.inst_a).delete()
+        cache.clear()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_admin_a}')
+
+        # Case 0 exams
+        res0 = self.client.get('/api/admin/dashboard/')
+        data0 = res0.data.get('data', res0.data)
+        self.assertEqual(len(data0.get('ongoing_exams', [])), 0)
+        self.assertEqual(data0.get('live_total'), 0)
+        self.assertEqual(data0.get('shown_count'), 0)
+        self.assertFalse(data0.get('has_more'))
+
+        # Case 3 exams
+        cache.clear()
+        for i in range(3):
+            Exam.objects.create(
+                institution=self.inst_a,
+                title=f'Exam 3-{i}',
+                created_by=self.fac_user_a,
+                department='Computer Science',
+                duration_minutes=60,
+                total_marks=50,
+                starts_at=self.now - timedelta(minutes=5),
+                ends_at=self.now + timedelta(minutes=55),
+                status=Exam.Status.PUBLISHED,
+            )
+        res3 = self.client.get('/api/admin/dashboard/')
+        data3 = res3.data.get('data', res3.data)
+        self.assertEqual(len(data3.get('ongoing_exams', [])), 3)
+        self.assertEqual(data3.get('live_total'), 3)
+        self.assertEqual(data3.get('shown_count'), 3)
+        self.assertFalse(data3.get('has_more'))
+
+        # Case 6 exams
+        cache.clear()
+        for i in range(3, 6):
+            Exam.objects.create(
+                institution=self.inst_a,
+                title=f'Exam 6-{i}',
+                created_by=self.fac_user_a,
+                department='Computer Science',
+                duration_minutes=60,
+                total_marks=50,
+                starts_at=self.now - timedelta(minutes=5),
+                ends_at=self.now + timedelta(minutes=55),
+                status=Exam.Status.PUBLISHED,
+            )
+        res6 = self.client.get('/api/admin/dashboard/')
+        data6 = res6.data.get('data', res6.data)
+        self.assertEqual(len(data6.get('ongoing_exams', [])), 6)
+        self.assertEqual(data6.get('live_total'), 6)
+        self.assertEqual(data6.get('shown_count'), 6)
+        self.assertFalse(data6.get('has_more'))
+
+        # Case 7 exams
+        cache.clear()
+        Exam.objects.create(
+            institution=self.inst_a,
+            title='Exam 7th',
+            created_by=self.fac_user_a,
+            department='Computer Science',
+            duration_minutes=60,
+            total_marks=50,
+            starts_at=self.now - timedelta(minutes=1),
+            ends_at=self.now + timedelta(minutes=59),
+            status=Exam.Status.PUBLISHED,
+        )
+        res7 = self.client.get('/api/admin/dashboard/')
+        data7 = res7.data.get('data', res7.data)
+        self.assertEqual(len(data7.get('ongoing_exams', [])), 6)
+        self.assertEqual(data7.get('live_total'), 7)
+        self.assertEqual(data7.get('shown_count'), 6)
+        self.assertTrue(data7.get('has_more'))
+
+    def test_12_admin_exams_manager_live_status_filter_sync(self):
+        """Test 12: Admin Exams Manager endpoint (/api/admin/exams/?status=live) returns
+        all live exams for the institution, strictly tenant-isolated, matching live_total."""
+        Exam.objects.filter(institution=self.inst_a).delete()
+        cache.clear()
+
+        # Create 8 live exams in Inst A
+        for i in range(8):
+            Exam.objects.create(
+                institution=self.inst_a,
+                title=f'Live A #{i}',
+                created_by=self.fac_user_a,
+                department='Computer Science',
+                duration_minutes=60,
+                total_marks=100,
+                starts_at=self.now - timedelta(minutes=10),
+                ends_at=self.now + timedelta(minutes=50),
+                status=Exam.Status.PUBLISHED,
+            )
+        # Create 1 draft exam and 1 past exam in Inst A
+        Exam.objects.create(
+            institution=self.inst_a,
+            title='Draft Exam A',
+            created_by=self.fac_user_a,
+            department='Computer Science',
+            duration_minutes=60,
+            total_marks=100,
+            starts_at=self.now - timedelta(minutes=10),
+            ends_at=self.now + timedelta(minutes=50),
+            status=Exam.Status.DRAFT,
+        )
+        Exam.objects.create(
+            institution=self.inst_a,
+            title='Past Exam A',
+            created_by=self.fac_user_a,
+            department='Computer Science',
+            duration_minutes=60,
+            total_marks=100,
+            starts_at=self.now - timedelta(hours=5),
+            ends_at=self.now - timedelta(hours=4),
+            status=Exam.Status.PUBLISHED,
+        )
+        # Create 1 live exam in Inst B (should NEVER appear for Admin A)
+        Exam.objects.create(
+            institution=self.inst_b,
+            title='Live Exam B',
+            created_by=self.fac_user_b,
+            department='Computer Science',
+            duration_minutes=60,
+            total_marks=100,
+            starts_at=self.now - timedelta(minutes=10),
+            ends_at=self.now + timedelta(minutes=50),
+            status=Exam.Status.PUBLISHED,
+        )
+
+        # 1. Dashboard reports live_total = 8
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_admin_a}')
+        res_dash = self.client.get('/api/admin/dashboard/')
+        data_dash = res_dash.data.get('data', res_dash.data)
+        self.assertEqual(data_dash.get('live_total'), 8)
+        self.assertEqual(data_dash.get('shown_count'), 6)
+        self.assertTrue(data_dash.get('has_more'))
+
+        # 2. Exam Manager with ?status=live returns all 8
+        res_mgr = self.client.get('/api/admin/exams/?status=live&page_size=20')
+        self.assertEqual(res_mgr.status_code, status.HTTP_200_OK)
+        mgr_data = res_mgr.data
+        self.assertEqual(mgr_data['pagination']['total_count'], 8)
+        self.assertEqual(len(mgr_data['data']), 8)
+        # Verify all 8 are live Inst A exams
+        for item in mgr_data['data']:
+            self.assertTrue(item['title'].startswith('Live A #'))
+            self.assertEqual(item['department'], 'Computer Science')
+
+        # Admin B querying ?status=live gets strictly Inst B live exams (1 exam)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_admin_b}')
+        res_mgr_b = self.client.get('/api/admin/exams/?status=live')
+        self.assertEqual(res_mgr_b.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_mgr_b.data['pagination']['total_count'], 1)
+        self.assertEqual(res_mgr_b.data['data'][0]['title'], 'Live Exam B')
+
+    def test_13_cache_invalidation_on_attempt_lifecycle(self):
+        """Test 13: Tenant cache is invalidated immediately when student attempt is saved."""
+        cache.clear()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_admin_a}')
+
+        # 1. First fetch populates cache
+        res1 = self.client.get('/api/admin/dashboard/')
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        summary1 = res1.data.get('data', res1.data).get('live_summary', {})
+        self.assertEqual(summary1.get('total_submitted'), 0)
+        self.assertEqual(summary1.get('total_in_progress'), 0)
+
+        # 2. Student starts attempt -> bump_tenant_cache_version
+        att = StudentAttempt.objects.create(
+            exam=self.live_exam_a,
+            institution=self.inst_a,
+            student=self.stu_a1,
+            status=StudentAttempt.Status.IN_PROGRESS,
+            started_at=self.now,
+        )
+
+        # 3. Next fetch reflects the new in_progress count
+        res2 = self.client.get('/api/admin/dashboard/')
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        summary2 = res2.data.get('data', res2.data).get('live_summary', {})
+        self.assertEqual(summary2.get('total_in_progress'), 1)
+
+        # 4. Student submits attempt -> bump_tenant_cache_version
+        att.status = StudentAttempt.Status.SUBMITTED
+        att.submitted_at = timezone.now()
+        att.total_score = 90
+        att.save()
+
+        # 5. Next fetch reflects the new submitted count
+        res3 = self.client.get('/api/admin/dashboard/')
+        self.assertEqual(res3.status_code, status.HTTP_200_OK)
+        summary3 = res3.data.get('data', res3.data).get('live_summary', {})
+        self.assertEqual(summary3.get('total_submitted'), 1)
+        self.assertEqual(summary3.get('total_in_progress'), 0)
+

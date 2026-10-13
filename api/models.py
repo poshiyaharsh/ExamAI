@@ -404,6 +404,26 @@ class StudentAttempt(models.Model):
 			models.Index(fields=['institution', 'exam']),
 		]
 
+	def save(self, *args, **kwargs):
+		super().save(*args, **kwargs)
+		if self.institution_id:
+			try:
+				from api.tenant import bump_tenant_cache_version
+				bump_tenant_cache_version(self.institution_id)
+			except Exception:
+				pass
+
+	def delete(self, *args, **kwargs):
+		inst_id = self.institution_id
+		res = super().delete(*args, **kwargs)
+		if inst_id:
+			try:
+				from api.tenant import bump_tenant_cache_version
+				bump_tenant_cache_version(inst_id)
+			except Exception:
+				pass
+		return res
+
 
 class StudentAnswer(models.Model):
 	attempt = models.ForeignKey(StudentAttempt, on_delete=models.CASCADE, related_name='answers')
