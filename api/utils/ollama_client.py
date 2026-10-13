@@ -26,7 +26,7 @@ def call_ollama(model: str, prompt: str, timeout=180, temperature=0.4, num_predi
         },
     }
     if not _request_payload_logged:
-        logger.warning('Ollama request payload: %s', payload_data)
+        logger.debug('Ollama model configured: model=%s options=%s', model, payload_data['options'])
         _request_payload_logged = True
     payload = json.dumps(payload_data).encode('utf-8')
     request = Request(
