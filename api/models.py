@@ -68,6 +68,10 @@ class Exam(models.Model):
 	source_syllabus_text = models.TextField(blank=True, default='')
 	status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
 	error_message = models.TextField(blank=True, default='')
+	seed = models.PositiveIntegerField(null=True, blank=True)
+	request_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+	validation_report = models.JSONField(default=dict, blank=True)
+	is_immutable = models.BooleanField(default=False)
 	starts_at = models.DateTimeField(null=True, blank=True)
 	ends_at = models.DateTimeField(null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
@@ -107,6 +111,7 @@ class Exam(models.Model):
 		indexes = [
 			models.Index(fields=['institution', 'department', 'status']),
 			models.Index(fields=['institution', 'created_by']),
+			models.Index(fields=['institution', 'request_hash']),
 		]
 
 
@@ -294,6 +299,8 @@ class Question(models.Model):
 			models.Index(fields=['institution', 'question_type']),
 			models.Index(fields=['institution', 'created_at']),
 			models.Index(fields=['institution', 'exam']),
+			models.Index(fields=['institution', 'department', 'status', 'is_deleted']),
+			models.Index(fields=['exam', 'order']),
 		]
 
 	def __str__(self):

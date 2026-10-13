@@ -266,6 +266,10 @@ export type FacultyExam = {
   source_syllabus_text?: string;
   status: "generating" | "draft" | "failed" | "published" | "closed";
   error_message?: string;
+  seed?: number;
+  request_hash?: string;
+  is_immutable?: boolean;
+  validation_report?: any;
   starts_at: string | null;
   ends_at: string | null;
   created_at: string;
@@ -273,6 +277,12 @@ export type FacultyExam = {
   question_count?: number;
   attempts_count?: number;
   questions?: ExamQuestion[];
+  visibility?: {
+    can_publish: boolean;
+    student_count: number;
+    status_summary: string;
+    reasons: string[];
+  };
 };
 
 export type GenerateExamResponse = {
@@ -282,6 +292,22 @@ export type GenerateExamResponse = {
   requested_total_marks: number;
   actual_total_marks: number;
   warning?: string;
+  loaded_from_cache?: boolean;
+  validation_report?: {
+    passed: boolean;
+    errors: string[];
+    warnings: string[];
+    actual_total_marks: number;
+    actual_counts_by_type: Record<string, number>;
+    actual_difficulty_mix: Record<string, number>;
+    estimated_time_minutes: number;
+    duplicates_removed_count: number;
+    repeats_avoided_count: number;
+    relaxation_notices: string[];
+    generation_time_ms: number;
+    cached_hit: boolean;
+  };
+  exam?: FacultyExam;
 };
 
 export type StudentExam = {
@@ -1115,8 +1141,11 @@ export const facultyPaperApi = {
     topics: string[];
     questionTypes: string[];
     difficultyDistribution: Record<string, number>;
-    aiModel: AiModel;
-    syllabus: File;
+    aiModel?: AiModel;
+    syllabus?: File | null;
+    avoidRepeats?: boolean;
+    forceRegenerate?: boolean;
+    subjectId?: number;
   }): Promise<GenerateExamResponse> => {
     const formData = new FormData();
     formData.append("title", payload.title);
@@ -1125,12 +1154,12 @@ export const facultyPaperApi = {
     payload.topics.forEach((topic) => formData.append("topics", topic));
     payload.questionTypes.forEach((questionType) => formData.append("question_types", questionType));
     formData.append("difficulty_distribution", JSON.stringify(payload.difficultyDistribution));
-    console.log("[facultyPaperApi.generateExam] ai_model key", payload.aiModel);
-    formData.append("ai_model", payload.aiModel);
-    formData.append("syllabus", payload.syllabus);
-    for (const [key, value] of formData.entries()) {
-      console.log("[facultyPaperApi.generateExam] FormData entry", key, value instanceof File ? value.name : value);
-    }
+    if (payload.aiModel) formData.append("ai_model", payload.aiModel);
+    if (payload.syllabus) formData.append("syllabus", payload.syllabus);
+    formData.append("avoid_repeats", payload.avoidRepeats !== false ? "true" : "false");
+    if (payload.forceRegenerate) formData.append("force_regenerate", "true");
+    if (payload.subjectId) formData.append("subject_id", String(payload.subjectId));
+
     const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 190000,
@@ -1177,6 +1206,21 @@ export const facultyExamApi = {
   },
   publishExam: async (examId: number): Promise<FacultyExam> => {
     const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/publish/`, {});
+    return response.data;
+  },
+  shuffleExam: async (examId: number): Promise<FacultyExam> => {
+    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/shuffle/`, {});
+    return response.data;
+  },
+  swapQuestion: async (examId: number, questionId: number): Promise<{ question: ExamQuestion; validation_report: any }> => {
+    const response = await apiClient.post<{ question: ExamQuestion; validation_report: any }>(
+      `/api/faculty/exams/${examId}/questions/${questionId}/swap/`,
+      {}
+    );
+    return response.data;
+  },
+  clearPaperCache: async (): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.delete<{ status: string; message: string }>("/api/faculty/exams/cache/");
     return response.data;
   },
 };

@@ -1,7 +1,15 @@
 from django.urls import include, path
 
 from .admin_dashboard import AdminDashboardView
-from .exam_management import ExamDetailView, ExamListView, PublishExamView, QuestionUpdateView
+from .exam_management import (
+    ClearFacultyPaperCacheView,
+    ExamDetailView,
+    ExamListView,
+    PublishExamView,
+    QuestionUpdateView,
+    ShuffleExamView,
+    SwapQuestionView,
+)
 from .faculty_dashboard import FacultyDashboardView
 from .generate_paper import GeneratePaperView
 from .student_exam import (
@@ -37,9 +45,12 @@ urlpatterns = [
     path('admin/dashboard', AdminDashboardView.as_view(), name='api-admin-dashboard-no-slash'),
     path('admin/dashboard/', AdminDashboardView.as_view(), name='api-admin-dashboard'),
     path('admin/question-bank/', include('api.urls_question_bank')),
+    path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
+    path('faculty/exams/<int:exam_id>/shuffle/', ShuffleExamView.as_view(), name='faculty-exam-shuffle'),
+    path('faculty/exams/<int:exam_id>/questions/<int:question_id>/swap/', SwapQuestionView.as_view(), name='faculty-exam-question-swap'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
     path('faculty/dashboard', FacultyDashboardView.as_view(), name='faculty-dashboard-no-slash'),

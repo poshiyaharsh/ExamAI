@@ -90,6 +90,8 @@ export function FacultyGeneratePaper() {
   const [error, setError] = useState("");
   const [previewPaper, setPreviewPaper] = useState<GeneratedPaper | null>(null);
   const [generationSource, setGenerationSource] = useState<{ provider: string; model: string } | null>(null);
+  const [avoidRepeats, setAvoidRepeats] = useState(true);
+  const [forceRegenerate, setForceRegenerate] = useState(false);
   const activeRequestRef = useRef(false);
 
   useEffect(() => {
@@ -207,7 +209,6 @@ export function FacultyGeneratePaper() {
     if (difficultyMix.Easy + difficultyMix.Medium + difficultyMix.Hard !== 100) {
       return "Difficulty percentages must equal exactly 100%.";
     }
-    if (!syllabusFile) return "Please upload a syllabus file.";
     if (syllabusFile) {
       const lowerName = syllabusFile.name.toLowerCase();
       if (!lowerName.endsWith(".pdf") && !lowerName.endsWith(".docx")) {
@@ -250,28 +251,10 @@ export function FacultyGeneratePaper() {
     setIsGenerating(true);
     activeRequestRef.current = true;
     setError("");
-    setGenerationProgress(5);
+    setGenerationProgress(15);
 
     try {
-      if (!syllabusFile) {
-        throw new Error("Please upload a syllabus file.");
-      }
-      setGenerationProgress(25);
-      const payloadSummary = {
-        title: examTitle.trim(),
-        duration_minutes: Number(duration),
-        total_marks: Number(totalMarks),
-        topics: cleanTopics,
-        question_types: selectedQuestionTypeValues,
-        difficulty_distribution: {
-          easy: difficultyMix.Easy,
-          medium: difficultyMix.Medium,
-          hard: difficultyMix.Hard,
-        },
-        ai_model: aiModel,
-        syllabus: syllabusFile.name,
-      };
-      console.log("[GeneratePaper] POST payload", payloadSummary);
+      setGenerationProgress(45);
       const response = await facultyPaperApi.generateExam({
         title: examTitle.trim(),
         durationMinutes: Number(duration),
@@ -285,14 +268,29 @@ export function FacultyGeneratePaper() {
         },
         aiModel,
         syllabus: syllabusFile,
+        avoidRepeats,
+        forceRegenerate,
       });
+
       setGenerationProgress(100);
-      toast.success(`Generation started for ${response.requested_total_marks} marks.`);
-      navigate(`/faculty/exams/${response.exam_id}/generating`);
-    } catch (requestError) {
-      const message = requestError instanceof Error && !axios.isAxiosError(requestError)
+
+      if (response.status === "draft") {
+        if (response.loaded_from_cache) {
+          toast.success("Loaded paper instantly from cache (<200 ms)!");
+        } else {
+          toast.success(`Generated paper with ${response.question_count || "all"} unique questions!`);
+        }
+        navigate(`/faculty/exams/${response.exam_id}/edit`);
+      } else {
+        toast.info("Paper generation started in background...");
+        navigate(`/faculty/exams/${response.exam_id}/generating`);
+      }
+    } catch (requestError: any) {
+      const respData = requestError?.response?.data;
+      const detailMsg = respData?.detail || respData?.message;
+      const message = detailMsg || (requestError instanceof Error && !axios.isAxiosError(requestError)
         ? requestError.message
-        : extractApiErrorMessage(requestError, "Unable to generate paper.");
+        : extractApiErrorMessage(requestError, "Unable to generate paper."));
       setError(message);
       toast.error(message);
     } finally {
@@ -552,6 +550,45 @@ export function FacultyGeneratePaper() {
               </div>
             )}
 
+            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border space-y-3">
+              <h3 className="font-semibold text-foreground text-sm">Quality & Deduplication Settings</h3>
+              <label className="flex items-center gap-2.5 text-xs sm:text-sm text-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={avoidRepeats}
+                  onChange={(e) => setAvoidRepeats(e.target.checked)}
+                  className="rounded border-border text-primary focus:ring-primary w-4 h-4"
+                />
+                <span>Avoid repeating questions from my recent papers (last 3 papers / 30 days)</span>
+              </label>
+              <label className="flex items-center gap-2.5 text-xs sm:text-sm text-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={forceRegenerate}
+                  onChange={(e) => setForceRegenerate(e.target.checked)}
+                  className="rounded border-border text-primary focus:ring-primary w-4 h-4"
+                />
+                <span>Bypass cache (force fresh in-memory generation)</span>
+              </label>
+              <div className="pt-2 border-t border-border flex justify-between items-center text-xs">
+                <span className="text-muted-foreground">Cached papers load in &lt; 200 ms</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await facultyExamApi.clearPaperCache();
+                      toast.success("Cached papers cleared!");
+                    } catch {
+                      toast.error("Failed to clear cache");
+                    }
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                >
+                  Clear My Paper Cache
+                </button>
+              </div>
+            </div>
+
             {error && <p className="text-xs sm:text-sm text-destructive font-medium">{error}</p>}
 
             <button
@@ -560,7 +597,7 @@ export function FacultyGeneratePaper() {
               className="w-full px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Sparkles className="w-4 h-4" />
-              {isGenerating ? `Generating with ${aiModel}… this can take up to a minute.` : "Generate Paper"}
+              {isGenerating ? "Generating paper..." : "Generate Paper"}
             </button>
           </div>
         </div>

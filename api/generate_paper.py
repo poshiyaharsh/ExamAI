@@ -4,7 +4,7 @@ import threading
 
 from django.db import transaction
 from rest_framework import status
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -230,13 +230,16 @@ def _run_generation(exam_id, model_name, topics, question_types, total_marks, di
 
 class GeneratePaperView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
-        safe_payload = {
-            key: [value.name if hasattr(value, 'name') else value for value in values]
-            for key, values in request.data.lists()
-        }
+        if hasattr(request.data, 'lists'):
+            safe_payload = {
+                key: [value.name if hasattr(value, 'name') else value for value in values]
+                for key, values in request.data.lists()
+            }
+        else:
+            safe_payload = dict(request.data)
         logger.debug('Received payload: %s', safe_payload)
         logger.debug('Received files: %s', {key: value.name for key, value in request.FILES.items()})
         try:
@@ -252,7 +255,7 @@ class GeneratePaperView(APIView):
                 raise ValueError('title, duration_minutes, and total_marks must be valid positive values.')
             if not topics or not question_types:
                 raise ValueError('topics and question_types are required.')
-            if model_name not in MODEL_MAP:
+            if model_name and model_name not in MODEL_MAP:
                 raise ValueError('ai_model must be qwen2.5-3b, llama3.2-3b, or phi3-mini.')
         except (TypeError, ValueError) as exc:
             logger.warning('GeneratePaperView rejected payload: %s', exc)
@@ -296,6 +299,59 @@ class GeneratePaperView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        idempotency_key = request.headers.get('Idempotency-Key') or request.data.get('idempotency_key')
+        force_regenerate = str(request.data.get('force_regenerate', '')).lower() in ('true', '1', 'yes')
+        avoid_repeats = str(request.data.get('avoid_repeats', 'true')).lower() not in ('false', '0', 'no')
+
+        engine_payload = {
+            'title': title,
+            'duration_minutes': duration_minutes,
+            'total_marks': total_marks,
+            'topics': topics,
+            'question_types': question_types,
+            'difficulty_distribution': difficulty_distribution,
+            'department': assigned_dept,
+            'avoid_repeats': avoid_repeats,
+        }
+
+        from api.paper_engine.generator import generate_exam_paper
+        from api.paper_engine.pool import PoolExhaustedError
+
+        # Fast path: in-memory / cached generation from Question Bank
+        try:
+            exam_data, from_cache = generate_exam_paper(
+                payload=engine_payload,
+                user=request.user,
+                tenant=tenant_inst,
+                force_regenerate=force_regenerate,
+                idempotency_key=idempotency_key,
+            )
+            return Response(
+                {
+                    'exam_id': exam_data['id'],
+                    'status': 'draft',
+                    'question_count': len(exam_data.get('questions', [])),
+                    'requested_total_marks': total_marks,
+                    'actual_total_marks': exam_data.get('total_marks', total_marks),
+                    'loaded_from_cache': from_cache,
+                    'validation_report': exam_data.get('validation_report'),
+                    'exam': exam_data,
+                },
+                status=status.HTTP_200_OK if from_cache else status.HTTP_201_CREATED,
+            )
+        except PoolExhaustedError as pool_err:
+            logger.info("Candidate pool exhausted for fast generation: %s. Checking AI fallback.", pool_err)
+            # If no AI model or syllabus provided, return clear 422 error immediately
+            if not model_name or model_name not in MODEL_MAP:
+                return Response(
+                    {
+                        'detail': pool_err.message,
+                        'details': pool_err.details,
+                    },
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+
+        # AI Fallback: initialize Exam and start threaded AI generation
         try:
             exam = Exam.objects.create(
                 institution=tenant_inst,
@@ -311,8 +367,8 @@ class GeneratePaperView(APIView):
                 source_syllabus_text=syllabus_text,
                 status=Exam.Status.GENERATING,
             )
-            from api.tenant import bump_tenant_cache_version
-            bump_tenant_cache_version(tenant_inst.id)
+            from api.paper_engine.cache import PaperCacheService
+            PaperCacheService.invalidate_tenant_pools_and_papers(tenant_inst.id)
         except Exception as exc:
             logger.exception('Generated paper could not be initialized')
             return Response(
@@ -333,6 +389,7 @@ class GeneratePaperView(APIView):
                 'question_count': 0,
                 'requested_total_marks': total_marks,
                 'actual_total_marks': total_marks,
+                'loaded_from_cache': False,
             },
             status=status.HTTP_202_ACCEPTED,
         )

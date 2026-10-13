@@ -120,7 +120,8 @@ class ExamListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
-            'status', 'error_message', 'starts_at', 'ends_at', 'created_at', 'updated_at',
+            'status', 'error_message', 'seed', 'request_hash', 'is_immutable',
+            'starts_at', 'ends_at', 'created_at', 'updated_at',
             'question_count', 'attempts_count',
         )
 
@@ -134,7 +135,8 @@ class ExamDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'starts_at', 'ends_at',
-            'error_message', 'created_at', 'updated_at', 'questions',
+            'error_message', 'seed', 'request_hash', 'validation_report', 'is_immutable',
+            'created_at', 'updated_at', 'questions',
         )
         read_only_fields = ('id', 'ai_model_used', 'source_syllabus_text', 'created_at', 'updated_at', 'questions')
 
