@@ -19,6 +19,9 @@ data_exact.json
 *.backup*
 *.json.bak
 *.log
+backups/
+*.sql.gz
+*.sql
 .venv/
 venv/
 env/
