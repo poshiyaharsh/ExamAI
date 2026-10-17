@@ -5,6 +5,7 @@ import { DashboardLayout } from "../components/DashboardLayout";
 import { LayoutDashboard, FileText, History, Settings, Upload, Plus, Trash2, Sparkles, Download } from "lucide-react";
 import { toast } from "sonner";
 import {
+  facultyExamApi,
   facultyPaperApi,
   type AiModel,
   type GeneratedPaper,
@@ -43,10 +44,10 @@ function extractApiErrorMessage(error: unknown, fallback: string) {
   if (data && typeof data === "object" && "message" in data && typeof data.message === "string") {
     if ("failures" in data && Array.isArray(data.failures)) {
       const details = data.failures
-        .filter((failure): failure is { provider: string; reason: string } => (
+        .filter((failure: any): failure is { provider: string; reason: string } => (
           Boolean(failure) && typeof failure === "object" && "provider" in failure && "reason" in failure
         ))
-        .map((failure) => `${failure.provider}: ${failure.reason}`)
+        .map((failure: { provider: string; reason: string }) => `${failure.provider}: ${failure.reason}`)
         .join(". ");
       return details ? `${data.message} ${details}` : data.message;
     }
@@ -163,7 +164,8 @@ export function FacultyGeneratePaper() {
   const selectedQuestionTypeValues = useMemo(
     () => Object.entries(questionTypes)
       .filter(([, selected]) => selected)
-      .map(([key]) => ({ mcq: "mcq", subjective: "subjective", trueFalse: "truefalse", fillBlanks: "fillblank" }[key])),
+      .map(([key]) => ({ mcq: "mcq", subjective: "subjective", trueFalse: "truefalse", fillBlanks: "fillblank" }[key]))
+      .filter((v): v is string => Boolean(v)),
     [questionTypes]
   );
 
