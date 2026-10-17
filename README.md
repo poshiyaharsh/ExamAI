@@ -1,9 +1,9 @@
 # ExamAI — Multi-Tenant Intelligent Examination Platform
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![Django](https://img.shields.io/badge/Django-6.0.3-092E20?logo=django&logoColor=white)](https://www.djangoproject.com/)
-[![DRF](https://img.shields.io/badge/DRF-3.17.0-red)](https://www.django-rest-framework.org/)
-[![MySQL](https://img.shields.io/badge/MySQL-8.4%20LTS-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
+[![Django](https://img.shields.io/badge/Django-5.2%20LTS-092E20?logo=django&logoColor=white)](https://www.djangoproject.com/)
+[![DRF](https://img.shields.io/badge/DRF-3.18.3-red)](https://www.django-rest-framework.org/)
+[![Database](https://img.shields.io/badge/Database-MySQL%20%7C%20MariaDB%20%7C%20SQLite-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com/)
 [![React](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.1.12-38B2AC?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
@@ -129,8 +129,8 @@ Traditional educational examination systems suffer from three pervasive challeng
 | Technology | Version | Description |
 | :--- | :--- | :--- |
 | **Python** | `3.12+` | Core programming language |
-| **Django** | `6.0.3` | High-level web framework |
-| **Django REST Framework** | `3.17.0` | Toolkit for building robust REST APIs |
+| **Django** | `5.2 LTS` | High-level web framework (with MariaDB 10.4+ / MySQL 8.x / SQLite support) |
+| **Django REST Framework** | `3.18.3` | Toolkit for building robust REST APIs |
 | **SimpleJWT** | `5.5.1` | JSON Web Token authentication with token rotation & blacklist |
 | **django-cors-headers** | `4.9.0` | Cross-Origin Resource Sharing handling |
 | **python-dotenv** | `1.0.1` | Environment variable management from `.env` |
@@ -176,7 +176,7 @@ flowchart TD
         Queue -.->|"POST /api/token/refresh/"| Axios
     end
 
-    subgraph Backend["Django 6.0 REST Framework"]
+    subgraph Backend["Django 5.2 LTS REST Framework"]
         Auth["TenantJWTAuthentication"]
         Mixin["TenantScopedMixin"]
         Cache["LocMemCache / Redis Layer"]
@@ -458,15 +458,25 @@ Located in [`scripts/`](file:///e:/03%20Study/Django/Mini-Project/scripts):
    *Inspects MySQL server version, charset, collation, isolation level, thread count, and record counts.*
 2. **Data Integrity Verification**:
    ```bash
-   python scripts/verify_mysql_migration.py
+   python scripts/verify_migration.py
    ```
    *Cross-examines SQLite vs MySQL row counts, tenant distribution, checksums, and foreign key integrity.*
-3. **Sequence Counter Reset**:
+3. **Row Count Logger**:
+   ```bash
+   python scripts/record_counts.py counts.txt
+   ```
+   *Records exact per-model row counts across all apps using the Django ORM.*
+4. **Sequence Counter Reset**:
    ```bash
    python scripts/reset_auto_increment.py
    ```
    *Resets `AUTO_INCREMENT` across all tables to `MAX(id) + 1` to prevent primary key collisions.*
-4. **Query Plan Analyzer**:
+5. **Windows MySQL Service Fix Utility**:
+   ```cmd
+   scripts/fix_mysql.bat
+   ```
+   *One-click administrator batch script to align the Windows service path with MySQL Server 8.4.*
+6. **Query Plan Analyzer**:
    ```bash
    python scripts/explain_queries.py
    ```

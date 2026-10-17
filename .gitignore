@@ -22,6 +22,8 @@ data_exact.json
 backups/
 *.sql.gz
 *.sql
+counts*.txt
+counts_*.txt
 .venv/
 venv/
 env/

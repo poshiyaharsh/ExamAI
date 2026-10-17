@@ -8,9 +8,7 @@ load_dotenv(BASE_DIR / '.env')
 
 host = os.getenv('DB_HOST', '127.0.0.1')
 user = os.getenv('DB_USER', 'examai_user')
-password = os.getenv('DB_PASSWORD')
-if not password:
-    raise RuntimeError("DB_PASSWORD environment variable must be configured in .env.")
+password = os.getenv('DB_PASSWORD', '')
 db_name = os.getenv('DB_NAME', 'examai')
 port = int(os.getenv('DB_PORT', '3306'))
 
