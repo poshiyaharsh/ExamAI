@@ -329,7 +329,11 @@ def swap_single_question(
         target_q.text_hash = replacement.text_hash
         target_q.topic_text = replacement.topic
         target_q.marks = Decimal(str(replacement.marks))
-        target_q.save(update_fields=["text", "text_hash", "topic_text", "marks", "updated_at"])
+        target_q.model_answer = getattr(replacement, 'model_answer', '') or ''
+        target_q.correct_answer = replacement.correct_answer
+        target_q.options = [o.get("text", "") if isinstance(o, dict) else str(o) for o in (replacement.options or [])] if replacement.options else None
+        target_q.save(update_fields=["text", "text_hash", "topic_text", "marks", "model_answer", "correct_answer", "options", "updated_at"])
+
 
         # Replace options
         target_q.option_items.all().delete()

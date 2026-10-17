@@ -47,10 +47,10 @@ Rules:
 - Generate EXACTLY {counts.get('mcq', 0)} mcq questions, EXACTLY {counts.get('truefalse', 0)} truefalse questions, EXACTLY {counts.get('fillblank', 0)} fillblank questions, EXACTLY {counts.get('subjective', 0)} subjective questions. Do not generate more or fewer of any type.
 - Do not decide question counts or marks yourself. Always set mcq, truefalse, and fillblank marks to 1, and subjective marks to 10.
 - Use only the allowed question types and topics.
-- MCQ and fillblank questions require exactly 4 option strings, labeled conceptually A/B/C/D, and correct_answer must be one of "A", "B", "C", or "D" for the correct option position.
+- MCQ and fillblank questions require exactly 4 unique option strings without leading labels (e.g. ["Option 1", "Option 2", "Option 3", "Option 4"]). NEVER prefix options with letter labels like "A.", "B.", "1.", etc. All 4 options must be completely distinct. correct_answer must be one of "A", "B", "C", or "D" for the 0-based option position (A=first, B=second, C=third, D=fourth).
 - True/false questions must use options exactly ["True", "False"], where A means True and B means False, and correct_answer must be "A" or "B".
-- Fill-in-the-blank questions must mark the blank in the text and provide one correct option plus three plausible distractors.
-- Subjective questions must have no options and must provide a model_answer instead.
+- Fill-in-the-blank questions must mark the blank with ___ in the text and provide one correct option plus three plausible distractors as 4 distinct options.
+- Subjective questions (10 marks) must have options: null and correct_answer: null, and must provide a comprehensive, high-scoring model_answer (250-450 words) with clear definitions, detailed architectural/technical explanations, bullet points, and real-world examples. Never provide a single-keyword or truncated placeholder.
 - Base every question only on the syllabus text and allowed topics.
 - Return JSON only. Do not include commentary, explanations, markdown, or code fences.
 
@@ -69,11 +69,23 @@ def build_type_generation_prompt(
 ):
     syllabus_excerpt = (syllabus_text or '')[:6000]
     if question_type == 'truefalse':
-        option_rules = 'Use options exactly ["True", "False"]. correct_answer must be "A" for True or "B" for False.'
+        option_rules = 'Use options exactly ["True", "False"]. correct_answer must be "A" for True or "B" for False. model_answer must be null.'
     elif question_type in {'mcq', 'fillblank'}:
-        option_rules = 'Use exactly 4 option strings. correct_answer must be one of "A", "B", "C", or "D" for the correct option position.'
+        option_rules = (
+            'Use exactly 4 unique option strings. NEVER prefix options with letter labels like "A.", "B.", "1.", etc. '
+            'All 4 options must be completely distinct and non-empty. '
+            'correct_answer must be one of "A", "B", "C", or "D" for the option position. '
+            'model_answer must be null.'
+        )
     else:
-        option_rules = 'Use no options and provide a useful model_answer.'
+        option_rules = (
+            'Use options: null and correct_answer: null. '
+            'You MUST provide a comprehensive model_answer (250-450 words) containing: '
+            '1) Definition & core principles, '
+            '2) Detailed architectural or conceptual breakdown with bullet points, '
+            '3) Concrete practical / cloud computing example. '
+            'Never write a short placeholder or single keyword.'
+        )
 
     return f"""Generate exactly {count} {question_type} questions as one JSON object and nothing else.
 
@@ -86,8 +98,8 @@ Required JSON shape:
       "topic": "topic name",
       "text": "question text",
       "options": ["option 1", "option 2", "option 3", "option 4"] or null,
-      "correct_answer": "A|B|C|D",
-      "model_answer": "model answer for subjective questions",
+      "correct_answer": "A|B|C|D" or null,
+      "model_answer": "comprehensive 250-450 word model answer for subjective questions" or null,
       "marks": {marks_per_question}
     }}
   ]
@@ -105,6 +117,28 @@ Rules:
 Syllabus text:
 {syllabus_excerpt}
 """
+
+
+def build_subjective_answer_prompt(question_text, marks=10, syllabus_text=""):
+    return f"""You are a university professor preparing the official marking key and model answer for an exam.
+Write a comprehensive, high-scoring academic model answer for this {marks}-mark subjective question:
+
+Question:
+{question_text}
+
+Syllabus Context (if applicable):
+{(syllabus_text or '')[:3000]}
+
+Requirements:
+- Length: 250 to 450 words.
+- Structure:
+  1. Introduction / Definition: Clear statement of concepts and principles.
+  2. Core Explanation / Architecture: Detailed breakdown with bullet points covering key mechanisms.
+  3. Real-world Example / Application: Practical scenario illustrating the concept.
+  4. Summary of Key Evaluation Criteria: 3-5 core points an examiner must look for.
+- Output: Return ONLY the comprehensive model answer text without markdown code fences or meta commentary.
+"""
+
 
 
 def build_evaluation_prompt(question_text, model_answer, student_answer, max_marks):

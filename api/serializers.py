@@ -168,6 +168,8 @@ class QuestionUpdateSerializer(serializers.ModelSerializer):
 
 class StudentQuestionSerializer(serializers.ModelSerializer):
     topic = serializers.SerializerMethodField()
+    options = serializers.SerializerMethodField()
+    marks = serializers.SerializerMethodField()
 
     class Meta:
         model = Question
@@ -176,13 +178,33 @@ class StudentQuestionSerializer(serializers.ModelSerializer):
     def get_topic(self, obj):
         return obj.topic.name if obj.topic else (obj.topic_text or '')
 
+    def get_options(self, obj):
+        if not obj.options:
+            return []
+        from .utils.options import clean_options_list
+        return clean_options_list(obj.options)
+
+    def get_marks(self, obj):
+        try:
+            return float(obj.marks) if obj.marks is not None else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
 
 class StudentExamSerializer(serializers.ModelSerializer):
     questions = StudentQuestionSerializer(many=True, read_only=True)
+    total_marks = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
         fields = ('id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at', 'questions')
+
+    def get_total_marks(self, obj):
+        try:
+            return float(obj.total_marks) if obj.total_marks is not None else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
 
 
 class StudentAnswerSerializer(serializers.ModelSerializer):

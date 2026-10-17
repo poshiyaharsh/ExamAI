@@ -253,27 +253,46 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
 
     def _post(self, request, attempt_id):
         from api.tenant import get_user_institution
+        from django.db import transaction
+
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
         if not tenant:
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant).select_related('exam').prefetch_related('answers__question').first()
-        if not attempt:
-            return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
-        from .utils.departments import check_student_exam_access
-        allowed, reason = check_student_exam_access(request.user, attempt.exam)
-        if not allowed:
-            return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
+        with transaction.atomic():
+            attempt = (
+                StudentAttempt.objects.select_for_update()
+                .filter(id=attempt_id, student=request.user, institution=tenant)
+                .select_related('exam', 'institution')
+                .first()
+            )
+            if not attempt:
+                return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if attempt.status != StudentAttempt.Status.IN_PROGRESS:
-            return Response({'detail': 'This attempt has already been submitted.'}, status=status.HTTP_400_BAD_REQUEST)
+            from .utils.departments import check_student_exam_access
+            allowed, reason = check_student_exam_access(request.user, attempt.exam)
+            if not allowed:
+                return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
 
-        now = timezone.now()
-        auto_submitted = now >= _deadline(attempt)
-        from .utils.scoring import calculate_and_save_attempt_score
-        calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
+            # Idempotent response if already submitted
+            if attempt.status in {
+                StudentAttempt.Status.SUBMITTED,
+                StudentAttempt.Status.AUTO_SUBMITTED,
+                StudentAttempt.Status.EVALUATED,
+            }:
+                return Response(StudentAttemptSerializer(attempt).data, status=status.HTTP_200_OK)
 
-        return Response(StudentAttemptSerializer(attempt).data)
+            if attempt.status != StudentAttempt.Status.IN_PROGRESS:
+                return Response({'detail': 'This attempt cannot be submitted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            now = timezone.now()
+            auto_submitted = now >= _deadline(attempt)
+            from .utils.scoring import calculate_and_save_attempt_score
+            calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
+
+        attempt.refresh_from_db()
+        return Response(StudentAttemptSerializer(attempt).data, status=status.HTTP_200_OK)
+
 
 
 class StudentAttemptDetailView(StudentExamPermissionMixin, APIView):

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from .options import clean_option_text, clean_options_list, validate_mcq_options
 
 
 VALID_TYPES = {'mcq', 'truefalse', 'fillblank', 'subjective'}
@@ -24,8 +25,9 @@ def _normalise_correct_answer(question_type, raw_answer, options):
         answer = str(raw_answer or '').strip()
         if answer.upper() in OPTION_LABELS:
             return answer.upper()
+        norm_answer = clean_option_text(answer).casefold()
         for index, option in enumerate(options or []):
-            if answer.casefold() == str(option).strip().casefold():
+            if norm_answer == clean_option_text(option).casefold():
                 return OPTION_LABELS[index]
     return raw_answer
 
@@ -71,8 +73,23 @@ def validate_and_fix_paper(data, expected_total_marks=None):
         options = raw_question.get('options')
         if question_type not in VALID_TYPES or difficulty not in VALID_DIFFICULTIES or not text:
             continue
-        if question_type in {'mcq', 'fillblank'} and (not isinstance(options, list) or len(options) != 4):
-            continue
+
+        cleaned_options = None
+        if question_type in {'mcq', 'fillblank'}:
+            if not isinstance(options, list) or len(options) != 4:
+                continue
+            is_valid_opts, _ = validate_mcq_options(options, raw_question.get('correct_answer'))
+            if not is_valid_opts:
+                continue
+            cleaned_options = clean_options_list(options)
+        elif question_type == 'truefalse':
+            cleaned_options = ['True', 'False']
+
+        model_answer = ""
+        if question_type == 'subjective':
+            model_answer = str(raw_question.get('model_answer') or '').strip()
+            if not model_answer and raw_question.get('correct_answer'):
+                model_answer = str(raw_question.get('correct_answer') or '').strip()
 
         question = deepcopy(raw_question)
         question.update({
@@ -80,9 +97,8 @@ def validate_and_fix_paper(data, expected_total_marks=None):
             'difficulty': difficulty,
             'text': text,
             'marks': 10 if question_type == 'subjective' else 1,
-            'options': None if question_type == 'subjective' else (
-                ['True', 'False'] if question_type == 'truefalse' else options
-            ),
+            'options': cleaned_options,
+            'model_answer': model_answer,
         })
         question['correct_answer'] = _normalise_correct_answer(
             question_type,
@@ -99,3 +115,4 @@ def validate_and_fix_paper(data, expected_total_marks=None):
     actual_total_marks = sum(question['marks'] for question in valid_questions)
     fixed_data['total_marks'] = actual_total_marks
     return fixed_data, actual_total_marks
+

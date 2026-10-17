@@ -110,6 +110,7 @@ class CandidateQuestion:
         marks: float = 1.0,
         options: Optional[List[Any]] = None,
         correct_answer: Any = None,
+        model_answer: str = "",
         text_hash: str = "",
         raw_obj: Any = None,
     ):
@@ -125,6 +126,7 @@ class CandidateQuestion:
         self.options = options or []
         self.normalized_options: FrozenSet[str] = frozenset(normalize_option_texts(self.options))
         self.correct_answer = correct_answer
+        self.model_answer = model_answer or ""
         self.shingles = get_character_shingles(self.text, k=3)
         self.word_tokens = get_word_tokens(self.text)
         self.char_length = len(self.normalized_text)
@@ -164,6 +166,7 @@ class CandidateQuestion:
             marks=float(q.marks),
             options=opts,
             correct_answer=q.correct_answer,
+            model_answer=getattr(q, "model_answer", "") or "",
             text_hash=q.text_hash or compute_text_hash(q.text),
             raw_obj=q,
         )
@@ -180,6 +183,7 @@ class CandidateQuestion:
             marks=float(data.get("marks") or 1.0),
             options=data.get("options") or [],
             correct_answer=data.get("correct_answer") or data.get("answer"),
+            model_answer=data.get("model_answer") or "",
             text_hash=data.get("text_hash") or "",
             raw_obj=data,
         )

@@ -27,6 +27,16 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unable to submit the exam.";
 }
 
+function cleanOptionText(text: string | null | undefined): string {
+  if (!text) return "";
+  return String(text).replace(/^\s*(?:\(?[A-Da-d0-9]\)?[\.\)\:\-]\s*|\(?[A-Da-d0-9]\)\s*)/, "").trim() || String(text).trim();
+}
+
+function formatMarks(val: number | string | undefined | null): string {
+  const num = Number(val) || 0;
+  return Number.isInteger(num) ? num.toString() : num.toFixed(2).replace(/\.?0+$/, "");
+}
+
 export function TakeExamPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -55,10 +65,14 @@ export function TakeExamPage() {
   const questions = session?.exam.questions ?? [];
   const currentQuestion = questions[currentIndex];
   const answeredCount = questions.filter((question) => Boolean(answers[question.id]?.trim())).length;
-  const answeredMarks = questions.reduce((total, question) => total + (answers[question.id]?.trim() ? question.marks : 0), 0);
-  const currentOptions = currentQuestion?.question_type === "truefalse"
+  const answeredMarks = questions.reduce(
+    (total, question) => total + (answers[question.id]?.trim() ? (Number(question.marks) || 0) : 0),
+    0
+  );
+  const currentOptions = (currentQuestion?.question_type === "truefalse"
     ? ["True", "False"]
-    : currentQuestion?.options ?? [];
+    : currentQuestion?.options ?? []
+  ).map((opt) => cleanOptionText(opt));
 
   useEffect(() => {
     if (!session) return;
@@ -191,7 +205,7 @@ export function TakeExamPage() {
     <div className="min-h-screen bg-muted/30 pb-24">
       <header className="sticky top-0 z-20 border-b border-border bg-white shadow-sm">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div className="min-w-0"><h1 className="truncate font-semibold">{session.exam.title}</h1><p className="text-sm text-muted-foreground">Answered {answeredCount}/{questions.length} · {answeredMarks}/{session.exam.total_marks} marks</p></div>
+          <div className="min-w-0"><h1 className="truncate font-semibold">{session.exam.title}</h1><p className="text-sm text-muted-foreground">Answered {answeredCount}/{questions.length} · {formatMarks(answeredMarks)} of {formatMarks(session.exam.total_marks)} marks</p></div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">
               {saveState === "saving" ? (
@@ -245,33 +259,36 @@ export function TakeExamPage() {
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-primary/10 text-primary border border-primary/20 px-3 py-0.5 text-xs font-semibold">{typeLabel[currentQuestion.question_type]}</span>
-              <span className="rounded-full border border-border bg-muted/30 px-3 py-0.5 text-xs font-semibold text-foreground">Q{currentQuestion.order} · {currentQuestion.marks} {currentQuestion.marks === 1 ? "mark" : "marks"}</span>
+              <span className="rounded-full border border-border bg-muted/30 px-3 py-0.5 text-xs font-semibold text-foreground">Q{currentQuestion.order} · {formatMarks(currentQuestion.marks)} {Number(currentQuestion.marks) === 1 ? "mark" : "marks"}</span>
             </div>
             <span className="text-xs sm:text-sm text-muted-foreground">{currentIndex + 1} of {questions.length}</span>
           </div>
           <h2 className="text-base sm:text-lg font-medium leading-relaxed text-foreground">{currentQuestion.text}</h2>
           {currentQuestion.question_type === "mcq" || currentQuestion.question_type === "truefalse" || currentQuestion.question_type === "fillblank" ? (
             <div className="mt-7 space-y-3">
-              {currentOptions.map((option, index) => (
-                <label
-                  key={option}
-                  className={`flex cursor-pointer items-center gap-3.5 rounded-xl border-2 p-3.5 sm:p-4 transition-all ${
-                    answers[currentQuestion.id] === option ? "border-primary bg-primary/5 ring-1 ring-primary shadow-xs" : "border-border hover:border-primary/40 bg-white"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name={`question-${currentQuestion.id}`}
-                    checked={answers[currentQuestion.id] === option}
-                    onChange={() => setAnswer(currentQuestion.id, option)}
-                    className="sr-only"
-                  />
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold transition-all ${answers[currentQuestion.id] === option ? "bg-gradient-to-r from-primary to-secondary text-white" : "bg-muted text-muted-foreground"}`}>
-                    {optionLabels[index]})
-                  </span>
-                  <span className="text-sm font-medium text-foreground">{option}</span>
-                </label>
-              ))}
+              {currentOptions.map((option, index) => {
+                const isSelected = cleanOptionText(answers[currentQuestion.id] ?? "") === option;
+                return (
+                  <label
+                    key={`${index}-${option}`}
+                    className={`flex cursor-pointer items-center gap-3.5 rounded-xl border-2 p-3.5 sm:p-4 transition-all ${
+                      isSelected ? "border-primary bg-primary/5 ring-1 ring-primary shadow-xs" : "border-border hover:border-primary/40 bg-white"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name={`question-${currentQuestion.id}`}
+                      checked={isSelected}
+                      onChange={() => setAnswer(currentQuestion.id, option)}
+                      className="sr-only"
+                    />
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold transition-all ${isSelected ? "bg-gradient-to-r from-primary to-secondary text-white" : "bg-muted text-muted-foreground"}`}>
+                      {optionLabels[index]})
+                    </span>
+                    <span className="text-sm font-medium text-foreground">{option}</span>
+                  </label>
+                );
+              })}
             </div>
           ) : (
             <div className="mt-7">
