@@ -1,10 +1,15 @@
+import logging
+import time
 from django.db import close_old_connections, transaction
 
 from .models import StudentAnswer, StudentAttempt
-from .utils.evaluate import evaluate_subjective_answer
+from .utils.evaluation_service import evaluate_subjective_chain
+from api.utils.db_retry import is_lock_or_deadlock
+
+logger = logging.getLogger(__name__)
 
 
-def evaluate_attempt_subjectives(attempt_id):
+def evaluate_attempt_subjectives(attempt_id, force=False):
     close_old_connections()
     try:
         attempt = StudentAttempt.objects.select_related('exam').get(id=attempt_id)
@@ -13,32 +18,39 @@ def evaluate_attempt_subjectives(attempt_id):
             .filter(attempt=attempt, question__question_type='subjective')
         )
         for answer in answers:
-            if not answer.answer_text.strip():
-                answer.score_awarded = 0
-                answer.ai_feedback = 'No answer was submitted.'
-            else:
-                try:
-                    answer.score_awarded, answer.ai_feedback = evaluate_subjective_answer(
-                        answer.question,
-                        answer.answer_text,
-                        attempt.exam.ai_model_used,
-                    )
-                except Exception as exc:
-                    answer.score_awarded = 0
-                    answer.ai_feedback = f'Automatic evaluation failed: {exc}'
-            answer.save(update_fields=['score_awarded', 'ai_feedback'])
+            try:
+                evaluate_subjective_chain(answer, force=force)
+            except Exception as exc:
+                logger.exception("Evaluation error on answer ID=%s", answer.id)
+                answer.evaluation_status = StudentAnswer.EvaluationStatus.PENDING_REVIEW
+                answer.evaluation_provider = "pending"
+                answer.technical_error = f"Evaluation chain failed: {exc}"
+                answer.ai_feedback = "Answer submitted successfully. Pending teacher evaluation."
+                answer.save(update_fields=[
+                    'evaluation_status', 'evaluation_provider', 'technical_error', 'ai_feedback'
+                ])
 
-        import time
-        from api.utils.db_retry import is_lock_or_deadlock
         for attempt_idx in range(3):
             try:
                 with transaction.atomic():
                     attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
+                    all_answers = list(StudentAnswer.objects.select_related('question').filter(attempt=attempt))
                     attempt.total_score = sum(
-                        answer.score_awarded or 0
-                        for answer in StudentAnswer.objects.filter(attempt=attempt)
+                        (ans.score_awarded or 0.0)
+                        for ans in all_answers
                     )
-                    attempt.status = StudentAttempt.Status.EVALUATED
+                    has_pending = any(
+                        ans.evaluation_status in [
+                            StudentAnswer.EvaluationStatus.PENDING_REVIEW,
+                            StudentAnswer.EvaluationStatus.FAILED,
+                        ]
+                        for ans in all_answers
+                        if ans.question.question_type == 'subjective'
+                    )
+                    if has_pending:
+                        attempt.status = StudentAttempt.Status.SUBMITTED
+                    else:
+                        attempt.status = StudentAttempt.Status.EVALUATED
                     attempt.save(update_fields=['total_score', 'status'])
                 break
             except Exception as e:

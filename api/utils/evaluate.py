@@ -1,19 +1,22 @@
-from .ollama_client import call_ollama, parse_json_safely
-from .prompts import build_evaluation_prompt
+import logging
+from typing import Tuple
+from .evaluation_service import evaluate_with_ollama, evaluate_with_rules
+
+logger = logging.getLogger(__name__)
 
 
-def evaluate_subjective_answer(question, student_answer, ollama_model):
-    prompt = build_evaluation_prompt(
-        question.text,
-        question.model_answer,
-        student_answer,
-        question.marks,
+def evaluate_subjective_answer(question, student_answer, ollama_model=None) -> Tuple[float, str]:
+    """
+    Evaluates a subjective question against student answer using Ollama with automatic fallback.
+    Returns: (score, feedback)
+    """
+    success, score, feedback, _, _ = evaluate_with_ollama(
+        question=question,
+        student_answer=student_answer,
+        preferred_model=ollama_model,
     )
-    result = parse_json_safely(call_ollama(ollama_model, prompt))
-    try:
-        score = float(result.get('score', 0))
-    except (TypeError, ValueError):
-        score = 0
-    score = max(0, min(question.marks, score))
-    feedback = str(result.get('feedback', '')).strip()
-    return score, feedback
+    if success:
+        return score, feedback
+
+    # Fallback to rules provider
+    return evaluate_with_rules(question, student_answer)

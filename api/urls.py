@@ -12,6 +12,13 @@ from .exam_management import (
     SwapQuestionView,
 )
 from .faculty_dashboard import FacultyDashboardView
+from .faculty_evaluation import (
+    FacultyAttemptDetailView,
+    FacultyExamAttemptsListView,
+    FacultyManualGradeAnswerView,
+    FacultyReevaluateAnswerView,
+    FacultyReevaluateAttemptView,
+)
 from .generate_paper import GeneratePaperView
 from .student_exam import (
     SaveAnswerView,
@@ -55,6 +62,11 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/swap/', SwapQuestionView.as_view(), name='faculty-exam-question-swap'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
+    path('faculty/exams/<int:exam_id>/attempts/', FacultyExamAttemptsListView.as_view(), name='faculty-exam-attempts'),
+    path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
+    path('faculty/attempts/<int:attempt_id>/', FacultyAttemptDetailView.as_view(), name='faculty-attempt-detail'),
+    path('faculty/answers/<int:answer_id>/re-evaluate/', FacultyReevaluateAnswerView.as_view(), name='faculty-answer-reevaluate'),
+    path('faculty/answers/<int:answer_id>/manual-grade/', FacultyManualGradeAnswerView.as_view(), name='faculty-answer-manual-grade'),
     path('faculty/dashboard', FacultyDashboardView.as_view(), name='faculty-dashboard-no-slash'),
     path('faculty/dashboard/', FacultyDashboardView.as_view(), name='faculty-dashboard'),
     path('student/exams/', StudentExamListView.as_view(), name='student-exam-list'),

@@ -1234,6 +1234,26 @@ export const facultyExamApi = {
     const response = await apiClient.delete<{ status: string; message: string }>("/api/faculty/exams/cache/");
     return response.data;
   },
+  getExamAttempts: async (examId: number): Promise<{ exam_id: number; exam_title: string; attempts: any[] }> => {
+    const response = await apiClient.get<{ exam_id: number; exam_title: string; attempts: any[] }>(`/api/faculty/exams/${examId}/attempts/`);
+    return response.data;
+  },
+  getAttemptDetail: async (attemptId: number): Promise<any> => {
+    const response = await apiClient.get<any>(`/api/faculty/attempts/${attemptId}/`);
+    return response.data;
+  },
+  reevaluateAttempt: async (attemptId: number, force: boolean = false): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/re-evaluate/`, { force });
+    return response.data;
+  },
+  reevaluateAnswer: async (answerId: number, force: boolean = false): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/re-evaluate/`, { force });
+    return response.data;
+  },
+  manualGradeAnswer: async (answerId: number, score: number, feedback: string): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/manual-grade/`, { score, feedback });
+    return response.data;
+  },
 };
 
 export type AdminFacultyListResponse = {

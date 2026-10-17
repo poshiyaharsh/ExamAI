@@ -433,6 +433,13 @@ class StudentAttempt(models.Model):
 
 
 class StudentAnswer(models.Model):
+	class EvaluationStatus(models.TextChoices):
+		EVALUATED_AI = 'evaluated_ai', 'Evaluated (AI)'
+		EVALUATED_RULES = 'evaluated_rules', 'Evaluated (Rules)'
+		PENDING_REVIEW = 'pending_review', 'Pending Review'
+		FAILED = 'failed', 'Failed'
+		REVIEWED = 'reviewed', 'Reviewed (Teacher)'
+
 	attempt = models.ForeignKey(StudentAttempt, on_delete=models.CASCADE, related_name='answers')
 	institution = models.ForeignKey(
 		AdminInstitution,
@@ -445,6 +452,15 @@ class StudentAnswer(models.Model):
 	is_correct = models.BooleanField(null=True, blank=True)
 	score_awarded = models.FloatField(null=True, blank=True)
 	ai_feedback = models.TextField(blank=True, default='')
+	evaluation_status = models.CharField(
+		max_length=20,
+		choices=EvaluationStatus.choices,
+		default=EvaluationStatus.PENDING_REVIEW,
+		db_index=True,
+	)
+	evaluation_provider = models.CharField(max_length=50, blank=True, default='')
+	evaluation_model = models.CharField(max_length=100, blank=True, default='')
+	technical_error = models.TextField(blank=True, default='')
 
 	class Meta:
 		constraints = [
@@ -452,4 +468,6 @@ class StudentAnswer(models.Model):
 		]
 		indexes = [
 			models.Index(fields=['institution', 'attempt']),
+			models.Index(fields=['evaluation_status']),
 		]
+

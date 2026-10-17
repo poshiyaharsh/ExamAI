@@ -242,7 +242,10 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
 
     def get_ai_feedback(self, obj):
         if self._can_reveal_answers(obj):
-            return obj.ai_feedback
+            feedback = str(obj.ai_feedback or '').strip()
+            if 'Automatic evaluation failed' in feedback or 'HTTP 404' in feedback or 'Traceback' in feedback:
+                return 'Answer submitted successfully. Pending teacher evaluation.'
+            return feedback
         return ''
 
 
