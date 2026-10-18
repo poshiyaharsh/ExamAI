@@ -266,15 +266,25 @@ export type ExamQuestion = {
   source?: "ai_generated" | "manual";
   marks: number;
   topic: string;
+  source_evidence?: string;
+  needs_review?: boolean;
+  is_off_scope?: boolean;
+  scope_status?: "grounded" | "topic_matched" | "off_scope" | "manual";
+  scope_reason?: string;
 };
 
 export type FacultyExam = {
   id: number;
   title: string;
   department?: string;
+  subject?: string;
+  description?: string;
   duration_minutes: number;
   total_marks: number;
+  target_total_marks?: number;
+  marks_shortfall?: number;
   topics: string[];
+  source_documents?: Array<{ filename: string; pages?: number; char_count?: number }>;
   difficulty_distribution: Record<string, number>;
   question_types: string[];
   ai_model_used: string;
@@ -318,6 +328,11 @@ export type PaperGenerationJob = {
   current_step: string;
   error_message: string;
   warnings: string[];
+  target_marks?: number;
+  actual_marks?: number;
+  marks_shortfall?: number;
+  off_scope_rejected_count?: number;
+  source_documents?: any;
   question_count_requested: number;
   question_count_generated: number;
   is_cancelled: boolean;
@@ -370,9 +385,11 @@ export type StudentExam = {
   id: number;
   title: string;
   department?: string;
+  subject?: string;
   duration_minutes: number;
   total_marks: number;
   topics: string[];
+  question_count?: number;
   starts_at: string | null;
   ends_at: string | null;
   shuffle_questions?: boolean;
@@ -1271,6 +1288,23 @@ export const facultyPaperApi = {
     topics: string[];
     detected_topics_count: number;
     preview: string;
+    units?: Array<{
+      index: number;
+      title: string;
+      topics: string[];
+      page_start?: number;
+      page_end?: number;
+      char_count: number;
+    }>;
+    has_multiple_subjects?: boolean;
+    detected_domains?: string[];
+    capacity?: {
+      char_count: number;
+      unit_count: number;
+      recommended_max_questions: number;
+      recommended_max_marks: number;
+      is_limited: boolean;
+    };
   }> => {
     const formData = new FormData();
     formData.append("syllabus", file);
@@ -1280,6 +1314,23 @@ export const facultyPaperApi = {
       topics: string[];
       detected_topics_count: number;
       preview: string;
+      units?: Array<{
+        index: number;
+        title: string;
+        topics: string[];
+        page_start?: number;
+        page_end?: number;
+        char_count: number;
+      }>;
+      has_multiple_subjects?: boolean;
+      detected_domains?: string[];
+      capacity?: {
+        char_count: number;
+        unit_count: number;
+        recommended_max_questions: number;
+        recommended_max_marks: number;
+        is_limited: boolean;
+      };
     }>("/api/faculty/syllabus/parse/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 60000,
@@ -1299,6 +1350,8 @@ export const facultyPaperApi = {
     avoidRepeats?: boolean;
     forceRegenerate?: boolean;
     subjectId?: number;
+    subject?: string;
+    selectedTopics?: string[];
   }): Promise<GenerateExamResponse> => {
     const formData = new FormData();
     formData.append("title", payload.title);
@@ -1313,6 +1366,10 @@ export const facultyPaperApi = {
     formData.append("avoid_repeats", payload.avoidRepeats !== false ? "true" : "false");
     if (payload.forceRegenerate) formData.append("force_regenerate", "true");
     if (payload.subjectId) formData.append("subject_id", String(payload.subjectId));
+    if (payload.subject) formData.append("subject", payload.subject);
+    if (payload.selectedTopics && payload.selectedTopics.length) {
+      formData.append("selected_topics", JSON.stringify(payload.selectedTopics));
+    }
 
     const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -1373,8 +1430,87 @@ export const facultyExamApi = {
     const response = await apiClient.put<ExamQuestion>(`/api/faculty/exams/${examId}/questions/${questionId}/`, question);
     return response.data;
   },
-  publishExam: async (examId: number): Promise<FacultyExam> => {
-    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/publish/`, {});
+  publishExam: async (examId: number, confirmShortfall: boolean = false): Promise<FacultyExam> => {
+    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/publish/`, {
+      confirm_shortfall: confirmShortfall,
+    });
+    return response.data;
+  },
+  checkScope: async (
+    examId: number
+  ): Promise<{
+    exam_id: number;
+    total_questions: number;
+    in_scope_count: number;
+    off_scope_count: number;
+    source_documents: Array<{ filename: string; pages?: number; char_count?: number }>;
+    questions: Array<{
+      id: number;
+      text: string;
+      topic: string;
+      scope_status: "grounded" | "topic_matched" | "off_scope" | "manual";
+      is_off_scope: boolean;
+      scope_reason: string;
+    }>;
+  }> => {
+    const response = await apiClient.post<{
+      exam_id: number;
+      total_questions: number;
+      in_scope_count: number;
+      off_scope_count: number;
+      source_documents: Array<{ filename: string; pages?: number; char_count?: number }>;
+      questions: Array<{
+        id: number;
+        text: string;
+        topic: string;
+        scope_status: "grounded" | "topic_matched" | "off_scope" | "manual";
+        is_off_scope: boolean;
+        scope_reason: string;
+      }>;
+    }>(`/api/faculty/exams/${examId}/scope-check/`, {});
+    return response.data;
+  },
+  regenerateQuestion: async (
+    examId: number,
+    questionId: number,
+    model?: string
+  ): Promise<{ detail: string; question: ExamQuestion; validation_report: any }> => {
+    const response = await apiClient.post<{ detail: string; question: ExamQuestion; validation_report: any }>(
+      `/api/faculty/exams/${examId}/questions/${questionId}/regenerate/`,
+      { model }
+    );
+    return response.data;
+  },
+  adjustMarks: async (
+    examId: number,
+    action: "set_actual" | "preview_scale" | "scale_target",
+    targetMarks?: number
+  ): Promise<{
+    detail: string;
+    action: string;
+    exam: FacultyExam;
+    preview?: {
+      target_marks: number;
+      current_marks: number;
+      scaling_factor: number;
+      question_previews: Array<{
+        id: number;
+        current_marks: number;
+        scaled_marks: number;
+        question_type: string;
+        text: string;
+      }>;
+    };
+  }> => {
+    const response = await apiClient.post<{
+      detail: string;
+      action: string;
+      exam: FacultyExam;
+      preview?: any;
+    }>(`/api/faculty/exams/${examId}/adjust-marks/`, {
+      action,
+      target_marks: targetMarks,
+    });
     return response.data;
   },
   shuffleExam: async (examId: number): Promise<FacultyExam> => {
@@ -1630,6 +1766,9 @@ export type AdminExamItem = {
   topics: string[];
   duration_minutes: number;
   total_marks: number;
+  target_total_marks?: number;
+  marks_shortfall?: number;
+  source_documents?: Array<{ filename: string; pages?: number; char_count?: number }>;
   difficulty_distribution: Record<string, number>;
   question_types: string[];
   ai_model_used: string;

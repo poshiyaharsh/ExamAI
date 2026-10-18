@@ -322,4 +322,82 @@ def verify_grounding_evidence(source_evidence: str, syllabus_text: str) -> bool:
     return False
 
 
+def audit_question_scope(question_obj, syllabus_text: str, selected_topics: list = None) -> dict:
+    """
+    Verifies if a question is grounded in the syllabus text and matches selected topics.
+    Returns:
+    {
+        'in_scope': bool,
+        'reason': str,
+        'is_manual': bool,
+        'word_match_ratio': float,
+        'grounding_verified': bool,
+    }
+    """
+    if getattr(question_obj, 'source', '') == 'manual':
+        return {
+            'in_scope': True,
+            'reason': 'Manually authored question (excluded from scope check)',
+            'is_manual': True,
+            'word_match_ratio': 1.0,
+            'grounding_verified': True,
+        }
+
+    if not syllabus_text:
+        return {
+            'in_scope': True,
+            'reason': 'No syllabus document attached to exam',
+            'is_manual': False,
+            'word_match_ratio': 1.0,
+            'grounding_verified': True,
+        }
+
+    text = getattr(question_obj, 'text', '') or ''
+    ev = ""
+    if "Source evidence:" in text:
+        ev = text.split("Source evidence:")[1].split("(")[0].strip("' \"")
+    elif "source evidence" in text.lower():
+        ev = text.lower().split("source evidence")[1].strip(": '\"")
+
+    grounded = verify_grounding_evidence(ev, syllabus_text) if ev else False
+
+    # Check substantive words (words > 4 letters)
+    words = [w.lower().strip(".,:;?'\"()") for w in text.split() if len(w) > 4]
+    matched = [w for w in words if w in syllabus_text.lower()]
+    ratio = len(matched) / max(len(words), 1)
+
+    # Topic check: topic must be present in syllabus or selected_topics
+    topic = (getattr(question_obj, 'topic_text', '') or '').strip()
+    if selected_topics:
+        topic_in_doc = any(re.sub(r'\s+', ' ', topic).lower() == re.sub(r'\s+', ' ', str(t)).lower() for t in selected_topics)
+    elif topic:
+        clean_top = re.sub(r'\s+', ' ', topic).lower()
+        clean_syl = re.sub(r'\s+', ' ', syllabus_text).lower()
+        topic_in_doc = clean_top in clean_syl or any(w in clean_syl for w in clean_top.split() if len(w) > 4)
+    else:
+        topic_in_doc = True
+
+    # Support determination: must have topic in document AND (grounded or strong word match)
+    if not topic_in_doc:
+        is_supported = False
+        reason = f"Topic '{topic}' is not in the source document"
+    elif grounded:
+        is_supported = True
+        reason = "Grounded with verbatim source evidence quote"
+    elif ratio >= 0.60:
+        is_supported = True
+        reason = f"Supported by syllabus text ({int(ratio * 100)}% keyword match)"
+    else:
+        is_supported = False
+        reason = f"Insufficient syllabus grounding (only {int(ratio * 100)}% keyword match)"
+
+    return {
+        'in_scope': is_supported,
+        'reason': reason,
+        'is_manual': False,
+        'word_match_ratio': round(ratio, 2),
+        'grounding_verified': grounded,
+    }
+
+
 

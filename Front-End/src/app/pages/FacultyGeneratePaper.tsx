@@ -197,6 +197,23 @@ export function FacultyGeneratePaper() {
     topics: string[];
     detected_topics_count: number;
     preview: string;
+    units?: Array<{
+      index: number;
+      title: string;
+      topics: string[];
+      page_start?: number;
+      page_end?: number;
+      char_count: number;
+    }>;
+    has_multiple_subjects?: boolean;
+    detected_domains?: string[];
+    capacity?: {
+      char_count: number;
+      unit_count: number;
+      recommended_max_questions: number;
+      recommended_max_marks: number;
+      is_limited: boolean;
+    };
   } | null>(null);
   const [isParsingSyllabus, setIsParsingSyllabus] = useState(false);
   const [avoidRepeats, setAvoidRepeats] = useState(true);
@@ -397,19 +414,21 @@ export function FacultyGeneratePaper() {
     try {
       const res = await facultyPaperApi.parseSyllabus(file);
       setParsedSyllabus(res);
+      // Clean reset: populate topics strictly with newly uploaded document's detected units
+      // This prevents cross-exam state pollution (e.g., mixing Java and OS topics)
       if (res.topics && res.topics.length > 0) {
-        const existing = new Set(cleanTopics.map((t) => t.toLowerCase()));
-        const toAdd = res.topics.filter((t) => !existing.has(t.toLowerCase()));
-        if (toAdd.length > 0) {
-          setTopics((prev) => {
-            const base = prev.filter((t) => t.trim().length > 0);
-            return [...base, ...toAdd];
-          });
-        }
+        setTopics(res.topics);
       }
-      toast.success(
-        `Syllabus analyzed: ${res.char_count.toLocaleString()} characters extracted, ${res.detected_topics_count} units detected!`
-      );
+      if (res.has_multiple_subjects) {
+        toast.warning(
+          `Multiple subjects detected (${res.detected_domains?.join(", ") || "Mixed subjects"}). Please uncheck units that do NOT belong to this exam!`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.success(
+          `Syllabus analyzed: ${res.char_count.toLocaleString()} characters extracted, ${res.detected_topics_count} units detected!`
+        );
+      }
     } catch (err: any) {
       toast.error(extractApiErrorMessage(err, "Failed to extract syllabus content."));
     } finally {
@@ -496,6 +515,8 @@ export function FacultyGeneratePaper() {
         aiModel,
         syllabus: syllabusFile,
         avoidRepeats,
+        subject: subjectName.trim() || undefined,
+        selectedTopics: cleanTopics.length ? cleanTopics : undefined,
       });
 
       setGenerationProgress(100);
@@ -1014,11 +1035,58 @@ export function FacultyGeneratePaper() {
                     </label>
                   </div>
 
+                  {/* Multi-subject warning banner */}
+                  {parsedSyllabus.has_multiple_subjects && (
+                    <div className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                      <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="font-bold">Multiple Subjects Detected:</strong> Unrelated domains found (
+                        {parsedSyllabus.detected_domains?.join(", ") || "mixed"}). Please uncheck any units outside the scope of this exam. Questions are strictly scoped to the selected units only.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Capacity indicator */}
+                  {parsedSyllabus.capacity && (
+                    <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/60 px-3 py-2 text-xs text-blue-900">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">Content Depth:</span>
+                        <span>
+                          Supports ~{parsedSyllabus.capacity.recommended_max_questions} questions (~{parsedSyllabus.capacity.recommended_max_marks} marks)
+                        </span>
+                      </div>
+                      {blueprintSummary.blueprintMarks > parsedSyllabus.capacity.recommended_max_marks && (
+                        <span className="text-[11px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-md">
+                          Target exceeds estimated depth
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   {parsedSyllabus.topics && parsedSyllabus.topics.length > 0 && (
                     <div className="pt-2 border-t border-emerald-200/60">
-                      <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-2">
-                        Detected Units / Topics (Click to include/exclude)
-                      </label>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-[11px] font-semibold text-slate-600 uppercase">
+                          Scope Units / Chapters ({cleanTopics.length} of {parsedSyllabus.topics.length} selected)
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setTopics(parsedSyllabus.topics)}
+                            className="text-[11px] font-semibold text-blue-600 hover:underline"
+                          >
+                            Select All
+                          </button>
+                          <span className="text-slate-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => setTopics([])}
+                            className="text-[11px] font-semibold text-slate-500 hover:underline"
+                          >
+                            Clear All
+                          </button>
+                        </div>
+                      </div>
                       <div className="flex flex-wrap gap-1.5">
                         {parsedSyllabus.topics.map((t, tIdx) => {
                           const isIncluded = cleanTopics.some((ct) => ct.toLowerCase() === t.toLowerCase());

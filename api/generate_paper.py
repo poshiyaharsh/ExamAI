@@ -486,7 +486,16 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         if needs_review_count > 0:
             warnings.append(f"{needs_review_count} question(s) flagged for faculty review (grounding or length).")
 
-        actual_total_marks = sum(q['marks'] for q in generated_questions)
+        actual_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
+        target_marks = int(total_marks)
+        marks_shortfall = max(0, target_marks - actual_total_marks)
+
+        if marks_shortfall > 0:
+            has_shortfall = True
+            warnings.insert(
+                0,
+                f"Only {actual_total_marks} of {target_marks} marks were generated ({marks_shortfall} marks short). The selected document content did not contain enough material."
+            )
 
         # Step: Saving draft
         job.current_step = 'Saving draft paper'
@@ -563,10 +572,18 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                                 Option.objects.bulk_create(opts_to_create)
 
                     exam.total_marks = actual_total_marks
+                    exam.target_total_marks = target_marks
+                    exam.marks_shortfall = marks_shortfall
+
+                    # Scope Lock: exam topics list contains ONLY topics with at least one accepted question
+                    accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
+                    if accepted_topics:
+                        exam.topics = accepted_topics
+
                     exam.status = Exam.Status.DRAFT
                     exam.is_reviewed = False
                     exam.error_message = ''
-                    exam.save(update_fields=['total_marks', 'status', 'is_reviewed', 'error_message', 'updated_at'])
+                    exam.save(update_fields=['total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'status', 'is_reviewed', 'error_message', 'updated_at'])
                 break
             except Exception as e:
                 if is_lock_or_deadlock(e) and attempt_idx < 2:
@@ -581,11 +598,14 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         )
         job.status = final_status
         job.progress = 100
-        job.current_step = 'Completed with warnings' if (has_shortfall or warnings) else 'Paper generated successfully'
+        job.current_step = 'Completed with shortfall' if marks_shortfall > 0 else ('Completed with warnings' if warnings else 'Paper generated successfully')
         job.warnings = warnings
         job.question_count_generated = len(generated_questions)
+        job.target_marks = target_marks
+        job.actual_marks = actual_total_marks
+        job.marks_shortfall = marks_shortfall
         job.completed_at = timezone.now()
-        job.save(update_fields=['status', 'progress', 'current_step', 'warnings', 'question_count_generated', 'completed_at'])
+        job.save(update_fields=['status', 'progress', 'current_step', 'warnings', 'question_count_generated', 'target_marks', 'actual_marks', 'marks_shortfall', 'completed_at'])
 
         try:
             Notification.objects.create(
@@ -595,7 +615,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 message=(
                     f"Exam '{exam.title}' paper generated ({len(generated_questions)} questions)."
                     if not has_shortfall
-                    else f"Exam '{exam.title}' generated with warnings. Review the paper and generate any missing questions."
+                    else f"Exam '{exam.title}' generated with a {marks_shortfall}-mark shortfall ({actual_total_marks}/{target_marks} marks). Review the paper and choose how to proceed."
                 ),
                 notification_type=Notification.NotificationType.SUCCESS if not has_shortfall else Notification.NotificationType.WARNING,
                 link=f"/faculty/exams/{exam.id}/edit",
@@ -799,18 +819,50 @@ class GeneratePaperView(APIView):
             except Exception:
                 blueprint = None
 
-        try:
-            counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
-            expected_question_count = sum(counts.values())
+        counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
+        if blueprint and planned_total_marks != total_marks:
+            return Response(
+                {
+                    'detail': f"Blueprint marks ({planned_total_marks}) do not sum to target marks ({total_marks}). Adjust question counts or marks per question.",
+                    'blueprint_marks': planned_total_marks,
+                    'target_marks': total_marks,
+                    'mismatch': abs(total_marks - planned_total_marks),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        expected_question_count = sum(counts.values())
+
+        # Clean subject
+        raw_subj = str(request.data.get('subject') or '').strip()
+        if not raw_subj:
+            t_short = title.split(" - ")[0].split(" CH_")[0].split(" Ch_")[0].split(" Unit")[0].strip()
+            raw_subj = t_short[:60] if t_short else title[:60]
+
+        # Source documents
+        source_docs = []
+        if syllabus_file:
+            import hashlib
+            source_docs.append({
+                'filename': getattr(syllabus_file, 'name', 'syllabus'),
+                'file_hash': hashlib.sha256(syllabus_text.encode('utf-8')).hexdigest() if syllabus_text else '',
+                'char_count': len(syllabus_text),
+                'uploaded_at': timezone.now().isoformat(),
+            })
+
+        try:
             exam = Exam.objects.create(
                 institution=tenant_inst,
                 title=title,
+                subject=raw_subj[:80],
                 created_by=request.user,
                 department=assigned_dept,
                 duration_minutes=duration_minutes,
                 total_marks=total_marks,
+                target_total_marks=total_marks,
+                marks_shortfall=0,
                 topics=topics,
+                source_documents=source_docs,
                 difficulty_distribution=difficulty_distribution,
                 question_types=question_types,
                 ai_model_used=model_name,
@@ -831,6 +883,10 @@ class GeneratePaperView(APIView):
                 current_step='Queued',
                 progress=5,
                 question_count_requested=expected_question_count,
+                target_marks=total_marks,
+                actual_marks=0,
+                marks_shortfall=0,
+                source_documents=source_docs,
                 request_hash=str(request.data.get('request_hash') or ''),
             )
         except Exception as exc:
@@ -873,14 +929,26 @@ class ParseSyllabusView(APIView):
             return Response({'detail': 'No syllabus file provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            from .utils.extract_text import detect_syllabus_topics, extract_syllabus_text
-            text = extract_syllabus_text(syllabus_file)
-            topics = detect_syllabus_topics(text)
+            from .utils.extract_text import get_cached_syllabus_data
+            fn = getattr(syllabus_file, 'name', 'syllabus')
+            cached = get_cached_syllabus_data(syllabus_file, fn)
+            text = cached['text']
+            hierarchy = cached.get('hierarchy', {})
+            units = hierarchy.get('units', [])
+            has_multiple = hierarchy.get('has_multiple_subjects', False)
+            topics = cached.get('topics', [])
+            from .utils.extract_text import estimate_syllabus_capacity
+            capacity = estimate_syllabus_capacity(len(text), len(topics))
             return Response({
-                'filename': getattr(syllabus_file, 'name', 'syllabus'),
+                'filename': fn,
+                'file_hash': cached.get('hash', ''),
                 'char_count': len(text),
+                'units': units,
+                'has_multiple_subjects': has_multiple,
+                'detected_domains': hierarchy.get('detected_domains', []),
                 'topics': topics,
                 'detected_topics_count': len(topics),
+                'capacity': capacity,
                 'preview': text[:600] + ('...' if len(text) > 600 else ''),
             })
         except ValueError as exc:
@@ -1031,5 +1099,152 @@ class GenerateMissingQuestionsView(APIView):
             'total_questions': len(all_exam_questions),
             'actual_total_marks': exam.total_marks,
         }, status=status.HTTP_201_CREATED)
+
+
+class ScopeCheckView(APIView):
+    """
+    Re-verifies all questions in an exam against its source syllabus document.
+    Flags off-scope questions, hallucinations, or ungrounded questions with explanations.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def post(self, request, exam_id):
+        from .tenant import get_user_institution
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        qs = Exam.objects.filter(id=exam_id)
+        if tenant_inst:
+            qs = qs.filter(institution=tenant_inst)
+        elif not request.user.is_staff:
+            qs = qs.filter(created_by=request.user)
+        exam = qs.first()
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        from .utils.validate_paper import audit_question_scope
+        questions_audit = []
+        supported_count = 0
+        off_scope_count = 0
+
+        for q in exam.questions.filter(is_deleted=False).order_by('order'):
+            audit = audit_question_scope(q, exam.source_syllabus_text, selected_topics=exam.topics)
+            in_scope = audit['in_scope']
+            if in_scope:
+                supported_count += 1
+            else:
+                off_scope_count += 1
+
+            questions_audit.append({
+                'id': q.id,
+                'order': q.order,
+                'question_type': q.question_type,
+                'marks': float(q.marks),
+                'topic': q.topic_text,
+                'text': q.text,
+                'in_scope': in_scope,
+                'is_off_scope': not in_scope,
+                'scope_status': 'in_scope' if in_scope else 'off_scope',
+                'reason': audit['reason'],
+                'is_manual': audit.get('is_manual', False),
+                'word_match_ratio': audit.get('word_match_ratio', 0.0),
+                'grounding_verified': audit.get('grounding_verified', False),
+            })
+
+        return Response({
+            'exam_id': exam.id,
+            'exam_title': exam.title,
+            'total_questions': len(questions_audit),
+            'supported_count': supported_count,
+            'in_scope_count': supported_count,
+            'off_scope_count': off_scope_count,
+            'has_off_scope': off_scope_count > 0,
+            'questions': questions_audit,
+        })
+
+
+class RegenerateQuestionView(APIView):
+    """
+    Regenerates a single flagged question using only legitimate in-scope syllabus content.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def post(self, request, exam_id, question_id):
+        from .tenant import get_user_institution
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        qs = Exam.objects.filter(id=exam_id)
+        if tenant_inst:
+            qs = qs.filter(institution=tenant_inst)
+        elif not request.user.is_staff:
+            qs = qs.filter(created_by=request.user)
+        exam = qs.first()
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            return Response({'detail': 'Cannot modify published exams.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        question = Question.objects.filter(id=question_id, exam=exam).first()
+        if not question:
+            return Response({'detail': 'Question not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Pick a valid in-scope topic from syllabus
+        selected_topics = exam.topics if exam.topics else ['General']
+        valid_topics = [t for t in selected_topics if str(t).lower() in exam.source_syllabus_text.lower()]
+        target_topic = valid_topics[0] if valid_topics else selected_topics[0]
+
+        model_key = exam.ai_model_used or 'llama3.2-3b'
+        q_type = question.question_type
+        marks_per_q = float(question.marks)
+
+        new_q_data = None
+        if q_type in {'long_answer', 'subjective'}:
+            chunk = get_relevant_syllabus_chunk(exam.source_syllabus_text, target_topic)
+            new_q_data = _generate_single_long_answer(
+                model_tag=MODEL_MAP.get(model_key, model_key),
+                marks_per_q=marks_per_q,
+                topic=target_topic,
+                difficulty=question.difficulty,
+                syllabus_chunk=chunk,
+            )
+        else:
+            chunk = get_relevant_syllabus_chunk(exam.source_syllabus_text, target_topic)
+            batch = _call_type_batch(
+                question_type=q_type,
+                count=1,
+                marks_per_q=marks_per_q,
+                model_key=model_key,
+                topics=[target_topic],
+                difficulty_distribution={question.difficulty: 100},
+                syllabus_chunk=chunk,
+            )
+            if batch:
+                new_q_data = batch[0]
+
+        if not new_q_data:
+            return Response({'detail': 'Failed to regenerate question from selected syllabus content.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        question.text = new_q_data['text']
+        question.topic_text = target_topic
+        question.source = 'ai_generated'
+        question.correct_answer = new_q_data.get('correct_answer')
+        question.model_answer = new_q_data.get('model_answer') or ''
+        question.accepted_answers = new_q_data.get('accepted_answers') or []
+        question.rubric = new_q_data.get('rubric') or []
+        question.word_limit = new_q_data.get('word_limit')
+        question.options = new_q_data.get('options')
+        question.save()
+
+        from api.models import Option
+        if question.options and q_type in {'mcq', 'true_false', 'truefalse'}:
+            question.option_set.all().delete()
+            Option.objects.bulk_create([
+                Option(question=question, text=str(txt), order=i+1, is_correct=(str(txt) == str(question.correct_answer)))
+                for i, txt in enumerate(question.options)
+            ])
+
+        from api.serializers import FacultyQuestionSerializer
+        return Response({
+            'detail': 'Question successfully regenerated from selected scope.',
+            'question': FacultyQuestionSerializer(question).data,
+        })
 
 

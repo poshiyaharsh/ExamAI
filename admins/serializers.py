@@ -812,21 +812,16 @@ class AdminExamListSerializer(serializers.ModelSerializer):
     faculty = AdminExamFacultySerializer(source='created_by', read_only=True)
     question_count = serializers.IntegerField(read_only=True)
     attempts_count = serializers.IntegerField(read_only=True)
-    subject = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'department', 'subject', 'topics', 'duration_minutes', 'total_marks',
+            'id', 'title', 'department', 'subject', 'description', 'topics', 'duration_minutes',
+            'total_marks', 'target_total_marks', 'marks_shortfall', 'source_documents',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'status', 'error_message', 'starts_at', 'ends_at', 'created_at', 'updated_at',
             'question_count', 'attempts_count', 'faculty',
         )
-
-    def get_subject(self, obj):
-        if isinstance(obj.topics, list) and obj.topics:
-            return ", ".join(str(t) for t in obj.topics)
-        return ""
 
 
 class AdminExamDetailSerializer(serializers.ModelSerializer):
@@ -834,22 +829,17 @@ class AdminExamDetailSerializer(serializers.ModelSerializer):
     questions = AdminExamQuestionSerializer(many=True, read_only=True)
     question_count = serializers.SerializerMethodField()
     attempts_count = serializers.SerializerMethodField()
-    subject = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'department', 'subject', 'topics', 'duration_minutes', 'total_marks',
+            'id', 'title', 'department', 'subject', 'description', 'topics', 'duration_minutes',
+            'total_marks', 'target_total_marks', 'marks_shortfall', 'source_documents',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'error_message', 'starts_at', 'ends_at',
             'created_at', 'updated_at', 'question_count', 'attempts_count',
             'faculty', 'questions',
         )
-
-    def get_subject(self, obj):
-        if isinstance(obj.topics, list) and obj.topics:
-            return ", ".join(str(t) for t in obj.topics)
-        return ""
 
     def get_question_count(self, obj):
         return obj.questions.count()

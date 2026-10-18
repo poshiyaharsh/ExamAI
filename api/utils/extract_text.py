@@ -48,6 +48,188 @@ def extract_syllabus_text(django_file):
     return text
 
 
+def extract_syllabus_pages(django_file) -> list[dict]:
+    """
+    Extracts text page by page (for PDF) or section by section (for DOCX).
+    Returns list of dicts: [{'page_number': 1, 'text': '...', 'char_count': 123}, ...]
+    """
+    django_file.seek(0)
+    filename = getattr(django_file, 'name', '') or ''
+    extension = os.path.splitext(filename)[1].lower()
+    pages_data = []
+
+    if extension == '.pdf':
+        try:
+            import pdfplumber
+        except ImportError as exc:
+            raise ValueError('PDF extraction requires pdfplumber to be installed.') from exc
+
+        with pdfplumber.open(django_file) as pdf:
+            for idx, page in enumerate(pdf.pages, start=1):
+                p_text = (page.extract_text() or '').strip()
+                if p_text:
+                    pages_data.append({
+                        'page_number': idx,
+                        'text': p_text,
+                        'char_count': len(p_text),
+                    })
+    elif extension == '.docx':
+        try:
+            from docx import Document
+        except ImportError as exc:
+            raise ValueError('DOCX extraction requires python-docx to be installed.') from exc
+
+        doc = Document(django_file)
+        # Group paragraphs into ~2000 char virtual pages
+        curr_text = []
+        curr_len = 0
+        page_num = 1
+        for p in doc.paragraphs:
+            txt = p.text.strip()
+            if not txt:
+                continue
+            curr_text.append(txt)
+            curr_len += len(txt)
+            if curr_len >= 2000:
+                pages_data.append({
+                    'page_number': page_num,
+                    'text': '\n'.join(curr_text),
+                    'char_count': curr_len,
+                })
+                curr_text = []
+                curr_len = 0
+                page_num += 1
+        if curr_text:
+            pages_data.append({
+                'page_number': page_num,
+                'text': '\n'.join(curr_text),
+                'char_count': curr_len,
+            })
+    return pages_data
+
+
+def detect_syllabus_hierarchy(text: str, pages: list[dict] = None) -> dict:
+    """
+    Groups syllabus content into structured chapters/units with page ranges,
+    character counts, subtopics, and detects multi-subject or multi-unit coverage.
+    """
+    import re
+    if not text:
+        return {'units': [], 'has_multiple_subjects': False, 'detected_topics': []}
+
+    raw_topics = detect_syllabus_topics(text)
+    units = []
+
+    # Regex patterns for unit/chapter headings
+    heading_pattern = re.compile(
+        r'^(?:unit|module|chapter|topic|section|part)\s*[-:\dIVXLCDM]+[\s\.\:\-–—]+(.+)',
+        re.IGNORECASE
+    )
+
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    detected_headings = []
+    for line in lines:
+        m = heading_pattern.match(line)
+        if m:
+            clean = line[:100].strip(' -:–—.')
+            if len(clean) >= 4 and clean.lower() not in [h['title'].lower() for h in detected_headings]:
+                detected_headings.append({'title': clean, 'line': line})
+
+    # If no explicit headings, use raw_topics
+    if not detected_headings:
+        for t in raw_topics[:8]:
+            detected_headings.append({'title': t, 'line': t})
+
+    # Find character / page spans for each unit
+    for idx, h in enumerate(detected_headings):
+        unit_title = h['title']
+        start_char = text.find(h['line']) if h['line'] in text else 0
+        next_heading_line = detected_headings[idx + 1]['line'] if idx + 1 < len(detected_headings) else None
+        end_char = text.find(next_heading_line, start_char + 1) if next_heading_line and next_heading_line in text else len(text)
+        if end_char == -1 or end_char <= start_char:
+            end_char = min(len(text), start_char + 4000)
+
+        chunk_text = text[max(0, start_char) : end_char].strip()
+
+        # Find page range if page data available
+        page_range_str = "Document section"
+        if pages:
+            matched_pages = []
+            for p in pages:
+                if unit_title.lower() in p['text'].lower() or any(w.lower() in p['text'].lower() for w in unit_title.split() if len(w) > 4):
+                    matched_pages.append(p['page_number'])
+            if matched_pages:
+                min_p, max_p = min(matched_pages), max(matched_pages)
+                page_range_str = f"Page {min_p}" if min_p == max_p else f"Pages {min_p}–{max_p}"
+
+        # Extract subtopics inside this unit
+        unit_lines = [l.strip() for l in chunk_text.split('\n') if len(l.strip()) > 5]
+        subtopics = []
+        sub_pattern = re.compile(r'^(?:\d+[\.\)]|[•\-\*])\s*([A-Za-z0-9\s,\-–—/&]{4,60})')
+        for l in unit_lines:
+            sm = sub_pattern.match(l)
+            if sm:
+                sub = sm.group(1).strip()
+                if sub.lower() not in [s.lower() for s in subtopics] and sub.lower() != unit_title.lower():
+                    subtopics.append(sub)
+                    if len(subtopics) >= 6:
+                        break
+
+        units.append({
+            'id': f"unit_{idx + 1}",
+            'title': unit_title,
+            'page_range': page_range_str,
+            'char_count': len(chunk_text),
+            'subtopics': subtopics,
+            'chunk_text': chunk_text[:5000],
+        })
+
+    # Domain keyword heuristics to detect cross-subject bleed (e.g. OS vs Java vs Network)
+    domains_found = set()
+    low_text = text.lower()
+    domain_keywords = {
+        'Operating Systems': ['process management', 'memory management', 'scheduling algorithm', 'deadlock', 'linux', 'unix', 'kernel', 'file system'],
+        'Java / OOP': ['java', 'jdk', 'jvm', 'inheritance', 'polymorphism', 'garbage collection', 'bytecode', 'interface'],
+        'Computer Networks': ['osi model', 'tcp/ip', 'routing', 'packet switching', 'subnet', 'ethernet', 'http', 'dns'],
+        'Database Systems': ['sql', 'rdbms', 'relational algebra', 'normalization', 'acid properties', 'indexing', 'transactions'],
+        'Ethical Hacking': ['footprinting', 'reconnaissance', 'penetration testing', 'vulnerability scanning', 'nmap', 'metasploit'],
+    }
+    for dom, kws in domain_keywords.items():
+        if sum(1 for kw in kws if kw in low_text) >= 2:
+            domains_found.add(dom)
+
+    has_multiple_subjects = len(domains_found) >= 2 or len(units) >= 2
+
+    return {
+        'units': units,
+        'has_multiple_subjects': has_multiple_subjects,
+        'detected_domains': list(domains_found),
+        'detected_topics': [u['title'] for u in units] if units else raw_topics,
+    }
+
+
+def estimate_syllabus_capacity(char_count: int, num_topics: int = 1) -> dict:
+    """
+    Estimates whether the syllabus text is large enough to support the requested
+    number of questions and marks.
+    """
+    safe_chars = max(0, char_count)
+    # 1 substantive question requires ~350-500 characters of grounded text
+    estimated_q = max(3, safe_chars // 400)
+    estimated_marks = min(100, estimated_q * 4)
+    is_low = safe_chars < 3000
+    warning = (
+        f"The selected content ({char_count:,} characters) may only support about {estimated_q} questions ({estimated_marks} marks)."
+        if is_low else None
+    )
+    return {
+        'estimated_max_questions': estimated_q,
+        'estimated_max_marks': estimated_marks,
+        'is_low_capacity': is_low,
+        'warning': warning,
+    }
+
+
 def detect_syllabus_topics(text: str) -> list[str]:
     """
     Extracts distinct units/modules/chapters/topics from syllabus text.
@@ -130,11 +312,18 @@ def get_cached_syllabus_data(file_obj, filename=""):
             return entry['data']
 
     text = extract_syllabus_text(file_obj)
-    topics = detect_syllabus_topics(text)
+    try:
+        pages = extract_syllabus_pages(file_obj)
+    except Exception:
+        pages = []
+    hierarchy = detect_syllabus_hierarchy(text, pages)
+    topics = hierarchy.get('detected_topics') or detect_syllabus_topics(text)
     chunks = chunk_syllabus_by_topics(text, topics)
     data = {
         'hash': file_hash,
         'text': text,
+        'pages': pages,
+        'hierarchy': hierarchy,
         'topics': topics,
         'chunks': chunks,
     }

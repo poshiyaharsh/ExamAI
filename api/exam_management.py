@@ -153,9 +153,17 @@ class QuestionUpdateView(FacultyExamViewMixin, APIView):
             return Response({'detail': 'Question not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         question.delete()
+        # Recalculate exam total marks and shortfall
+        active_qs = exam.questions.filter(is_deleted=False)
+        actual_sum = sum(q.marks for q in active_qs)
+        exam.total_marks = int(round(float(actual_sum)))
+        if exam.target_total_marks:
+            exam.marks_shortfall = max(0, exam.target_total_marks - exam.total_marks)
+        exam.save(update_fields=['total_marks', 'marks_shortfall'])
+
         from api.paper_engine.cache import PaperCacheService
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
-        return Response({'deleted': True, 'id': question_id}, status=status.HTTP_200_OK)
+        return Response({'deleted': True, 'id': question_id, 'actual_total_marks': exam.total_marks, 'marks_shortfall': exam.marks_shortfall}, status=status.HTTP_200_OK)
 
 
 class ExamQuestionCreateView(FacultyExamViewMixin, APIView):
@@ -193,6 +201,7 @@ class ExamQuestionCreateView(FacultyExamViewMixin, APIView):
                 model_answer=bank_q.model_answer,
                 explanation=bank_q.explanation,
                 marks=bank_q.marks,
+                source='manual',
                 created_by=request.user,
             )
         else:
@@ -243,6 +252,14 @@ class ExamQuestionCreateView(FacultyExamViewMixin, APIView):
                     ))
                 if opts_to_create:
                     Option.objects.bulk_create(opts_to_create)
+
+        # Recalculate exam total marks and shortfall
+        active_qs = exam.questions.filter(is_deleted=False)
+        actual_sum = sum(q.marks for q in active_qs)
+        exam.total_marks = int(round(float(actual_sum)))
+        if exam.target_total_marks:
+            exam.marks_shortfall = max(0, exam.target_total_marks - exam.total_marks)
+        exam.save(update_fields=['total_marks', 'marks_shortfall'])
 
         from api.paper_engine.cache import PaperCacheService
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
@@ -359,10 +376,38 @@ class PublishExamView(FacultyExamViewMixin, APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         elif sum(question.marks for question in questions) != exam.total_marks:
+            actual_sum = sum(question.marks for question in questions)
             return Response(
-                {'detail': 'Question marks must sum exactly to the exam total marks before publishing.'},
+                {'detail': f'Question marks ({actual_sum}) must equal exam total marks ({exam.total_marks}).'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Shortfall check: block publish if marks_shortfall > 0 unless confirm_shortfall is explicitly sent
+        if exam.marks_shortfall > 0:
+            if not request.data.get('confirm_shortfall'):
+                return Response(
+                    {
+                        'detail': f'This paper has an unresolved shortfall of {exam.marks_shortfall} marks ({exam.total_marks} of {exam.target_total_marks} marks generated). Resolve the shortfall before publishing, or confirm "Publish with {exam.marks_shortfall} fewer marks".',
+                        'marks_shortfall': exam.marks_shortfall,
+                        'target_total_marks': exam.target_total_marks,
+                        'actual_total_marks': exam.total_marks,
+                        'requires_shortfall_confirmation': True,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            else:
+                report = exam.validation_report or {}
+                report['shortfall_publish_confirmed'] = {
+                    'confirmed_by': request.user.username,
+                    'confirmed_at': timezone.now().isoformat(),
+                    'original_target': exam.target_total_marks,
+                    'published_marks': exam.total_marks,
+                    'shortfall': exam.marks_shortfall,
+                }
+                exam.validation_report = report
+                exam.target_total_marks = exam.total_marks
+                exam.marks_shortfall = 0
+                exam.save(update_fields=['validation_report', 'target_total_marks', 'marks_shortfall'])
 
         exam.status = Exam.Status.PUBLISHED
         exam.is_immutable = True
@@ -407,3 +452,95 @@ class ConfirmExamReviewView(FacultyExamViewMixin, APIView):
             'detail': 'Exam review confirmed.',
             'exam': ExamDetailSerializer(exam).data,
         }, status=status.HTTP_200_OK)
+
+
+class AdjustMarksView(FacultyExamViewMixin, APIView):
+    """
+    Handles marks adjustments for exams with shortfalls:
+    - action 'set_actual': sets target_total_marks to total_marks (shortfall = 0).
+    - action 'preview_scale': calculates scaled marks per question to hit target_total_marks.
+    - action 'scale_target': applies the integer-rounded scaled marks to all questions.
+    """
+    def post(self, request, exam_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            return Response({'detail': 'Cannot modify published exams.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        action = request.data.get('action')
+        target_raw = request.data.get('target_marks')
+        target = int(target_raw) if target_raw is not None else int(exam.target_total_marks or exam.total_marks or 0)
+        active_questions = list(exam.questions.filter(is_deleted=False).order_by('order'))
+        if not active_questions:
+            return Response({'detail': 'Exam has no active questions.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_total = float(sum(q.marks for q in active_questions))
+
+        if action == 'set_actual':
+            exam.target_total_marks = int(round(current_total))
+            exam.total_marks = exam.target_total_marks
+            exam.marks_shortfall = 0
+            exam.save(update_fields=['target_total_marks', 'total_marks', 'marks_shortfall', 'updated_at'])
+            return Response({
+                'detail': f'Paper total marks updated to {exam.total_marks}. Shortfall resolved.',
+                'target_total_marks': exam.target_total_marks,
+                'total_marks': exam.total_marks,
+                'marks_shortfall': 0,
+                'exam': ExamDetailSerializer(exam).data,
+            })
+
+        elif action in {'preview_scale', 'scale_target'}:
+            scale_ratio = (float(target) / current_total) if current_total > 0 else 1.0
+            previews = []
+            running_marks = 0
+
+            for idx, q in enumerate(active_questions):
+                if idx == len(active_questions) - 1:
+                    new_m = max(1, target - running_marks)
+                else:
+                    new_m = max(1, int(round(float(q.marks) * scale_ratio)))
+                    running_marks += new_m
+
+                previews.append({
+                    'id': q.id,
+                    'order': q.order,
+                    'text': q.text[:80] + '...',
+                    'old_marks': float(q.marks),
+                    'new_marks': new_m,
+                })
+
+            if action == 'preview_scale':
+                preview_data = {
+                    'target_marks': target,
+                    'current_marks': int(round(current_total)),
+                    'current_total': float(current_total),
+                    'scaled_total': sum(p['new_marks'] for p in previews),
+                    'scaling_factor': round(scale_ratio, 2),
+                    'question_previews': previews,
+                }
+                return Response({
+                    **preview_data,
+                    'preview': preview_data,
+                })
+
+            for p in previews:
+                Question.objects.filter(id=p['id']).update(marks=p['new_marks'])
+
+            exam.total_marks = target
+            exam.marks_shortfall = 0
+            exam.save(update_fields=['total_marks', 'marks_shortfall', 'updated_at'])
+
+            from api.paper_engine.cache import PaperCacheService
+            PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+
+            return Response({
+                'detail': f'Questions scaled successfully to reach target of {target} marks.',
+                'target_total_marks': exam.target_total_marks,
+                'total_marks': exam.total_marks,
+                'marks_shortfall': 0,
+                'exam': ExamDetailSerializer(exam).data,
+            })
+
+        return Response({'detail': "Invalid action. Supported actions: 'set_actual', 'preview_scale', 'scale_target'."}, status=status.HTTP_400_BAD_REQUEST)

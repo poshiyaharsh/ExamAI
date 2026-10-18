@@ -14,6 +14,8 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Scale,
+  ShieldAlert,
   ShieldCheck,
   Shuffle,
   Sparkles,
@@ -62,6 +64,33 @@ export function EditPaperPage() {
   const [shuffling, setShuffling] = useState(false);
   const [confirmingReview, setConfirmingReview] = useState(false);
   const [generatingMissing, setGeneratingMissing] = useState(false);
+
+  // Scope Audit state
+  const [checkingScope, setCheckingScope] = useState(false);
+  const [scopeAudit, setScopeAudit] = useState<{
+    exam_id: number;
+    total_questions: number;
+    in_scope_count: number;
+    off_scope_count: number;
+    questions: any[];
+  } | null>(null);
+  const [regeneratingId, setRegeneratingId] = useState<number | null>(null);
+
+  // Adjust Marks state
+  const [showAdjustMarksModal, setShowAdjustMarksModal] = useState(false);
+  const [adjustingMarks, setAdjustingMarks] = useState(false);
+  const [scalePreview, setScalePreview] = useState<{
+    target_marks: number;
+    current_marks: number;
+    scaling_factor: number;
+    question_previews: Array<{
+      id: number;
+      current_marks: number;
+      scaled_marks: number;
+      question_type: string;
+      text: string;
+    }>;
+  } | null>(null);
 
   // Filters
   const [filterType, setFilterType] = useState<string>("all");
@@ -235,13 +264,16 @@ export function EditPaperPage() {
     if (!id) return;
     setPublishing(true);
     try {
-      const published = await facultyExamApi.publishExam(Number(id));
+      const target = exam?.target_total_marks || exam?.total_marks || 0;
+      const shortfallAmt = exam?.marks_shortfall || Math.max(0, target - computedTotalMarks);
+      const isShortfall = shortfallAmt > 0;
+      const published = await facultyExamApi.publishExam(Number(id), isShortfall);
       setExam(published);
       setShowPublishModal(false);
       toast.success("Exam published successfully! Students can now access it during the scheduled window.");
       navigate("/faculty/history");
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Publishing failed. Ensure total marks match question marks.");
+      toast.error(err?.response?.data?.detail || "Publishing failed.");
     } finally {
       setPublishing(false);
     }
@@ -259,6 +291,111 @@ export function EditPaperPage() {
       toast.error(err?.response?.data?.detail || "Failed to generate missing questions.");
     } finally {
       setGeneratingMissing(false);
+    }
+  };
+
+  const handleScopeAudit = async () => {
+    if (!id) return;
+    setCheckingScope(true);
+    try {
+      const res = await facultyExamApi.checkScope(Number(id));
+      setScopeAudit(res);
+      const scopeMap = new Map(res.questions.map((q) => [q.id, q]));
+      setExam((current) =>
+        current
+          ? {
+              ...current,
+              questions: current.questions?.map((q) => {
+                const audited = scopeMap.get(q.id);
+                if (audited) {
+                  return {
+                    ...q,
+                    is_off_scope: audited.is_off_scope,
+                    scope_status: audited.scope_status as any,
+                    scope_reason: audited.scope_reason,
+                  };
+                }
+                return q;
+              }),
+            }
+          : current
+      );
+      if (res.off_scope_count > 0) {
+        toast.warning(
+          `Scope Audit: ${res.off_scope_count} of ${res.total_questions} questions are off-scope. You can regenerate or delete them.`,
+          { duration: 6000 }
+        );
+      } else {
+        toast.success(`Scope Audit: All ${res.total_questions} questions verified strictly in-scope!`);
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to audit scope.");
+    } finally {
+      setCheckingScope(false);
+    }
+  };
+
+  const handleRegenerateInScope = async (questionId: number) => {
+    if (!id) return;
+    setRegeneratingId(questionId);
+    try {
+      const res = await facultyExamApi.regenerateQuestion(Number(id), questionId);
+      updateQuestion(questionId, res.question);
+      toast.success("Question regenerated strictly from syllabus content!");
+      if (scopeAudit) {
+        handleScopeAudit();
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to regenerate question.");
+    } finally {
+      setRegeneratingId(null);
+    }
+  };
+
+  const handleSetActualMarks = async () => {
+    if (!id) return;
+    setAdjustingMarks(true);
+    try {
+      const res = await facultyExamApi.adjustMarks(Number(id), "set_actual");
+      setExam(res.exam);
+      setShowAdjustMarksModal(false);
+      setScalePreview(null);
+      toast.success(res.detail || `Total marks updated to actual sum (${res.exam.total_marks}).`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to adjust marks.");
+    } finally {
+      setAdjustingMarks(false);
+    }
+  };
+
+  const handlePreviewScale = async () => {
+    if (!id) return;
+    setAdjustingMarks(true);
+    try {
+      const target = exam?.target_total_marks || exam?.total_marks || 100;
+      const res = await facultyExamApi.adjustMarks(Number(id), "preview_scale", target);
+      setScalePreview(res.preview || null);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to preview scaling.");
+    } finally {
+      setAdjustingMarks(false);
+    }
+  };
+
+  const handleApplyScale = async () => {
+    if (!id) return;
+    setAdjustingMarks(true);
+    try {
+      const target = exam?.target_total_marks || exam?.total_marks || 100;
+      const res = await facultyExamApi.adjustMarks(Number(id), "scale_target", target);
+      setExam(res.exam);
+      setShowAdjustMarksModal(false);
+      setScalePreview(null);
+      toast.success(res.detail || "Question marks scaled to meet target total!");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to scale marks.");
+    } finally {
+      setAdjustingMarks(false);
     }
   };
 
@@ -290,6 +427,12 @@ export function EditPaperPage() {
     [exam?.questions]
   );
 
+  const targetTotalMarks = exam?.target_total_marks || exam?.total_marks || 0;
+  const marksShortfall =
+    exam?.marks_shortfall !== undefined && exam?.marks_shortfall > 0
+      ? exam.marks_shortfall
+      : Math.max(0, targetTotalMarks - computedTotalMarks);
+  const hasShortfall = marksShortfall > 0;
   const marksMatch = computedTotalMarks === (exam?.total_marks || 0);
 
   const filteredQuestions = useMemo(() => {
@@ -425,6 +568,16 @@ export function EditPaperPage() {
                       </button>
                       <button
                         type="button"
+                        disabled={checkingScope}
+                        onClick={handleScopeAudit}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
+                        title="Audit question scope against syllabus content"
+                      >
+                        {checkingScope ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5 text-blue-600" />}
+                        {checkingScope ? "Auditing..." : "Audit Scope"}
+                      </button>
+                      <button
+                        type="button"
                         disabled={shuffling}
                         onClick={handleShuffle}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
@@ -445,10 +598,6 @@ export function EditPaperPage() {
                           });
                           return;
                         }
-                        if (!marksMatch) {
-                          toast.error(`Question marks (${computedTotalMarks}) must equal exam total marks (${exam.total_marks}).`);
-                          return;
-                        }
                         setShowPublishModal(true);
                       }}
                       className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-all"
@@ -467,9 +616,14 @@ export function EditPaperPage() {
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                   <span className="text-muted-foreground block text-[11px] font-medium">Total Marks</span>
-                  <strong className={`text-base font-bold ${marksMatch ? "text-emerald-700" : "text-amber-700"}`}>
-                    {computedTotalMarks} / {exam.total_marks} Marks
+                  <strong className={`text-base font-bold ${!hasShortfall && marksMatch ? "text-emerald-700" : "text-amber-700"}`}>
+                    {computedTotalMarks} / {targetTotalMarks} Marks
                   </strong>
+                  {hasShortfall && (
+                    <span className="text-[10px] text-amber-700 font-bold block mt-0.5">
+                      {marksShortfall} Marks Shortfall
+                    </span>
+                  )}
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                   <span className="text-muted-foreground block text-[11px] font-medium">Duration</span>
@@ -481,6 +635,62 @@ export function EditPaperPage() {
                 </div>
               </div>
             </div>
+
+            {/* Prominent Marks Shortfall Banner */}
+            {hasShortfall && !isPublished && (
+              <div className="rounded-2xl border-2 border-amber-400 bg-amber-50/90 p-5 space-y-4 shadow-sm animate-in fade-in">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-xl bg-amber-100 text-amber-800 shrink-0 mt-0.5">
+                      <AlertTriangle className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-amber-950 flex items-center gap-2">
+                        Marks Shortfall Detected ({marksShortfall} Marks Missing)
+                      </h3>
+                      <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                        The requested paper target is <strong>{targetTotalMarks} marks</strong>, but currently only <strong>{computedTotalMarks} marks</strong> across <strong>{exam.questions?.length ?? 0} questions</strong> are generated.
+                        Please resolve the shortfall using one of the actions below before publishing.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+                    <span className="rounded-full bg-amber-200/80 px-3 py-1 text-xs font-bold text-amber-950">
+                      {computedTotalMarks} / {targetTotalMarks} Marks
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3 Shortfall Action Options */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 border-t border-amber-200/80">
+                  <button
+                    type="button"
+                    disabled={generatingMissing}
+                    onClick={handleGenerateMissing}
+                    className="flex items-center justify-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-bold text-white shadow-2xs hover:bg-amber-700 disabled:opacity-50 transition-all"
+                  >
+                    {generatingMissing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    {generatingMissing ? "Generating..." : "1. Generate Missing Questions"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(true)}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-white px-3.5 py-2 text-xs font-bold text-amber-900 shadow-2xs hover:bg-amber-100/60 transition-all"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    2. Add Questions Manually
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdjustMarksModal(true)}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-white px-3.5 py-2 text-xs font-bold text-amber-900 shadow-2xs hover:bg-amber-100/60 transition-all"
+                  >
+                    <Scale className="h-3.5 w-3.5" />
+                    3. Adjust Marks (Set Actual / Scale)
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Validation Warnings & Question Type Breakdown */}
             {(validationWarnings.length > 0 || !marksMatch) && (
@@ -644,10 +854,35 @@ export function EditPaperPage() {
                               Unit: {question.topic}
                             </span>
                           )}
+                          {(question.is_off_scope || question.scope_status === "off_scope") && (
+                            <span
+                              className="rounded-full bg-rose-50 border border-rose-300 text-rose-800 px-2.5 py-0.5 text-xs font-bold flex items-center gap-1"
+                              title={question.scope_reason || "Topic or content not found in uploaded syllabus"}
+                            >
+                              <AlertCircle className="h-3 w-3 text-rose-600" />
+                              Off-Scope
+                            </span>
+                          )}
                         </div>
 
                         {!isPublished && (
                           <div className="flex items-center gap-1.5">
+                            {(question.is_off_scope || question.scope_status === "off_scope") && (
+                              <button
+                                type="button"
+                                disabled={regeneratingId === question.id}
+                                onClick={() => handleRegenerateInScope(question.id)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-800 hover:bg-rose-100 transition-colors disabled:opacity-50"
+                                title="Regenerate this question strictly within syllabus scope"
+                              >
+                                {regeneratingId === question.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                )}
+                                <span className="hidden sm:inline">Regenerate In-Scope</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={swappingId === question.id}
@@ -1192,6 +1427,21 @@ export function EditPaperPage() {
                 </div>
               </div>
 
+              {hasShortfall && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-950">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    Publishing with Marks Shortfall
+                  </div>
+                  <p>
+                    Target marks was <strong>{targetTotalMarks}</strong>, but this paper only has <strong>{computedTotalMarks} marks</strong> ({marksShortfall} marks short).
+                  </p>
+                  <p className="text-[11px] text-amber-800">
+                    If you confirm, students will take the exam scored out of {computedTotalMarks} marks.
+                  </p>
+                </div>
+              )}
+
               <div className="rounded-xl bg-muted/40 p-3 text-xs space-y-1.5">
                 <p className="font-semibold text-foreground">{exam.title}</p>
                 <p className="text-muted-foreground">
@@ -1218,8 +1468,121 @@ export function EditPaperPage() {
                   className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-50"
                 >
                   {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                  Confirm & Publish
+                  {hasShortfall ? `Confirm & Publish (${computedTotalMarks} Marks)` : "Confirm & Publish"}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Adjust Marks Modal */}
+        {showAdjustMarksModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="bg-white rounded-3xl border border-border shadow-2xl w-full max-w-lg p-6 space-y-5 animate-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                    <Scale className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-foreground">Adjust Paper Marks</h3>
+                    <p className="text-xs text-muted-foreground">Resolve shortfall between target and generated questions</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdjustMarksModal(false);
+                    setScalePreview(null);
+                  }}
+                  className="rounded-lg p-1 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 text-xs space-y-1">
+                <div className="flex justify-between font-semibold text-slate-700">
+                  <span>Target Marks:</span>
+                  <span className="font-bold text-slate-900">{targetTotalMarks} Marks</span>
+                </div>
+                <div className="flex justify-between font-semibold text-slate-700">
+                  <span>Actual Questions Sum:</span>
+                  <span className="font-bold text-slate-900">{computedTotalMarks} Marks</span>
+                </div>
+                <div className="flex justify-between font-semibold text-amber-700 pt-1 border-t border-slate-200">
+                  <span>Shortfall:</span>
+                  <span className="font-bold text-amber-800">{marksShortfall} Marks</span>
+                </div>
+              </div>
+
+              {/* Option A: Set to Actual */}
+              <div className="rounded-2xl border border-border p-4 space-y-2 hover:border-blue-300 transition-colors">
+                <h4 className="text-xs font-bold text-foreground">Option A: Set Exam Total to Actual ({computedTotalMarks} Marks)</h4>
+                <p className="text-xs text-muted-foreground">
+                  Update the official exam total marks to match the generated questions. Shortfall will be cleared to 0.
+                </p>
+                <button
+                  type="button"
+                  disabled={adjustingMarks}
+                  onClick={handleSetActualMarks}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50 transition-all"
+                >
+                  {adjustingMarks ? "Updating..." : `Set Total Marks to ${computedTotalMarks}`}
+                </button>
+              </div>
+
+              {/* Option B: Scale Question Marks */}
+              <div className="rounded-2xl border border-border p-4 space-y-3 hover:border-blue-300 transition-colors">
+                <h4 className="text-xs font-bold text-foreground">Option B: Scale Questions to Reach Target ({targetTotalMarks} Marks)</h4>
+                <p className="text-xs text-muted-foreground">
+                  Proportionally increase marks across all existing questions so their sum equals {targetTotalMarks}.
+                </p>
+
+                {scalePreview ? (
+                  <div className="space-y-3 pt-2 border-t border-border">
+                    <div className="text-xs font-semibold text-slate-800 flex items-center justify-between">
+                      <span>Scaling Preview ({scalePreview.question_previews?.length} questions):</span>
+                      <span className="text-[11px] text-muted-foreground">Factor: {scalePreview.scaling_factor}x</span>
+                    </div>
+                    <div className="max-h-40 overflow-y-auto space-y-1.5 rounded-xl bg-slate-50 p-2.5 border border-slate-200 text-xs">
+                      {scalePreview.question_previews?.map((qp: any, i: number) => (
+                        <div key={qp.id} className="flex items-center justify-between text-[11px] text-slate-700">
+                          <span className="truncate max-w-[240px]">Q{i + 1}: {qp.text}</span>
+                          <span className="font-mono font-bold shrink-0 ml-2">
+                            {qp.current_marks}m → <span className="text-emerald-700">{qp.scaled_marks}m</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={adjustingMarks}
+                        onClick={handleApplyScale}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50 transition-all"
+                      >
+                        {adjustingMarks ? "Applying..." : `Apply Scaling (${targetTotalMarks} Marks)`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScalePreview(null)}
+                        className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted/50"
+                      >
+                        Reset Preview
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={adjustingMarks}
+                    onClick={handlePreviewScale}
+                    className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold text-foreground hover:bg-muted/50 disabled:opacity-50 transition-all"
+                  >
+                    {adjustingMarks ? "Calculating..." : "Preview Scaled Marks"}
+                  </button>
+                )}
               </div>
             </div>
           </div>

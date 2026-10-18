@@ -120,7 +120,8 @@ class ExamListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
+            'id', 'title', 'department', 'subject', 'description', 'duration_minutes',
+            'total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'source_documents',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'status', 'error_message', 'seed', 'request_hash', 'is_immutable', 'is_reviewed',
             'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
@@ -136,7 +137,8 @@ class ExamDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
-            'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
+            'id', 'title', 'department', 'subject', 'description', 'duration_minutes',
+            'total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'source_documents',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'starts_at', 'ends_at',
             'error_message', 'seed', 'request_hash', 'validation_report', 'is_immutable', 'is_reviewed',
@@ -206,7 +208,7 @@ class StudentExamSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Exam
-        fields = ('id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at', 'questions')
+        fields = ('id', 'title', 'subject', 'description', 'department', 'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at', 'questions')
 
     def get_total_marks(self, obj):
         try:

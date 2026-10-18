@@ -3,6 +3,7 @@ from django.urls import include, path
 
 from .admin_dashboard import AdminDashboardView, LiveRosterView
 from .exam_management import (
+    AdjustMarksView,
     ClearFacultyPaperCacheView,
     ConfirmExamReviewView,
     ExamDetailView,
@@ -23,7 +24,13 @@ from .faculty_evaluation import (
     FacultyReevaluateAttemptView,
     FacultySuggestGradeView,
 )
-from .generate_paper import GenerateMissingQuestionsView, GeneratePaperView, ParseSyllabusView
+from .generate_paper import (
+    GenerateMissingQuestionsView,
+    GeneratePaperView,
+    ParseSyllabusView,
+    RegenerateQuestionView,
+    ScopeCheckView,
+)
 from .notifications_views import (
     NotificationListView,
     NotificationMarkAllReadView,
@@ -85,12 +92,15 @@ urlpatterns = [
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
     path('faculty/exams/<int:exam_id>/confirm-review/', ConfirmExamReviewView.as_view(), name='faculty-exam-confirm-review'),
+    path('faculty/exams/<int:exam_id>/scope-check/', ScopeCheckView.as_view(), name='faculty-exam-scope-check'),
     path('faculty/exams/<int:exam_id>/shuffle/', ShuffleExamView.as_view(), name='faculty-exam-shuffle'),
     path('faculty/exams/<int:exam_id>/questions/', ExamQuestionCreateView.as_view(), name='faculty-exam-question-create'),
     path('faculty/exams/<int:exam_id>/questions/reorder/', ReorderQuestionsView.as_view(), name='faculty-exam-questions-reorder'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/swap/', SwapQuestionView.as_view(), name='faculty-exam-question-swap'),
+    path('faculty/exams/<int:exam_id>/questions/<int:question_id>/regenerate/', RegenerateQuestionView.as_view(), name='faculty-question-regenerate'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
+    path('faculty/exams/<int:exam_id>/adjust-marks/', AdjustMarksView.as_view(), name='faculty-exam-adjust-marks'),
     path('faculty/exams/<int:exam_id>/attempts/', FacultyExamAttemptsListView.as_view(), name='faculty-exam-attempts'),
     path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
     path('faculty/attempts/<int:attempt_id>/', FacultyAttemptDetailView.as_view(), name='faculty-attempt-detail'),

@@ -525,22 +525,45 @@ export function AdminExams() {
                     return (
                       <tr key={exam.id} className="hover:bg-muted/30 transition-colors">
                         {/* Title & Subject */}
-                        <td className="px-5 py-4">
+                        <td className="px-5 py-3.5 max-w-[280px]">
                           <div>
                             <button
                               onClick={() => void handleOpenDetail(exam.id)}
-                              className="font-medium text-foreground hover:text-primary transition-colors text-left"
+                              className="font-semibold text-foreground hover:text-primary transition-colors text-left line-clamp-1 block text-sm"
+                              title={exam.title}
                             >
                               {exam.title}
                             </button>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                              {exam.subject || (exam.topics && exam.topics.join(", ")) || "General"}
+                            <p className="text-xs text-muted-foreground font-medium mt-0.5 truncate">
+                              {exam.subject || "General Course"}
                             </p>
+                            {Array.isArray(exam.topics) && exam.topics.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                                {exam.topics.slice(0, 2).map((t, tIdx) => (
+                                  <span
+                                    key={tIdx}
+                                    className="inline-block px-1.5 py-0.5 rounded bg-muted/70 text-[10px] text-muted-foreground truncate max-w-[110px]"
+                                    title={t}
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                                {exam.topics.length > 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleOpenDetail(exam.id)}
+                                    className="text-[10px] text-primary hover:underline font-semibold"
+                                  >
+                                    +{exam.topics.length - 2} more
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </td>
 
                         {/* Faculty & Dept */}
-                        <td className="px-5 py-4">
+                        <td className="px-5 py-3.5">
                           <div className="flex items-center gap-2">
                             <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
                               {exam.faculty?.name?.charAt(0) || "F"}
@@ -555,13 +578,23 @@ export function AdminExams() {
                         </td>
 
                         {/* Duration */}
-                        <td className="px-5 py-4 text-xs text-foreground whitespace-nowrap">
+                        <td className="px-5 py-3.5 text-xs text-foreground whitespace-nowrap">
                           {exam.duration_minutes} min
                         </td>
 
                         {/* Total Marks */}
-                        <td className="px-5 py-4 text-xs font-semibold text-foreground whitespace-nowrap">
-                          {exam.total_marks} pts
+                        <td className="px-5 py-3.5 text-xs text-foreground whitespace-nowrap">
+                          <span className="font-semibold">
+                            {exam.total_marks}
+                            {exam.target_total_marks && exam.target_total_marks !== exam.total_marks
+                              ? ` / ${exam.target_total_marks}`
+                              : ""} pts
+                          </span>
+                          {exam.marks_shortfall !== undefined && exam.marks_shortfall > 0 && (
+                            <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200 mt-0.5 block w-fit">
+                              {exam.marks_shortfall} short
+                            </span>
+                          )}
                         </td>
 
                         {/* Questions count */}
@@ -733,8 +766,16 @@ export function AdminExams() {
                       <span className="text-muted-foreground block mb-0.5">Total Marks</span>
                       <span className="font-semibold text-foreground text-sm flex items-center gap-1">
                         <Award className="w-3.5 h-3.5 text-muted-foreground" />
-                        {detailExam.total_marks} points
+                        {detailExam.total_marks}
+                        {detailExam.target_total_marks && detailExam.target_total_marks !== detailExam.total_marks
+                          ? ` / ${detailExam.target_total_marks}`
+                          : ""} pts
                       </span>
+                      {detailExam.marks_shortfall !== undefined && detailExam.marks_shortfall > 0 && (
+                        <span className="text-[10px] text-amber-700 font-bold block mt-0.5">
+                          {detailExam.marks_shortfall} marks shortfall
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-muted-foreground block mb-0.5">Total Questions</span>
