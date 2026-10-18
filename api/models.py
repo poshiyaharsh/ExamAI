@@ -72,6 +72,7 @@ class Exam(models.Model):
 	request_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
 	validation_report = models.JSONField(default=dict, blank=True)
 	is_immutable = models.BooleanField(default=False)
+	is_reviewed = models.BooleanField(default=True)
 	shuffle_questions = models.BooleanField(default=True)
 	shuffle_options = models.BooleanField(default=True)
 	random_subset_size = models.PositiveIntegerField(null=True, blank=True)
@@ -515,5 +516,92 @@ class AttemptEvent(models.Model):
 		indexes = [
 			models.Index(fields=['attempt', 'event_type']),
 			models.Index(fields=['institution', 'timestamp']),
+		]
+
+
+class PaperGenerationJob(models.Model):
+	class Status(models.TextChoices):
+		QUEUED = 'queued', 'Queued'
+		RUNNING = 'running', 'Running'
+		COMPLETED = 'completed', 'Completed'
+		COMPLETED_WITH_WARNINGS = 'completed_with_warnings', 'Completed with Warnings'
+		FAILED = 'failed', 'Failed'
+		CANCELLED = 'cancelled', 'Cancelled'
+
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='paper_generation_jobs',
+		db_index=True,
+	)
+	faculty = models.ForeignKey(
+		User,
+		on_delete=models.CASCADE,
+		related_name='paper_generation_jobs',
+		db_index=True,
+	)
+	department = models.CharField(max_length=120, blank=True, default='', db_index=True)
+	exam = models.ForeignKey(
+		Exam,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='generation_jobs',
+	)
+	model = models.CharField(max_length=100)
+	status = models.CharField(max_length=30, choices=Status.choices, default=Status.QUEUED, db_index=True)
+	progress = models.PositiveIntegerField(default=0)
+	current_step = models.CharField(max_length=255, default='Queued')
+	error_message = models.TextField(blank=True, default='')
+	warnings = models.JSONField(default=list, blank=True)
+	question_count_requested = models.PositiveIntegerField(default=0)
+	question_count_generated = models.PositiveIntegerField(default=0)
+	is_cancelled = models.BooleanField(default=False)
+	request_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
+	created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+	started_at = models.DateTimeField(null=True, blank=True)
+	completed_at = models.DateTimeField(null=True, blank=True)
+
+	class Meta:
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['institution', 'faculty', 'status']),
+			models.Index(fields=['institution', 'department', 'status']),
+			models.Index(fields=['faculty', 'request_hash']),
+		]
+
+
+class Notification(models.Model):
+	class NotificationType(models.TextChoices):
+		INFO = 'info', 'Info'
+		SUCCESS = 'success', 'Success'
+		WARNING = 'warning', 'Warning'
+		ERROR = 'error', 'Error'
+
+	user = models.ForeignKey(
+		User,
+		on_delete=models.CASCADE,
+		related_name='notifications',
+		db_index=True,
+	)
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='notifications',
+		null=True,
+		blank=True,
+		db_index=True,
+	)
+	title = models.CharField(max_length=255)
+	message = models.TextField()
+	type = models.CharField(max_length=30, choices=NotificationType.choices, default=NotificationType.INFO)
+	link = models.CharField(max_length=500, blank=True, default='')
+	is_read = models.BooleanField(default=False, db_index=True)
+	created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+	class Meta:
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['user', 'is_read', '-created_at']),
 		]
 

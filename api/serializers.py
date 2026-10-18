@@ -120,7 +120,7 @@ class ExamListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
-            'status', 'error_message', 'seed', 'request_hash', 'is_immutable',
+            'status', 'error_message', 'seed', 'request_hash', 'is_immutable', 'is_reviewed',
             'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
             'allow_retakes', 'show_result_immediately',
             'starts_at', 'ends_at', 'created_at', 'updated_at',
@@ -137,7 +137,7 @@ class ExamDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'starts_at', 'ends_at',
-            'error_message', 'seed', 'request_hash', 'validation_report', 'is_immutable',
+            'error_message', 'seed', 'request_hash', 'validation_report', 'is_immutable', 'is_reviewed',
             'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
             'allow_retakes', 'show_result_immediately',
             'created_at', 'updated_at', 'questions',

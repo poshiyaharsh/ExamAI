@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Exam, Question
+from .models import Exam, Notification, PaperGenerationJob, Question
 from .permissions import IsFacultyUser
 from .utils.extract_text import extract_syllabus_text
 from .utils.ollama_client import call_ollama, parse_json_safely
@@ -189,34 +189,95 @@ def _generate_type_questions(question_type, count, model_name, topics, difficult
     return questions
 
 
-def _run_generation(exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text):
+def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text):
+    from django.utils import timezone
+    job = PaperGenerationJob.objects.filter(id=job_id).first()
+    if not job or job.is_cancelled:
+        return
+
+    job.status = PaperGenerationJob.Status.RUNNING
+    job.started_at = timezone.now()
+    job.current_step = 'Reading syllabus and setting up generation'
+    job.progress = 10
+    job.save(update_fields=['status', 'started_at', 'current_step', 'progress'])
+
     try:
         counts, planned_total_marks = compute_question_counts(question_types, total_marks)
+        total_requested = max(sum(counts.values()), 1)
         logger.debug(
             'Paper generation counts exam_id=%s counts=%s planned_total_marks=%s requested_total_marks=%s',
             exam_id, counts, planned_total_marks, total_marks,
         )
+
+        job.refresh_from_db()
+        if job.is_cancelled:
+            return
+
+        job.current_step = f'Contacting AI model ({model_name})'
+        job.progress = 25
+        job.save(update_fields=['current_step', 'progress'])
+
         generated_questions = []
         for question_type in ('mcq', 'truefalse', 'fillblank', 'subjective'):
             requested_count = counts.get(question_type, 0)
             if requested_count:
-                generated_questions.extend(_generate_type_questions(
+                job.refresh_from_db()
+                if job.is_cancelled:
+                    return
+
+                q_done = len(generated_questions)
+                pct = 25 + int(50 * (q_done / total_requested))
+                job.current_step = f'Generating {question_type.upper()} questions ({q_done} of {total_requested})'
+                job.progress = min(pct, 75)
+                job.question_count_generated = q_done
+                job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
+
+                batch_res = _generate_type_questions(
                     question_type,
                     requested_count,
                     model_name,
                     topics,
                     difficulty_distribution,
                     syllabus_text,
-                ))
+                )
+                generated_questions.extend(batch_res)
+
+        job.refresh_from_db()
+        if job.is_cancelled:
+            return
 
         if not generated_questions:
-            raise ValueError('Unable to generate a valid exam paper.')
+            raise ValueError('AI model returned zero valid questions.')
+
+        # Step: Validating questions against schema
+        job.current_step = 'Validating generated questions'
+        job.progress = 85
+        job.question_count_generated = len(generated_questions)
+        job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
+
+        warnings = []
+        if len(generated_questions) < total_requested:
+            warnings.append(f'Generated {len(generated_questions)} of {total_requested} requested questions.')
+
+        for idx, q in enumerate(generated_questions, 1):
+            if q.get('type') in {'mcq', 'fillblank'}:
+                opts = q.get('options') or []
+                ans = str(q.get('correct_answer', '')).strip().lower()
+                clean_opts = [str(o).strip().lower() for o in opts]
+                if ans not in clean_opts and ans not in {'0', '1', '2', '3', 'a', 'b', 'c', 'd'}:
+                    warnings.append(f'Question {idx}: correct answer was not found in option choices.')
 
         actual_total_marks = sum(question['marks'] for question in generated_questions)
         logger.debug(
             'Paper generation result exam_id=%s actual_total_marks=%s requested_total_marks=%s question_count=%s',
             exam_id, actual_total_marks, total_marks, len(generated_questions),
         )
+
+        # Step: Saving draft
+        job.current_step = 'Saving draft paper'
+        job.progress = 92
+        job.save(update_fields=['current_step', 'progress'])
+
         import time
         from api.utils.db_retry import is_lock_or_deadlock
         for attempt_idx in range(3):
@@ -281,20 +342,77 @@ def _run_generation(exam_id, model_name, topics, question_types, total_marks, di
                                 Option.objects.bulk_create(opts_to_create)
                     exam.total_marks = actual_total_marks
                     exam.status = Exam.Status.DRAFT
+                    exam.is_reviewed = False
                     exam.error_message = ''
-                    exam.save(update_fields=['total_marks', 'status', 'error_message', 'updated_at'])
+                    exam.save(update_fields=['total_marks', 'status', 'is_reviewed', 'error_message', 'updated_at'])
                 break
             except Exception as e:
                 if is_lock_or_deadlock(e) and attempt_idx < 2:
                     time.sleep(0.1 * (2 ** attempt_idx))
                     continue
                 raise
+
+        final_status = (
+            PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
+            if warnings
+            else PaperGenerationJob.Status.COMPLETED
+        )
+        job.status = final_status
+        job.progress = 100
+        job.current_step = 'Completed with warnings' if warnings else 'Paper generated successfully'
+        job.warnings = warnings
+        job.question_count_generated = len(generated_questions)
+        job.completed_at = timezone.now()
+        job.save(update_fields=['status', 'progress', 'current_step', 'warnings', 'question_count_generated', 'completed_at'])
+
+        try:
+            Notification.objects.create(
+                user=job.faculty,
+                institution=job.institution,
+                title='Paper Ready',
+                message=f"Your paper '{exam.title}' has been generated ({len(generated_questions)} questions). Review required before publishing.",
+                type=Notification.NotificationType.WARNING if warnings else Notification.NotificationType.SUCCESS,
+                link=f'/faculty/exams/{exam.id}/edit',
+            )
+        except Exception:
+            logger.exception('Failed to create completion notification')
+
     except Exception as exc:
         logger.exception('Background paper generation failed exam_id=%s', exam_id)
+        exc_str = str(exc).lower()
+        if 'connection refused' in exc_str or 'failed to establish a new connection' in exc_str or 'cannot connect' in exc_str:
+            friendly_err = 'Could not reach Ollama. Please ensure the local Ollama service is running.'
+        elif 'model' in exc_str and ('not found' in exc_str or 'unknown' in exc_str):
+            friendly_err = f"AI model '{model_name}' was not found. Please pull or select another model."
+        elif 'timeout' in exc_str or 'timed out' in exc_str:
+            friendly_err = 'The AI model took too long to respond. Please try again with fewer questions.'
+        elif 'invalid' in exc_str or 'json' in exc_str:
+            friendly_err = 'The AI model returned an invalid response format. Please try again.'
+        else:
+            friendly_err = f'Generation failed: {str(exc)[:120]}'
+
         Exam.objects.filter(id=exam_id).update(
             status=Exam.Status.FAILED,
-            error_message=str(exc),
+            error_message=friendly_err,
         )
+        job.status = PaperGenerationJob.Status.FAILED
+        job.progress = 100
+        job.current_step = 'Generation failed'
+        job.error_message = friendly_err
+        job.completed_at = timezone.now()
+        job.save(update_fields=['status', 'progress', 'current_step', 'error_message', 'completed_at'])
+
+        try:
+            Notification.objects.create(
+                user=job.faculty,
+                institution=job.institution,
+                title='Paper Generation Failed',
+                message=f"Failed to generate paper: {friendly_err}",
+                type=Notification.NotificationType.ERROR,
+                link='/faculty/generate',
+            )
+        except Exception:
+            pass
 
 
 class GeneratePaperView(APIView):
@@ -351,6 +469,28 @@ class GeneratePaperView(APIView):
         except (TypeError, ValueError) as exc:
             logger.warning('GeneratePaperView rejected payload: %s', exc)
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Concurrency / Double-submission prevention
+        active_job = PaperGenerationJob.objects.filter(
+            faculty=request.user,
+            status__in=[PaperGenerationJob.Status.QUEUED, PaperGenerationJob.Status.RUNNING],
+        ).first()
+        if active_job:
+            from datetime import timedelta
+            from django.utils import timezone
+            if timezone.now() - active_job.created_at > timedelta(minutes=10):
+                active_job.status = PaperGenerationJob.Status.FAILED
+                active_job.error_message = 'Generation timed out.'
+                active_job.completed_at = timezone.now()
+                active_job.save(update_fields=['status', 'error_message', 'completed_at'])
+            else:
+                return Response(
+                    {
+                        'detail': 'A paper generation is already in progress. Please wait for it to finish or cancel it.',
+                        'active_job_id': active_job.id,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         syllabus_file = request.FILES.get('syllabus')
         syllabus_text = ''
@@ -427,6 +567,9 @@ class GeneratePaperView(APIView):
 
         # AI Fallback: initialize Exam and start threaded AI generation
         try:
+            counts, planned_total_marks = compute_question_counts(question_types, total_marks)
+            expected_question_count = sum(counts.values())
+
             exam = Exam.objects.create(
                 institution=tenant_inst,
                 title=title,
@@ -440,9 +583,23 @@ class GeneratePaperView(APIView):
                 ai_model_used=model_name,
                 source_syllabus_text=syllabus_text,
                 status=Exam.Status.GENERATING,
+                is_reviewed=False,
             )
             from api.paper_engine.cache import PaperCacheService
             PaperCacheService.invalidate_tenant_pools_and_papers(tenant_inst.id)
+
+            job = PaperGenerationJob.objects.create(
+                institution=tenant_inst,
+                faculty=request.user,
+                department=assigned_dept,
+                exam=exam,
+                model=model_name,
+                status=PaperGenerationJob.Status.QUEUED,
+                current_step='Queued',
+                progress=5,
+                question_count_requested=expected_question_count,
+                request_hash=str(request.data.get('request_hash') or ''),
+            )
         except Exception as exc:
             logger.exception('Generated paper could not be initialized')
             return Response(
@@ -452,14 +609,18 @@ class GeneratePaperView(APIView):
 
         threading.Thread(
             target=_run_generation,
-            args=(exam.id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text),
+            args=(job.id, exam.id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text),
             daemon=True,
         ).start()
 
         return Response(
             {
+                'job_id': job.id,
                 'exam_id': exam.id,
-                'status': exam.status,
+                'status': job.status,
+                'progress': job.progress,
+                'current_step': job.current_step,
+                'question_count_requested': expected_question_count,
                 'question_count': 0,
                 'requested_total_marks': total_marks,
                 'actual_total_marks': total_marks,

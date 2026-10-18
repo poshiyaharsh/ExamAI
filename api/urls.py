@@ -4,6 +4,7 @@ from django.urls import include, path
 from .admin_dashboard import AdminDashboardView, LiveRosterView
 from .exam_management import (
     ClearFacultyPaperCacheView,
+    ConfirmExamReviewView,
     ExamDetailView,
     ExamListView,
     ExamQuestionCreateView,
@@ -22,6 +23,17 @@ from .faculty_evaluation import (
     FacultyReevaluateAttemptView,
 )
 from .generate_paper import GeneratePaperView
+from .notifications_views import (
+    NotificationListView,
+    NotificationMarkAllReadView,
+    NotificationMarkReadView,
+)
+from .paper_generations import (
+    PaperGenerationJobActiveView,
+    PaperGenerationJobCancelView,
+    PaperGenerationJobDetailView,
+    PaperGenerationJobListView,
+)
 from .student_exam import (
     HeartbeatView,
     SaveAnswerView,
@@ -60,8 +72,16 @@ urlpatterns = [
     path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
+    path('papers/generations/active/', PaperGenerationJobActiveView.as_view(), name='paper-generation-active'),
+    path('papers/generations/<int:job_id>/cancel/', PaperGenerationJobCancelView.as_view(), name='paper-generation-cancel'),
+    path('papers/generations/<int:job_id>/', PaperGenerationJobDetailView.as_view(), name='paper-generation-detail'),
+    path('papers/generations/', PaperGenerationJobListView.as_view(), name='paper-generation-list'),
+    path('notifications/read-all/', NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
+    path('notifications/<int:notification_id>/read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
+    path('notifications/', NotificationListView.as_view(), name='notification-list'),
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
+    path('faculty/exams/<int:exam_id>/confirm-review/', ConfirmExamReviewView.as_view(), name='faculty-exam-confirm-review'),
     path('faculty/exams/<int:exam_id>/shuffle/', ShuffleExamView.as_view(), name='faculty-exam-shuffle'),
     path('faculty/exams/<int:exam_id>/questions/', ExamQuestionCreateView.as_view(), name='faculty-exam-question-create'),
     path('faculty/exams/<int:exam_id>/questions/reorder/', ReorderQuestionsView.as_view(), name='faculty-exam-questions-reorder'),
