@@ -320,6 +320,9 @@ export type StudentExam = {
   topics: string[];
   starts_at: string | null;
   ends_at: string | null;
+  shuffle_questions?: boolean;
+  shuffle_options?: boolean;
+  max_warnings?: number;
   questions?: Array<Omit<ExamQuestion, "correct_answer" | "model_answer">>;
 };
 
@@ -335,9 +338,14 @@ export type StudentAttempt = {
   exam: number;
   exam_title: string;
   exam_total_marks: number;
+  attempt_number?: number;
   started_at: string;
   submitted_at: string | null;
+  expires_at?: string;
   status: "in_progress" | "submitted" | "auto_submitted" | "evaluated";
+  submit_reason?: string;
+  violation_count?: number;
+  max_score?: number;
   total_score: number;
   answers: Array<{
     question: number;
@@ -357,9 +365,33 @@ export type StudentExamStartResponse = {
   exam: StudentExam;
   started_at: string;
   deadline: string;
+  expires_at?: string;
+  session_token?: string;
+  violation_count?: number;
+  max_warnings?: number;
   created: boolean;
 };
 export type StudentAttemptResponse = StudentAttempt;
+
+export type ProctoringViolationResponse = {
+  auto_submitted: boolean;
+  submit_reason?: string;
+  violation_count: number;
+  max_warnings: number;
+  warnings_left: number;
+  message: string;
+};
+
+export type ProctoringHeartbeatResponse = {
+  active: boolean;
+  seconds_left?: number;
+  expired?: boolean;
+  auto_submitted?: boolean;
+  concurrent_session?: boolean;
+  violation_count?: number;
+  max_warnings?: number;
+  message?: string;
+};
 
 export type AdminStudentRow = {
   id: number;
@@ -976,8 +1008,36 @@ export const studentExamApi = {
     });
     return response.data;
   },
-  submitAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
-    const response = await apiClient.post<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/submit/`, {});
+  recordViolation: async (
+    attemptId: number,
+    eventType: string,
+    metadata?: Record<string, unknown>
+  ): Promise<ProctoringViolationResponse> => {
+    const response = await apiClient.post<ProctoringViolationResponse>(
+      `/api/student/attempts/${attemptId}/violation/`,
+      {
+        event_type: eventType,
+        metadata: metadata || {},
+      }
+    );
+    return response.data;
+  },
+  sendHeartbeat: async (
+    attemptId: number,
+    sessionToken?: string
+  ): Promise<ProctoringHeartbeatResponse> => {
+    const response = await apiClient.post<ProctoringHeartbeatResponse>(
+      `/api/student/attempts/${attemptId}/heartbeat/`,
+      {
+        session_token: sessionToken,
+      }
+    );
+    return response.data;
+  },
+  submitAttempt: async (attemptId: number, reason: string = 'manual'): Promise<StudentAttemptResponse> => {
+    const response = await apiClient.post<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/submit/`, {
+      reason,
+    });
     return response.data;
   },
   getAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
