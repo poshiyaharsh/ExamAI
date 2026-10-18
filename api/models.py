@@ -199,25 +199,29 @@ class Topic(models.Model):
 
 class Question(models.Model):
 	class QuestionType(models.TextChoices):
+		MCQ = 'mcq', 'Multiple Choice'
+		TRUE_FALSE = 'true_false', 'True / False'
+		FILL_BLANK = 'fill_blank', 'Fill in the Blank'
+		SHORT_ANSWER = 'short_answer', 'Short Answer'
+		LONG_ANSWER = 'long_answer', 'Long Answer'
+		# Backward-compatibility legacy values
 		MCQ_SINGLE = 'MCQ_SINGLE', 'Multiple Choice (Single)'
 		MCQ_MULTIPLE = 'MCQ_MULTIPLE', 'Multiple Choice (Multiple)'
-		TRUE_FALSE = 'TRUE_FALSE', 'True / False'
-		SHORT_ANSWER = 'SHORT_ANSWER', 'Short Answer'
-		LONG_ANSWER = 'LONG_ANSWER', 'Long Answer'
-		# Backward-compatibility legacy values
-		MCQ = 'mcq', 'Multiple Choice'
+		LEGACY_TRUE_FALSE = 'TRUE_FALSE', 'True / False (Upper)'
+		LEGACY_SHORT_ANSWER = 'SHORT_ANSWER', 'Short Answer (Upper)'
+		LEGACY_LONG_ANSWER = 'LONG_ANSWER', 'Long Answer (Upper)'
 		TRUEFALSE = 'truefalse', 'True or False'
 		FILLBLANK = 'fillblank', 'Fill in the Blank'
 		SUBJECTIVE = 'subjective', 'Subjective'
 
 	class Difficulty(models.TextChoices):
-		EASY = 'EASY', 'Easy'
-		MEDIUM = 'MEDIUM', 'Medium'
-		HARD = 'HARD', 'Hard'
+		EASY = 'easy', 'Easy'
+		MEDIUM = 'medium', 'Medium'
+		HARD = 'hard', 'Hard'
 		# Backward-compatibility legacy values
-		LEGACY_EASY = 'easy', 'Easy'
-		LEGACY_MEDIUM = 'medium', 'Medium'
-		LEGACY_HARD = 'hard', 'Hard'
+		UPPER_EASY = 'EASY', 'Easy (Upper)'
+		UPPER_MEDIUM = 'MEDIUM', 'Medium (Upper)'
+		UPPER_HARD = 'HARD', 'Hard (Upper)'
 
 	class Status(models.TextChoices):
 		DRAFT = 'DRAFT', 'Draft'
@@ -254,7 +258,7 @@ class Question(models.Model):
 		blank=True,
 	)
 	order = models.PositiveIntegerField(default=1)
-	question_type = models.CharField(max_length=30, choices=QuestionType.choices, default=QuestionType.MCQ_SINGLE)
+	question_type = models.CharField(max_length=30, choices=QuestionType.choices, default=QuestionType.MCQ)
 	difficulty = models.CharField(max_length=20, choices=Difficulty.choices, default=Difficulty.MEDIUM)
 	text = models.TextField()
 	explanation = models.TextField(blank=True, default='')
@@ -269,6 +273,10 @@ class Question(models.Model):
 	times_used = models.PositiveIntegerField(default=0)
 	last_used_at = models.DateTimeField(null=True, blank=True)
 	tags = models.JSONField(default=list, blank=True)
+	source = models.CharField(max_length=20, default='ai_generated', blank=True)
+	accepted_answers = models.JSONField(default=list, blank=True)
+	rubric = models.JSONField(default=list, blank=True)
+	word_limit = models.PositiveIntegerField(null=True, blank=True)
 	created_by = models.ForeignKey(
 		User,
 		on_delete=models.SET_NULL,
@@ -465,10 +473,14 @@ class StudentAnswer(models.Model):
 	)
 	question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='student_answers')
 	answer_text = models.TextField(blank=True, default='')
+	blank_answers = models.JSONField(default=list, blank=True)
 	selected_option_order = models.JSONField(null=True, blank=True)
 	is_correct = models.BooleanField(null=True, blank=True)
 	score_awarded = models.FloatField(null=True, blank=True)
 	ai_feedback = models.TextField(blank=True, default='')
+	teacher_feedback = models.TextField(blank=True, default='')
+	ai_suggested_score = models.FloatField(null=True, blank=True)
+	ai_suggested_feedback = models.TextField(blank=True, default='')
 	evaluation_status = models.CharField(
 		max_length=20,
 		choices=EvaluationStatus.choices,

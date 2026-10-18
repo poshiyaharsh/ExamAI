@@ -242,15 +242,28 @@ export type ResetPasswordResponse = {
   message: string;
 };
 
+export type CanonicalQuestionType = "mcq" | "true_false" | "fill_blank" | "short_answer" | "long_answer";
+export type LegacyQuestionType = "truefalse" | "fillblank" | "subjective";
+export type AnyQuestionType = CanonicalQuestionType | LegacyQuestionType;
+
+export type RubricItem = {
+  criterion: string;
+  marks: number;
+};
+
 export type ExamQuestion = {
   id: number;
   order: number;
-  question_type: "mcq" | "truefalse" | "fillblank" | "subjective";
-  difficulty: "easy" | "medium" | "hard";
+  question_type: AnyQuestionType;
+  difficulty: "easy" | "medium" | "hard" | "EASY" | "MEDIUM" | "HARD";
   text: string;
   options: string[] | null;
   correct_answer: string | number | boolean | null;
-  model_answer: string;
+  model_answer?: string;
+  accepted_answers?: string[][];
+  rubric?: RubricItem[] | string[];
+  word_limit?: number | null;
+  source?: "ai_generated" | "manual";
   marks: number;
   topic: string;
 };
@@ -1044,7 +1057,10 @@ export const studentExamApi = {
     });
     return response.data;
   },
-  saveAnswersBatch: async (attemptId: number, answers: Array<{ question_id: number; answer_text: string }>): Promise<{ saved: boolean; count?: number }> => {
+  saveAnswersBatch: async (
+    attemptId: number,
+    answers: Array<{ question_id: number; answer_text: string; blank_answers?: string[] }>
+  ): Promise<{ saved: boolean; count?: number }> => {
     const response = await apiClient.post<{ saved: boolean; count?: number }>(`/api/student/attempts/${attemptId}/save/`, {
       answers,
     });
@@ -1249,6 +1265,27 @@ export const facultyPaperApi = {
     });
     return response.data;
   },
+  parseSyllabus: async (file: File): Promise<{
+    filename: string;
+    char_count: number;
+    topics: string[];
+    detected_topics_count: number;
+    preview: string;
+  }> => {
+    const formData = new FormData();
+    formData.append("syllabus", file);
+    const response = await apiClient.post<{
+      filename: string;
+      char_count: number;
+      topics: string[];
+      detected_topics_count: number;
+      preview: string;
+    }>("/api/faculty/syllabus/parse/", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60000,
+    });
+    return response.data;
+  },
   generateExam: async (payload: {
     title: string;
     durationMinutes: number;
@@ -1256,6 +1293,7 @@ export const facultyPaperApi = {
     topics: string[];
     questionTypes: string[];
     difficultyDistribution: Record<string, number>;
+    blueprint?: Record<string, { count: number; marks: number }>;
     aiModel?: AiModel;
     syllabus?: File | null;
     avoidRepeats?: boolean;
@@ -1269,6 +1307,7 @@ export const facultyPaperApi = {
     payload.topics.forEach((topic) => formData.append("topics", topic));
     payload.questionTypes.forEach((questionType) => formData.append("question_types", questionType));
     formData.append("difficulty_distribution", JSON.stringify(payload.difficultyDistribution));
+    if (payload.blueprint) formData.append("blueprint", JSON.stringify(payload.blueprint));
     if (payload.aiModel) formData.append("ai_model", payload.aiModel);
     if (payload.syllabus) formData.append("syllabus", payload.syllabus);
     formData.append("avoid_repeats", payload.avoidRepeats !== false ? "true" : "false");
@@ -1383,6 +1422,10 @@ export const facultyExamApi = {
       marks?: number;
       options?: string[];
       correct_answer?: any;
+      model_answer?: string;
+      accepted_answers?: any;
+      rubric?: string;
+      word_limit?: number;
       topic?: string;
     }
   ): Promise<ExamQuestion> => {
@@ -1403,6 +1446,13 @@ export const facultyExamApi = {
   },
   manualGradeAnswer: async (answerId: number, score: number, feedback: string): Promise<any> => {
     const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/manual-grade/`, { score, feedback });
+    return response.data;
+  },
+  suggestGrade: async (answerId: number): Promise<{ detail: string; answer_id: number; ai_suggested_score: number; ai_suggested_feedback: string }> => {
+    const response = await apiClient.post<{ detail: string; answer_id: number; ai_suggested_score: number; ai_suggested_feedback: string }>(
+      `/api/faculty/answers/${answerId}/suggest-grade/`,
+      {}
+    );
     return response.data;
   },
   confirmReview: async (examId: number): Promise<{ detail: string; exam: FacultyExam }> => {

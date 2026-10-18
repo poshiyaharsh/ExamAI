@@ -276,11 +276,14 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
             qid = item.get('question_id')
             if qid in valid_questions:
                 raw_text = str(item.get('answer_text', ''))
+                blanks = item.get('blank_answers')
+                if (not raw_text.strip()) and blanks and isinstance(blanks, list):
+                    raw_text = " | ".join(str(b) for b in blanks)
                 # Map option back to canonical choice before storing
                 canonical_text, applied_perm = map_submitted_answer_to_canonical(
                     attempt, valid_questions[qid], raw_text
                 )
-                validated_items.append((valid_questions[qid], canonical_text, applied_perm))
+                validated_items.append((valid_questions[qid], canonical_text, applied_perm, blanks))
 
         if not validated_items:
             return Response({'detail': 'No valid questions found for this exam attempt.'}, status=status.HTTP_404_NOT_FOUND)
@@ -289,12 +292,14 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
         for attempt_idx in range(max_retries):
             try:
                 with transaction.atomic():
-                    for question, ans_text, perm in validated_items:
+                    for question, ans_text, perm, blanks in validated_items:
                         defaults = {
                             'institution': tenant,
                             'answer_text': ans_text,
                             'selected_option_order': perm,
                         }
+                        if blanks is not None and isinstance(blanks, list):
+                            defaults['blank_answers'] = blanks
                         try:
                             StudentAnswer.objects.update_or_create(
                                 attempt=attempt,
@@ -308,7 +313,7 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
                             ).update(**defaults)
 
                 if len(validated_items) == 1:
-                    q, text, _ = validated_items[0]
+                    q, text, _, _blanks = validated_items[0]
                     return Response({
                         'saved': True,
                         'question_id': q.id,

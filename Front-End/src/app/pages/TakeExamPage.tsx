@@ -28,6 +28,17 @@ import { studentExamApi, type StudentExamStartResponse } from "../../services/ap
 
 const optionLabels = ["A", "B", "C", "D", "E", "F"];
 
+const typeLabels: Record<string, string> = {
+  mcq: "Multiple Choice",
+  true_false: "True / False",
+  truefalse: "True / False",
+  fill_blank: "Fill in the Blanks",
+  fillblank: "Fill in the Blanks",
+  short_answer: "Short Answer",
+  long_answer: "Long Answer",
+  subjective: "Subjective",
+};
+
 type SaveState = "idle" | "saving" | "saved" | "retrying" | "error";
 
 function formatCountdown(seconds: number) {
@@ -70,6 +81,7 @@ export function TakeExamPage() {
   const [session, setSession] = useState<StudentExamStartResponse | null>(null);
   const [examStarted, setExamStarted] = useState(false);
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [blankAnswers, setBlankAnswers] = useState<Record<number, string[]>>({});
   const [flagged, setFlagged] = useState<Record<number, boolean>>({});
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -98,6 +110,7 @@ export function TakeExamPage() {
   const blurDebounceRef = useRef<number | null>(null);
   const lastViolationTimeRef = useRef<number>(0);
   const pendingAnswersRef = useRef<Record<number, string>>({});
+  const pendingBlankAnswersRef = useRef<Record<number, string[]>>({});
   const isSavingRef = useRef(false);
   const debounceTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
@@ -128,9 +141,23 @@ export function TakeExamPage() {
 
   const questions = session?.exam.questions ?? [];
   const currentQuestion = questions[currentIndex];
-  const answeredCount = questions.filter((question) => Boolean(answers[question.id]?.trim())).length;
+
+  const isQuestionAnswered = (question: any) => {
+    if (!question) return false;
+    const qType = question.question_type;
+    if (qType === "fill_blank" || qType === "fillblank") {
+      const blankMatches = question.text.match(/_{3,}/g);
+      const totalBlanks = blankMatches ? blankMatches.length : 1;
+      const studentBlanks = blankAnswers[question.id] || [];
+      if (studentBlanks.length < totalBlanks) return false;
+      return studentBlanks.slice(0, totalBlanks).every((b: string) => Boolean(b && b.trim().length > 0));
+    }
+    return Boolean(answers[question.id]?.trim());
+  };
+
+  const answeredCount = questions.filter(isQuestionAnswered).length;
   const answeredMarks = questions.reduce(
-    (total, question) => total + (answers[question.id]?.trim() ? (Number(question.marks) || 0) : 0),
+    (total, question) => total + (isQuestionAnswered(question) ? (Number(question.marks) || 0) : 0),
     0
   );
   const flaggedCount = Object.values(flagged).filter(Boolean).length;
@@ -206,6 +233,7 @@ export function TakeExamPage() {
     const payload = questionIds.map((qid) => ({
       question_id: qid,
       answer_text: batch[qid],
+      blank_answers: pendingBlankAnswersRef.current[qid] || undefined,
     }));
 
     try {
@@ -213,6 +241,7 @@ export function TakeExamPage() {
       for (const qid of questionIds) {
         if (pendingAnswersRef.current[qid] === batch[qid]) {
           delete pendingAnswersRef.current[qid];
+          delete pendingBlankAnswersRef.current[qid];
         }
       }
       retryCountRef.current = 0;
@@ -257,12 +286,37 @@ export function TakeExamPage() {
     }, 450);
   };
 
+  const setBlankValue = (questionId: number, index: number, value: string, totalBlanks: number) => {
+    const existing = blankAnswers[questionId]
+      ? [...blankAnswers[questionId]]
+      : Array(totalBlanks).fill("");
+    while (existing.length < totalBlanks) existing.push("");
+    existing[index] = value;
+
+    setBlankAnswers((prev) => ({ ...prev, [questionId]: existing }));
+    pendingBlankAnswersRef.current[questionId] = existing;
+
+    const joined = existing.join(", ");
+    setAnswers((prev) => ({ ...prev, [questionId]: joined }));
+    pendingAnswersRef.current[questionId] = joined;
+
+    setSaveState("saving");
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      flushPendingAnswers();
+    }, 450);
+  };
+
   const toggleFlag = (questionId: number) => {
     setFlagged((prev) => ({ ...prev, [questionId]: !prev[questionId] }));
   };
 
   const clearAnswer = (questionId: number) => {
     setAnswer(questionId, "");
+    setBlankAnswers((prev) => ({ ...prev, [questionId]: [] }));
+    delete pendingBlankAnswersRef.current[questionId];
   };
 
   // Submit Exam
@@ -597,7 +651,7 @@ export function TakeExamPage() {
           <div className="grid grid-cols-5 gap-2">
             {questions.map((question, index) => {
               const isCurrent = index === currentIndex;
-              const isAnswered = Boolean(answers[question.id]?.trim());
+              const isAnswered = isQuestionAnswered(question);
               const isFlagged = Boolean(flagged[question.id]);
 
               return (
@@ -654,135 +708,252 @@ export function TakeExamPage() {
         </aside>
 
         {/* Right Section: Active Question Display */}
-        {currentQuestion && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs">
-            {/* Question Header & Meta */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
-                  {typeLabel[currentQuestion.question_type] ?? "Question"}
-                </span>
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                  {formatMarks(currentQuestion.marks)} {Number(currentQuestion.marks) === 1 ? "Mark" : "Marks"}
-                </span>
-                {currentQuestion.topic && (
-                  <span className="rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-500 border border-slate-100">
-                    Topic: {currentQuestion.topic}
+        {currentQuestion && (() => {
+          const qType = currentQuestion.question_type;
+          const isFillBlank = qType === "fill_blank" || qType === "fillblank";
+          const isTrueFalse = qType === "true_false" || qType === "truefalse";
+          const isMcq = qType === "mcq";
+          const isSubjective = qType === "short_answer" || qType === "long_answer" || qType === "subjective";
+
+          const blankMatches = currentQuestion.text.match(/_{3,}/g);
+          const totalBlanks = isFillBlank ? (blankMatches ? blankMatches.length : 1) : 0;
+          const currentBlanks = blankAnswers[currentQuestion.id] || Array(totalBlanks).fill("");
+
+          const textAnswer = answers[currentQuestion.id] ?? "";
+          const wordCount = textAnswer.trim() ? textAnswer.trim().split(/\s+/).length : 0;
+          const wordLimitExceeded = Boolean(currentQuestion.word_limit && wordCount > currentQuestion.word_limit);
+
+          const hasAnsweredCurrent = isFillBlank
+            ? currentBlanks.some((b) => Boolean(b && b.trim()))
+            : Boolean(textAnswer.trim());
+
+          return (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
+              {/* Question Header & Meta */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
+                    {typeLabels[qType] ?? "Question"}
                   </span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                    {formatMarks(currentQuestion.marks)} {Number(currentQuestion.marks) === 1 ? "Mark" : "Marks"}
+                  </span>
+                  {currentQuestion.topic && (
+                    <span className="rounded-full bg-slate-50 px-3 py-1 text-xs text-slate-500 border border-slate-100">
+                      Topic: {currentQuestion.topic}
+                    </span>
+                  )}
+                </div>
+
+                {/* Flag for Review Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => toggleFlag(currentQuestion.id)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-semibold transition-all ${
+                    flagged[currentQuestion.id]
+                      ? "bg-amber-500 text-white shadow-xs"
+                      : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  <Bookmark className={`h-3.5 w-3.5 ${flagged[currentQuestion.id] ? "fill-white" : ""}`} />
+                  <span>{flagged[currentQuestion.id] ? "Flagged for Review" : "Flag Question"}</span>
+                </button>
+              </div>
+
+              {/* Question Prompt */}
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                  Question {currentIndex + 1} of {questions.length}
+                </div>
+                {isFillBlank ? (
+                  <h3 className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
+                    {currentQuestion.text.split(/_{3,}/).map((chunk, cIdx, arr) => (
+                      <span key={cIdx}>
+                        {chunk}
+                        {cIdx < arr.length - 1 && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 font-mono text-xs font-bold mx-1 shadow-2xs">
+                            [ Blank #{cIdx + 1} ]
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </h3>
+                ) : (
+                  <h3 className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
+                    {currentQuestion.text}
+                  </h3>
                 )}
               </div>
 
-              {/* Flag for Review Toggle Button */}
-              <button
-                type="button"
-                onClick={() => toggleFlag(currentQuestion.id)}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-semibold transition-all ${
-                  flagged[currentQuestion.id]
-                    ? "bg-amber-500 text-white shadow-xs"
-                    : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <Bookmark className={`h-3.5 w-3.5 ${flagged[currentQuestion.id] ? "fill-white" : ""}`} />
-                <span>{flagged[currentQuestion.id] ? "Flagged for Review" : "Flag Question"}</span>
-              </button>
-            </div>
+              {/* Type-Specific Answer Inputs */}
 
-            {/* Question Text Body */}
-            <div className="mt-6">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                Question {currentIndex + 1} of {questions.length}
-              </div>
-              <h3 className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
-                {currentQuestion.text}
-              </h3>
-            </div>
+              {/* 1. MCQ Option Cards */}
+              {isMcq && currentOptions.length > 0 && (
+                <div className="space-y-3">
+                  {currentOptions.map((option, idx) => {
+                    const isSelected = cleanOptionText(answers[currentQuestion.id] ?? "") === option;
+                    const labelLetter = optionLabels[idx] || String(idx + 1);
 
-            {/* Answer Input Area */}
-            {currentOptions.length > 0 ? (
-              <div className="mt-8 space-y-3">
-                {currentOptions.map((option, idx) => {
-                  const isSelected = cleanOptionText(answers[currentQuestion.id] ?? "") === option;
-                  const labelLetter = optionLabels[idx] || String(idx + 1);
-
-                  return (
-                    <label
-                      key={`${idx}-${option}`}
-                      className={`flex cursor-pointer items-center gap-4 rounded-xl border-2 p-4 transition-all ${
-                        isSelected
-                          ? "border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name={`question-${currentQuestion.id}`}
-                        checked={isSelected}
-                        onChange={() => setAnswer(currentQuestion.id, option)}
-                        className="sr-only"
-                      />
-                      <span
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold transition-all ${
-                          isSelected ? "bg-blue-600 text-white shadow-xs" : "bg-slate-100 text-slate-600"
+                    return (
+                      <label
+                        key={`${idx}-${option}`}
+                        className={`flex cursor-pointer items-center gap-4 rounded-xl border-2 p-4 transition-all ${
+                          isSelected
+                            ? "border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600"
+                            : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
                         }`}
                       >
-                        {labelLetter}
-                      </span>
-                      <span className="text-sm sm:text-base font-normal text-slate-800 leading-normal">
-                        {option}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="mt-8">
-                <textarea
-                  rows={10}
-                  value={answers[currentQuestion.id] ?? ""}
-                  onChange={(e) => setAnswer(currentQuestion.id, e.target.value)}
-                  placeholder="Type your response here..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-4 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all resize-y"
-                />
-                <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
-                  <span>{(answers[currentQuestion.id] ?? "").length} characters</span>
-                  <span>{(answers[currentQuestion.id] ?? "").trim() ? (answers[currentQuestion.id] ?? "").trim().split(/\s+/).length : 0} words</span>
+                        <input
+                          type="radio"
+                          name={`question-${currentQuestion.id}`}
+                          checked={isSelected}
+                          onChange={() => setAnswer(currentQuestion.id, option)}
+                          className="sr-only"
+                        />
+                        <span
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold transition-all ${
+                            isSelected ? "bg-blue-600 text-white shadow-xs" : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {labelLetter}
+                        </span>
+                        <span className="text-sm sm:text-base font-normal text-slate-800 leading-normal">
+                          {option}
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
-              </div>
-            )}
-
-            {/* Bottom Actions Row */}
-            <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-6">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={currentIndex === 0}
-                  onClick={() => setCurrentIndex((idx) => idx - 1)}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
-                >
-                  <ChevronLeft className="h-4 w-4" /> Previous
-                </button>
-                <button
-                  type="button"
-                  disabled={currentIndex === questions.length - 1}
-                  onClick={() => setCurrentIndex((idx) => idx + 1)}
-                  className="inline-flex items-center gap-1 rounded-xl bg-slate-900 px-4 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-40 transition-colors"
-                >
-                  Next <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-
-              {Boolean(answers[currentQuestion.id]?.trim()) && (
-                <button
-                  type="button"
-                  onClick={() => clearAnswer(currentQuestion.id)}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600 transition-colors"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" /> Clear Answer
-                </button>
               )}
-            </div>
-          </section>
-        )}
+
+              {/* 2. True / False Choice Cards */}
+              {isTrueFalse && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {["True", "False"].map((tf) => {
+                    const isSelected = (answers[currentQuestion.id] ?? "").toLowerCase() === tf.toLowerCase();
+                    return (
+                      <button
+                        key={tf}
+                        type="button"
+                        onClick={() => setAnswer(currentQuestion.id, tf)}
+                        className={`flex items-center justify-center gap-3 p-5 rounded-2xl border-2 text-base font-bold transition-all ${
+                          isSelected
+                            ? "border-amber-600 bg-amber-50 text-amber-900 ring-2 ring-amber-500 shadow-xs"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className={`h-4 w-4 rounded-full border-2 flex items-center justify-center ${isSelected ? "border-amber-600" : "border-slate-300"}`}>
+                          {isSelected && <span className="h-2 w-2 rounded-full bg-amber-600" />}
+                        </span>
+                        <span>{tf}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* 3. Fill in the Blanks Dedicated Inputs */}
+              {isFillBlank && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500 border-b border-slate-100 pb-2">
+                    <span>Fill in the {totalBlanks} blank{totalBlanks > 1 ? "s" : ""}:</span>
+                    <span>
+                      {currentBlanks.filter((b) => Boolean(b && b.trim())).length} of {totalBlanks} filled
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {Array.from({ length: totalBlanks }).map((_, bIdx) => (
+                      <div key={bIdx} className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/40 focus-within:border-purple-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-purple-500/20 transition-all">
+                        <span className="flex items-center justify-center px-3 py-1 rounded-lg bg-purple-100 text-purple-800 font-bold text-xs shrink-0 font-mono">
+                          Blank #{bIdx + 1}
+                        </span>
+                        <input
+                          type="text"
+                          value={currentBlanks[bIdx] || ""}
+                          onChange={(e) => setBlankValue(currentQuestion.id, bIdx, e.target.value, totalBlanks)}
+                          placeholder={`Enter answer for Blank #${bIdx + 1}...`}
+                          className="w-full bg-transparent text-sm text-slate-900 focus:outline-hidden"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Short / Long Answer / Subjective Textarea with Word Limits */}
+              {isSubjective && (
+                <div className="space-y-2">
+                  <textarea
+                    rows={qType === "short_answer" ? 6 : 10}
+                    value={textAnswer}
+                    onChange={(e) => setAnswer(currentQuestion.id, e.target.value)}
+                    placeholder={
+                      qType === "short_answer"
+                        ? "Write a concise response (bullet points or brief paragraph)..."
+                        : "Write your complete, structured response here..."
+                    }
+                    className={`w-full rounded-xl border p-4 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-hidden focus:ring-2 transition-all resize-y ${
+                      wordLimitExceeded
+                        ? "border-rose-400 bg-rose-50/20 focus:ring-rose-500/20 focus:border-rose-500"
+                        : "border-slate-200 bg-slate-50/50 focus:border-blue-500 focus:ring-blue-500/20"
+                    }`}
+                  />
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <div className="flex items-center gap-2">
+                      <span>{textAnswer.length} characters</span>
+                      <span>·</span>
+                      <span className={wordLimitExceeded ? "text-rose-600 font-bold" : ""}>
+                        {wordCount} words
+                      </span>
+                      {currentQuestion.word_limit && (
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                          wordLimitExceeded
+                            ? "bg-rose-100 text-rose-700 border border-rose-200"
+                            : "bg-slate-100 text-slate-600"
+                        }`}>
+                          Limit: {currentQuestion.word_limit} words
+                          {wordLimitExceeded && " (Exceeded)"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Bottom Actions Row */}
+              <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-6">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={currentIndex === 0}
+                    onClick={() => setCurrentIndex((idx) => idx - 1)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={currentIndex === questions.length - 1}
+                    onClick={() => setCurrentIndex((idx) => idx + 1)}
+                    className="inline-flex items-center gap-1 rounded-xl bg-slate-900 px-4 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-40 transition-colors"
+                  >
+                    Next <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {hasAnsweredCurrent && (
+                  <button
+                    type="button"
+                    onClick={() => clearAnswer(currentQuestion.id)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600 transition-colors"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Clear Answer
+                  </button>
+                )}
+              </div>
+            </section>
+          );
+        })()}
       </main>
 
       {/* Fixed Bottom Bar */}

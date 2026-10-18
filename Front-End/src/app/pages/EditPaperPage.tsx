@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -40,6 +40,9 @@ function questionPayload(question: ExamQuestion) {
     options: question.options,
     correct_answer: correctAnswer,
     model_answer: question.model_answer,
+    accepted_answers: question.accepted_answers,
+    rubric: question.rubric,
+    word_limit: question.word_limit ? Number(question.word_limit) : undefined,
     marks: Number(question.marks),
     topic: question.topic,
   };
@@ -58,19 +61,27 @@ export function EditPaperPage() {
   const [shuffling, setShuffling] = useState(false);
   const [confirmingReview, setConfirmingReview] = useState(false);
 
+  // Filters
+  const [filterType, setFilterType] = useState<string>("all");
+  const [filterDifficulty, setFilterDifficulty] = useState<string>("all");
+
   // Publish Confirmation Modal
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
   // Add Question Modal
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newQType, setNewQType] = useState<"mcq" | "subjective" | "truefalse" | "fillblank">("mcq");
+  const [newQType, setNewQType] = useState<"mcq" | "true_false" | "fill_blank" | "short_answer" | "long_answer">("mcq");
   const [newQText, setNewQText] = useState("");
-  const [newQMarks, setNewQMarks] = useState("1");
+  const [newQMarks, setNewQMarks] = useState("2");
   const [newQDiff, setNewQDiff] = useState<"easy" | "medium" | "hard">("medium");
   const [newQTopic, setNewQTopic] = useState("");
   const [newQOptions, setNewQOptions] = useState<string[]>(["", "", "", ""]);
   const [newQAnswer, setNewQAnswer] = useState("");
+  const [newQModelAnswer, setNewQModelAnswer] = useState("");
+  const [newQRubric, setNewQRubric] = useState("");
+  const [newQWordLimit, setNewQWordLimit] = useState("");
+  const [newQAcceptedAnswers, setNewQAcceptedAnswers] = useState("");
   const [addingQuestion, setAddingQuestion] = useState(false);
 
   useEffect(() => {
@@ -177,6 +188,10 @@ export function EditPaperPage() {
     }
     setAddingQuestion(true);
     try {
+      let accepted: any = undefined;
+      if (newQType === "fill_blank" && newQAcceptedAnswers.trim()) {
+        accepted = newQAcceptedAnswers.split(",").map((s) => s.trim()).filter(Boolean);
+      }
       const created = await facultyExamApi.addQuestion(Number(id), {
         text: newQText.trim(),
         question_type: newQType,
@@ -184,7 +199,11 @@ export function EditPaperPage() {
         marks: Number(newQMarks) || 1,
         topic: newQTopic.trim() || "General",
         options: newQType === "mcq" ? newQOptions.map((o) => o.trim()).filter(Boolean) : undefined,
-        correct_answer: newQAnswer.trim(),
+        correct_answer: newQType === "true_false" ? newQAnswer || "True" : newQAnswer.trim(),
+        model_answer: newQModelAnswer.trim() || undefined,
+        rubric: newQRubric.trim() || undefined,
+        word_limit: newQWordLimit ? Number(newQWordLimit) : undefined,
+        accepted_answers: accepted,
       });
       setExam((current) =>
         current
@@ -199,6 +218,10 @@ export function EditPaperPage() {
       setNewQText("");
       setNewQAnswer("");
       setNewQOptions(["", "", "", ""]);
+      setNewQModelAnswer("");
+      setNewQRubric("");
+      setNewQWordLimit("");
+      setNewQAcceptedAnswers("");
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to add question.");
     } finally {
@@ -232,6 +255,15 @@ export function EditPaperPage() {
   );
 
   const marksMatch = computedTotalMarks === (exam?.total_marks || 0);
+
+  const filteredQuestions = useMemo(() => {
+    if (!exam?.questions) return [];
+    return exam.questions.filter((q) => {
+      if (filterType !== "all" && q.question_type !== filterType) return false;
+      if (filterDifficulty !== "all" && q.difficulty !== filterDifficulty) return false;
+      return true;
+    });
+  }, [exam?.questions, filterType, filterDifficulty]);
 
   const validationWarnings = useMemo(() => {
     if (!exam?.questions) return [];
@@ -429,177 +461,433 @@ export function EditPaperPage() {
               </div>
             )}
 
-            {/* Questions List */}
+            {/* Questions List & Filter Controls */}
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-bold text-base text-foreground">
-                  Questions ({exam.questions?.length ?? 0})
-                </h3>
-                <span className="text-xs text-muted-foreground">
-                  You can edit questions inline, swap with new AI candidates, or delete questions.
-                </span>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-base text-foreground">
+                    Questions ({exam.questions?.length ?? 0})
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Review and calibrate questions, accepted answers, and grading rubrics before publishing.
+                  </p>
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                    {[
+                      { key: "all", label: "All Types" },
+                      { key: "mcq", label: "MCQ" },
+                      { key: "true_false", label: "True/False" },
+                      { key: "fill_blank", label: "Fill Blank" },
+                      { key: "short_answer", label: "Short" },
+                      { key: "long_answer", label: "Long" },
+                    ].map((t) => (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => setFilterType(t.key)}
+                        className={`px-2.5 py-1 rounded-lg transition-all ${
+                          filterType === t.key
+                            ? "bg-white text-primary shadow-xs font-bold"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                    {[
+                      { key: "all", label: "All Diff" },
+                      { key: "easy", label: "Easy" },
+                      { key: "medium", label: "Med" },
+                      { key: "hard", label: "Hard" },
+                    ].map((d) => (
+                      <button
+                        key={d.key}
+                        type="button"
+                        onClick={() => setFilterDifficulty(d.key)}
+                        className={`px-2 py-1 rounded-lg transition-all ${
+                          filterDifficulty === d.key
+                            ? "bg-white text-slate-900 shadow-xs font-bold"
+                            : "text-slate-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              {exam.questions?.map((question, qIdx) => (
-                <section
-                  key={question.id}
-                  className="rounded-2xl border border-border bg-white p-5 sm:p-6 shadow-xs hover:shadow-md transition-all space-y-3"
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
-                        {qIdx + 1}
-                      </span>
-                      <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700 uppercase">
-                        {question.question_type}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-                        {question.marks} {Number(question.marks) === 1 ? "Mark" : "Marks"}
-                      </span>
-                      <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-500 uppercase">
-                        {question.difficulty}
-                      </span>
-                    </div>
+              {filteredQuestions.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border bg-slate-50/50 p-8 text-center text-sm text-muted-foreground">
+                  No questions match your current type/difficulty filter.
+                </div>
+              ) : (
+                filteredQuestions.map((question, qIdx) => {
+                  const qType = question.question_type;
+                  const typeBadgeColor =
+                    qType === "mcq"
+                      ? "bg-blue-50 text-blue-700 border-blue-200"
+                      : qType === "true_false"
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : qType === "fill_blank"
+                      ? "bg-purple-50 text-purple-700 border-purple-200"
+                      : qType === "short_answer"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : "bg-indigo-50 text-indigo-700 border-indigo-200";
 
-                    {!isPublished && (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={swappingId === question.id}
-                          onClick={() => handleSwap(question.id)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
-                          title="Regenerate / swap with a fresh alternative"
-                        >
-                          <RefreshCw className={`h-3.5 w-3.5 ${swappingId === question.id ? "animate-spin" : ""}`} />
-                          <span className="hidden sm:inline">Swap</span>
-                        </button>
-                        <button
-                          type="button"
-                          disabled={savingId === question.id}
-                          onClick={() => saveQuestion(question)}
-                          className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-3 py-1.5 text-xs font-semibold hover:bg-primary/20 transition-colors disabled:opacity-50"
-                        >
-                          <Save className="h-3.5 w-3.5" />
-                          {savingId === question.id ? "Saving..." : "Save"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={deletingId === question.id}
-                          onClick={() => handleDeleteQuestion(question.id)}
-                          className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition-colors"
-                          title="Delete question"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                  const diffBadgeColor =
+                    question.difficulty === "easy"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : question.difficulty === "hard"
+                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                      : "bg-amber-50 text-amber-700 border-amber-200";
+
+                  return (
+                    <section
+                      key={question.id}
+                      className="rounded-2xl border border-border bg-white p-5 sm:p-6 shadow-xs hover:shadow-md transition-all space-y-4"
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
+                            {qIdx + 1}
+                          </span>
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${typeBadgeColor} uppercase`}>
+                            {qType.replace("_", " ")}
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                            {question.marks} {Number(question.marks) === 1 ? "Mark" : "Marks"}
+                          </span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold border ${diffBadgeColor} uppercase`}>
+                            {question.difficulty}
+                          </span>
+                          {question.topic && (
+                            <span className="rounded-full bg-slate-50 border border-slate-200 px-2.5 py-0.5 text-xs text-slate-600">
+                              Unit: {question.topic}
+                            </span>
+                          )}
+                        </div>
+
+                        {!isPublished && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={swappingId === question.id}
+                              onClick={() => handleSwap(question.id)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
+                              title="Regenerate / swap with a fresh alternative"
+                            >
+                              <RefreshCw className={`h-3.5 w-3.5 ${swappingId === question.id ? "animate-spin" : ""}`} />
+                              <span className="hidden sm:inline">Swap</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={savingId === question.id}
+                              onClick={() => saveQuestion(question)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-3 py-1.5 text-xs font-semibold hover:bg-primary/20 transition-colors disabled:opacity-50"
+                            >
+                              <Save className="h-3.5 w-3.5" />
+                              {savingId === question.id ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deletingId === question.id}
+                              onClick={() => handleDeleteQuestion(question.id)}
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition-colors"
+                              title="Delete question"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  {/* Question Text */}
-                  <div>
-                    <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                      Question Prompt
-                    </label>
-                    <textarea
-                      value={question.text}
-                      disabled={isPublished}
-                      onChange={(e) => updateQuestion(question.id, { text: e.target.value })}
-                      rows={3}
-                      className="w-full rounded-xl border border-border bg-muted/15 p-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:opacity-75"
-                    />
-                  </div>
+                      {/* Question Text */}
+                      <div>
+                        <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                          Question Prompt {qType === "fill_blank" && "(Use ____ for blanks)"}
+                        </label>
+                        <textarea
+                          value={question.text}
+                          disabled={isPublished}
+                          onChange={(e) => updateQuestion(question.id, { text: e.target.value })}
+                          rows={3}
+                          className="w-full rounded-xl border border-border bg-muted/15 p-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all disabled:opacity-75"
+                        />
+                      </div>
 
-                  {/* MCQ Options */}
-                  {question.options && question.options.length > 0 && (
-                    <div className="space-y-2 pt-1">
-                      <label className="block text-[11px] font-semibold text-muted-foreground uppercase">
-                        Answer Options
-                      </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {question.options.map((opt, oIdx) => (
-                          <div key={oIdx} className="flex items-center gap-2 rounded-xl border border-border/80 bg-muted/10 px-3 py-1.5">
-                            <span className="font-bold text-xs text-primary w-5">{String.fromCharCode(65 + oIdx)}.</span>
+                      {/* MCQ Options Rendering */}
+                      {qType === "mcq" && question.options && question.options.length > 0 && (
+                        <div className="space-y-2 pt-1">
+                          <label className="block text-[11px] font-semibold text-muted-foreground uppercase">
+                            Options & Correct Choice
+                          </label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {question.options.map((opt, oIdx) => {
+                              const letter = String.fromCharCode(65 + oIdx);
+                              const isSelected =
+                                String(question.correct_answer).toUpperCase() === letter ||
+                                String(question.correct_answer).trim().toLowerCase() === opt.trim().toLowerCase();
+                              return (
+                                <div
+                                  key={oIdx}
+                                  className={`flex items-center gap-2 rounded-xl border p-2 transition-all ${
+                                    isSelected
+                                      ? "border-emerald-500 bg-emerald-50/40 ring-1 ring-emerald-500/30"
+                                      : "border-border/80 bg-muted/10"
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    disabled={isPublished}
+                                    onClick={() => updateQuestion(question.id, { correct_answer: letter })}
+                                    className={`h-6 w-6 rounded-lg text-xs font-bold transition-all shrink-0 ${
+                                      isSelected ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-700 hover:bg-primary/20"
+                                    }`}
+                                    title={`Click to set ${letter} as correct`}
+                                  >
+                                    {letter}
+                                  </button>
+                                  <input
+                                    type="text"
+                                    disabled={isPublished}
+                                    value={opt}
+                                    onChange={(e) => {
+                                      const next = [...question.options!];
+                                      next[oIdx] = e.target.value;
+                                      updateQuestion(question.id, { options: next });
+                                    }}
+                                    className="w-full bg-transparent text-xs text-foreground focus:outline-hidden"
+                                    placeholder={`Option ${letter}`}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* True/False Buttons */}
+                      {qType === "true_false" && (
+                        <div className="space-y-1.5 pt-1">
+                          <label className="block text-[11px] font-semibold text-muted-foreground uppercase">
+                            Correct Answer Key
+                          </label>
+                          <div className="flex items-center gap-3">
+                            {["True", "False"].map((tf) => {
+                              const isMatch = String(question.correct_answer).trim().toLowerCase() === tf.toLowerCase();
+                              return (
+                                <button
+                                  key={tf}
+                                  type="button"
+                                  disabled={isPublished}
+                                  onClick={() => updateQuestion(question.id, { correct_answer: tf })}
+                                  className={`px-5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                                    isMatch
+                                      ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                                      : "bg-muted/10 text-muted-foreground border-border hover:bg-muted/30"
+                                  }`}
+                                >
+                                  {tf}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Fill in the Blank Preview & Accepted Answers */}
+                      {qType === "fill_blank" && (
+                        <div className="space-y-3 pt-1">
+                          <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-3">
+                            <span className="text-[11px] font-bold text-purple-900 uppercase block mb-1">
+                              Student View Preview:
+                            </span>
+                            <p className="text-xs text-purple-950 font-medium">
+                              {question.text.split(/_{3,}/).map((chunk, cIdx, arr) => (
+                                <React.Fragment key={cIdx}>
+                                  {chunk}
+                                  {cIdx < arr.length - 1 && (
+                                    <span className="inline-block mx-1.5 px-3 py-0.5 rounded-md bg-white border border-purple-300 font-mono text-[11px] text-purple-700 font-bold shadow-2xs">
+                                      [ Blank #{cIdx + 1} ]
+                                    </span>
+                                  )}
+                                </React.Fragment>
+                              ))}
+                            </p>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                                Primary Correct Answer(s)
+                              </label>
+                              <input
+                                type="text"
+                                disabled={isPublished}
+                                value={String(question.correct_answer ?? "")}
+                                onChange={(e) => updateQuestion(question.id, { correct_answer: e.target.value })}
+                                className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary"
+                                placeholder="e.g. oxygen (or comma-separated for multi-blanks)"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                                Accepted Synonyms / Alternatives (JSON or comma-separated)
+                              </label>
+                              <input
+                                type="text"
+                                disabled={isPublished}
+                                value={
+                                  Array.isArray(question.accepted_answers)
+                                    ? JSON.stringify(question.accepted_answers)
+                                    : String(question.accepted_answers ?? "")
+                                }
+                                onChange={(e) => {
+                                  let val: any = e.target.value;
+                                  try {
+                                    val = JSON.parse(e.target.value);
+                                  } catch {
+                                    // keep string
+                                  }
+                                  updateQuestion(question.id, { accepted_answers: val });
+                                }}
+                                className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary font-mono"
+                                placeholder='e.g. [["O2", "oxygen"]]'
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Short Answer & Long Answer & Subjective: Model Answer, Rubric, Word Limit */}
+                      {(qType === "short_answer" || qType === "long_answer" || qType === "subjective") && (
+                        <div className="space-y-3 pt-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                                Model Answer / Expected Concepts
+                              </label>
+                              <textarea
+                                value={question.model_answer || ""}
+                                disabled={isPublished}
+                                onChange={(e) => updateQuestion(question.id, { model_answer: e.target.value })}
+                                rows={3}
+                                className="w-full rounded-xl border border-border bg-muted/15 p-2.5 text-xs focus:outline-hidden focus:border-primary disabled:opacity-75"
+                                placeholder="Key points and terms required in student response..."
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                                Grading Rubric / Criteria
+                              </label>
+                              <textarea
+                                value={question.rubric || ""}
+                                disabled={isPublished}
+                                onChange={(e) => updateQuestion(question.id, { rubric: e.target.value })}
+                                rows={3}
+                                className="w-full rounded-xl border border-border bg-muted/15 p-2.5 text-xs focus:outline-hidden focus:border-primary disabled:opacity-75"
+                                placeholder="Marks allocation guidelines for faculty / AI suggestion..."
+                              />
+                            </div>
+                          </div>
+                          <div className="w-48">
+                            <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                              Word Limit (Optional)
+                            </label>
                             <input
-                              type="text"
+                              type="number"
+                              min={10}
+                              max={1000}
                               disabled={isPublished}
-                              value={opt}
-                              onChange={(e) => {
-                                const next = [...question.options!];
-                                next[oIdx] = e.target.value;
-                                updateQuestion(question.id, { options: next });
-                              }}
-                              className="w-full bg-transparent text-xs text-foreground focus:outline-hidden"
+                              value={question.word_limit || ""}
+                              onChange={(e) =>
+                                updateQuestion(question.id, {
+                                  word_limit: e.target.value ? Number(e.target.value) : undefined,
+                                })
+                              }
+                              className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary"
+                              placeholder="e.g. 50 (short) or 250 (long)"
                             />
                           </div>
-                        ))}
+                        </div>
+                      )}
+
+                      {/* Topic, Marks, and Difficulty Inline Calibrator */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-border/50">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                            Topic / Unit
+                          </label>
+                          <input
+                            type="text"
+                            disabled={isPublished}
+                            value={question.topic || ""}
+                            onChange={(e) => updateQuestion(question.id, { topic: e.target.value })}
+                            className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary"
+                            placeholder="Unit / Topic title"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                            Difficulty Level
+                          </label>
+                          <select
+                            disabled={isPublished}
+                            value={question.difficulty}
+                            onChange={(e: any) => updateQuestion(question.id, { difficulty: e.target.value })}
+                            className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs capitalize focus:outline-hidden focus:border-primary"
+                          >
+                            <option value="easy">Easy</option>
+                            <option value="medium">Medium</option>
+                            <option value="hard">Hard</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                            Marks
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={50}
+                            disabled={isPublished}
+                            value={question.marks}
+                            onChange={(e) => updateQuestion(question.id, { marks: Number(e.target.value) })}
+                            className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary"
+                          />
+                        </div>
                       </div>
-                    </div>
-                  )}
-
-                  {/* Correct Answer & Topic */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                        Correct Answer Key
-                      </label>
-                      <input
-                        type="text"
-                        disabled={isPublished}
-                        value={String(question.correct_answer ?? "")}
-                        onChange={(e) => updateQuestion(question.id, { correct_answer: e.target.value })}
-                        className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary"
-                        placeholder="e.g. Option text or letter (A, B, C, D)"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                        Topic / Syllabus Unit
-                      </label>
-                      <input
-                        type="text"
-                        disabled={isPublished}
-                        value={question.topic || ""}
-                        onChange={(e) => updateQuestion(question.id, { topic: e.target.value })}
-                        className="w-full rounded-xl border border-border bg-muted/15 px-3 py-1.5 text-xs focus:outline-hidden focus:border-primary"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Subjective Model Answer */}
-                  {question.question_type === "subjective" && (
-                    <div className="pt-2">
-                      <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                        Model Answer / Rubric
-                      </label>
-                      <textarea
-                        value={question.model_answer || ""}
-                        disabled={isPublished}
-                        onChange={(e) => updateQuestion(question.id, { model_answer: e.target.value })}
-                        rows={3}
-                        className="w-full rounded-xl border border-border bg-muted/15 p-3 text-xs focus:outline-hidden focus:border-primary disabled:opacity-75"
-                        placeholder="Expected answer keywords and evaluation criteria..."
-                      />
-                    </div>
-                  )}
-                </section>
-              ))}
+                    </section>
+                  );
+                })
+              )}
             </div>
           </>
         )}
 
-        {/* Add Question Modal */}
+        {/* Add Question Modal (All 5 Types Supported) */}
         {showAddModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-            <div className="bg-white rounded-2xl border border-border shadow-2xl w-full max-w-lg p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="bg-white rounded-2xl border border-border shadow-2xl w-full max-w-lg p-6 space-y-4 animate-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between border-b border-border pb-3">
-                <h3 className="font-bold text-base text-foreground">Add Custom Question</h3>
+                <div>
+                  <h3 className="font-bold text-base text-foreground">Add Custom Question</h3>
+                  <p className="text-xs text-muted-foreground">Add a new calibrated question of any supported format.</p>
+                </div>
                 <button type="button" onClick={() => setShowAddModal(false)} className="p-1.5 text-muted-foreground hover:text-foreground">
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-2.5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Question Type</label>
                     <select
@@ -607,10 +895,23 @@ export function EditPaperPage() {
                       onChange={(e: any) => setNewQType(e.target.value)}
                       className="w-full rounded-xl border border-border bg-muted/10 px-3 py-2 text-xs"
                     >
-                      <option value="mcq">Multiple Choice (MCQ)</option>
-                      <option value="subjective">Subjective (Long Answer)</option>
-                      <option value="truefalse">True / False</option>
-                      <option value="fillblank">Fill in the Blanks</option>
+                      <option value="mcq">MCQ</option>
+                      <option value="true_false">True / False</option>
+                      <option value="fill_blank">Fill in Blanks</option>
+                      <option value="short_answer">Short Answer</option>
+                      <option value="long_answer">Long Answer</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Difficulty</label>
+                    <select
+                      value={newQDiff}
+                      onChange={(e: any) => setNewQDiff(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-muted/10 px-3 py-2 text-xs capitalize"
+                    >
+                      <option value="easy">Easy</option>
+                      <option value="medium">Medium</option>
+                      <option value="hard">Hard</option>
                     </select>
                   </div>
                   <div>
@@ -618,6 +919,7 @@ export function EditPaperPage() {
                     <input
                       type="number"
                       min={1}
+                      max={50}
                       value={newQMarks}
                       onChange={(e) => setNewQMarks(e.target.value)}
                       className="w-full rounded-xl border border-border bg-muted/10 px-3 py-2 text-xs"
@@ -626,19 +928,26 @@ export function EditPaperPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Question Text *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Question Text * {newQType === "fill_blank" && <span className="text-purple-600">(Use ____ for blanks)</span>}
+                  </label>
                   <textarea
                     value={newQText}
                     onChange={(e) => setNewQText(e.target.value)}
                     rows={3}
-                    placeholder="Enter question prompt..."
+                    placeholder={
+                      newQType === "fill_blank"
+                        ? "e.g. Photosynthesis converts ____ and water into glucose and ____."
+                        : "Enter question prompt..."
+                    }
                     className="w-full rounded-xl border border-border bg-muted/10 p-2.5 text-xs focus:outline-hidden"
                   />
                 </div>
 
+                {/* MCQ Options */}
                 {newQType === "mcq" && (
                   <div className="space-y-2">
-                    <label className="block text-xs font-semibold text-slate-700">Option Choices</label>
+                    <label className="block text-xs font-semibold text-slate-700">Answer Options</label>
                     {newQOptions.map((opt, i) => (
                       <div key={i} className="flex items-center gap-2">
                         <span className="text-xs font-bold text-primary w-4">{String.fromCharCode(65 + i)}</span>
@@ -655,30 +964,124 @@ export function EditPaperPage() {
                         />
                       </div>
                     ))}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mt-2 mb-1">Correct Option</label>
+                      <select
+                        value={newQAnswer}
+                        onChange={(e) => setNewQAnswer(e.target.value)}
+                        className="w-full rounded-xl border border-border bg-muted/10 px-3 py-2 text-xs"
+                      >
+                        <option value="">Select correct option...</option>
+                        {newQOptions.map((opt, i) => (
+                          <option key={i} value={String.fromCharCode(65 + i)}>
+                            Option {String.fromCharCode(65 + i)} ({opt || "Empty"})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
+                {/* True / False */}
+                {newQType === "true_false" && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">Correct Answer *</label>
-                    <input
-                      type="text"
-                      value={newQAnswer}
-                      onChange={(e) => setNewQAnswer(e.target.value)}
-                      placeholder="e.g., A or Option text"
-                      className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs"
-                    />
+                    <div className="flex items-center gap-3">
+                      {["True", "False"].map((tf) => (
+                        <button
+                          key={tf}
+                          type="button"
+                          onClick={() => setNewQAnswer(tf)}
+                          className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                            newQAnswer === tf
+                              ? "bg-amber-600 text-white border-amber-600"
+                              : "border-border bg-muted/10 text-muted-foreground hover:bg-muted/30"
+                          }`}
+                        >
+                          {tf}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Topic</label>
-                    <input
-                      type="text"
-                      value={newQTopic}
-                      onChange={(e) => setNewQTopic(e.target.value)}
-                      placeholder="e.g., Unit 2 Networking"
-                      className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs"
-                    />
+                )}
+
+                {/* Fill Blanks */}
+                {newQType === "fill_blank" && (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Primary Answer(s) * (comma-separated if multiple blanks)
+                      </label>
+                      <input
+                        type="text"
+                        value={newQAnswer}
+                        onChange={(e) => setNewQAnswer(e.target.value)}
+                        placeholder="e.g. sunlight, oxygen"
+                        className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Accepted Synonyms (Optional JSON e.g. [["light", "sunlight"], ["O2", "oxygen"]])
+                      </label>
+                      <input
+                        type="text"
+                        value={newQAcceptedAnswers}
+                        onChange={(e) => setNewQAcceptedAnswers(e.target.value)}
+                        placeholder='[["light", "sunlight"], ["O2", "oxygen"]]'
+                        className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs font-mono"
+                      />
+                    </div>
                   </div>
+                )}
+
+                {/* Short & Long Answer */}
+                {(newQType === "short_answer" || newQType === "long_answer") && (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Model Answer / Key Points</label>
+                      <textarea
+                        value={newQModelAnswer}
+                        onChange={(e) => setNewQModelAnswer(e.target.value)}
+                        rows={2}
+                        placeholder="Expected answer and key concepts..."
+                        className="w-full rounded-xl border border-border bg-muted/10 p-2.5 text-xs"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Rubric Criteria</label>
+                        <input
+                          type="text"
+                          value={newQRubric}
+                          onChange={(e) => setNewQRubric(e.target.value)}
+                          placeholder="e.g. 1 mark per point"
+                          className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Word Limit</label>
+                        <input
+                          type="number"
+                          value={newQWordLimit}
+                          onChange={(e) => setNewQWordLimit(e.target.value)}
+                          placeholder={newQType === "short_answer" ? "50" : "250"}
+                          className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Topic / Syllabus Unit</label>
+                  <input
+                    type="text"
+                    value={newQTopic}
+                    onChange={(e) => setNewQTopic(e.target.value)}
+                    placeholder="e.g. Unit 3 Cloud Architecture"
+                    className="w-full rounded-xl border border-border bg-muted/10 px-3 py-1.5 text-xs"
+                  />
                 </div>
               </div>
 

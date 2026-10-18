@@ -88,7 +88,8 @@ class QuestionSerializer(serializers.ModelSerializer):
         model = Question
         fields = (
             'id', 'order', 'question_type', 'difficulty', 'text', 'options',
-            'correct_answer', 'model_answer', 'marks', 'topic',
+            'correct_answer', 'model_answer', 'accepted_answers', 'rubric',
+            'word_limit', 'source', 'marks', 'topic',
         )
         read_only_fields = ('id', 'order')
 
@@ -103,7 +104,8 @@ class FacultyQuestionSerializer(serializers.ModelSerializer):
         model = Question
         fields = (
             'id', 'order', 'question_type', 'difficulty', 'text', 'options',
-            'correct_answer', 'model_answer', 'marks', 'topic',
+            'correct_answer', 'model_answer', 'accepted_answers', 'rubric',
+            'word_limit', 'source', 'marks', 'topic',
         )
         read_only_fields = ('id', 'order')
 
@@ -163,7 +165,8 @@ class QuestionUpdateSerializer(serializers.ModelSerializer):
         model = Question
         fields = (
             'question_type', 'difficulty', 'text', 'options',
-            'correct_answer', 'model_answer', 'marks', 'topic',
+            'correct_answer', 'model_answer', 'accepted_answers', 'rubric',
+            'word_limit', 'source', 'marks', 'topic',
         )
 
     def update(self, instance, validated_data):
@@ -179,7 +182,7 @@ class StudentQuestionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Question
-        fields = ('id', 'order', 'question_type', 'difficulty', 'text', 'options', 'marks', 'topic')
+        fields = ('id', 'order', 'question_type', 'difficulty', 'text', 'options', 'marks', 'topic', 'word_limit')
 
     def get_topic(self, obj):
         return obj.topic.name if obj.topic else (obj.topic_text or '')
@@ -223,7 +226,7 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentAnswer
-        fields = ('question', 'question_text', 'question_type', 'correct_answer', 'answer_text', 'is_correct', 'score_awarded', 'ai_feedback')
+        fields = ('question', 'question_text', 'question_type', 'correct_answer', 'answer_text', 'blank_answers', 'is_correct', 'score_awarded', 'ai_feedback')
 
     def _can_reveal_answers(self, obj):
         attempt = getattr(obj, 'attempt', None)
