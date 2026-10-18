@@ -100,6 +100,19 @@ class ExamDetailView(FacultyExamViewMixin, APIView):
         data['visibility'] = get_exam_visibility_status_for_faculty(exam)
         return Response(data)
 
+    def delete(self, request, exam_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if exam.status == Exam.Status.PUBLISHED:
+            if hasattr(exam, 'attempts') and exam.attempts.exists():
+                return Response(
+                    {'detail': 'Cannot delete an exam with student attempts. You can close it instead.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        exam.delete()
+        return Response({'detail': 'Exam deleted successfully.'}, status=status.HTTP_200_OK)
+
 
 class QuestionUpdateView(FacultyExamViewMixin, APIView):
     def put(self, request, exam_id, question_id):
@@ -307,6 +320,12 @@ class PublishExamView(FacultyExamViewMixin, APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        if not exam.is_reviewed:
+            return Response(
+                {'detail': 'This generated draft must be reviewed and confirmed before it can be published.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         questions = list(exam.questions.all())
         if not questions:
             return Response({'detail': 'An exam must contain at least one question.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -351,3 +370,17 @@ class PublishExamView(FacultyExamViewMixin, APIView):
         data['visibility'] = visibility
         data['message'] = f"Exam published successfully! {visibility['status_summary']}"
         return Response(data)
+
+
+class ConfirmExamReviewView(FacultyExamViewMixin, APIView):
+    def post(self, request, exam_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        exam.is_reviewed = True
+        exam.save(update_fields=['is_reviewed', 'updated_at'])
+        return Response({
+            'detail': 'Exam review confirmed.',
+            'exam': ExamDetailSerializer(exam).data,
+        }, status=status.HTTP_200_OK)

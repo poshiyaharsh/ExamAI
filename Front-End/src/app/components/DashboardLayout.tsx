@@ -8,11 +8,16 @@ import {
   Bell,
   Settings,
   User,
-  ChevronLeft
+  ChevronLeft,
+  CheckCircle2,
+  AlertCircle,
+  Info,
+  Check,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "../context/useAuth";
 import { ADMIN_SIDEBAR_ITEMS, AdminSidebar } from "./AdminSidebar";
-import { authApi } from "../../services/api";
+import { authApi, notificationApi, type AppNotification } from "../../services/api";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -64,6 +69,73 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
     session?.user.institution?.institution_name ||
     session?.user.institution?.name ||
     "";
+
+  // Notifications State & Polling
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [prevCount, setPrevCount] = useState(0);
+
+  const fetchNotifications = async () => {
+    try {
+      const data = await notificationApi.getNotifications();
+      const list = data.notifications || [];
+      const unread = data.unread_count || 0;
+      setNotifications(list);
+      setUnreadCount(unread);
+
+      if (unread > prevCount && prevCount > 0) {
+        const newest = list[0];
+        if (newest && !newest.is_read) {
+          if (newest.type === "success") {
+            toast.success(newest.title, {
+              description: newest.message,
+              action: newest.link ? { label: "View", onClick: () => navigate(newest.link!) } : undefined,
+            });
+          } else if (newest.type === "error") {
+            toast.error(newest.title, { description: newest.message });
+          } else {
+            toast.info(newest.title, { description: newest.message });
+          }
+        }
+      }
+      setPrevCount(unread);
+    } catch {
+      // Ignore background poll errors
+    }
+  };
+
+  useEffect(() => {
+    void fetchNotifications();
+    const interval = window.setInterval(fetchNotifications, 8000);
+    return () => clearInterval(interval);
+  }, [prevCount]);
+
+  const handleMarkAllRead = async () => {
+    try {
+      await notificationApi.markAllAsRead();
+      setUnreadCount(0);
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    } catch {
+      // Ignore
+    }
+  };
+
+  const handleNotificationClick = async (notif: AppNotification) => {
+    if (!notif.is_read) {
+      try {
+        await notificationApi.markAsRead(notif.id);
+        setUnreadCount((c) => Math.max(0, c - 1));
+        setNotifications((prev) => prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n)));
+      } catch {
+        // Ignore
+      }
+    }
+    setShowNotifications(false);
+    if (notif.link) {
+      navigate(notif.link);
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -192,12 +264,93 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
               </Link>
             </div>
             <div className="flex items-center gap-4">
-              <button className="p-2 rounded-lg hover:bg-accent transition-colors relative">
-                <Bell className="w-5 h-5" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full"></span>
-              </button>
-              <button className="p-2 rounded-lg hover:bg-accent transition-colors">
-                <Settings className="w-5 h-5" />
+              {/* Notification Bell & Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className="p-2 rounded-lg hover:bg-accent transition-colors relative"
+                  title="Notifications"
+                >
+                  <Bell className="w-5 h-5 text-foreground" />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {showNotifications && (
+                  <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl border border-border bg-white shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-foreground">Notifications</span>
+                        {unreadCount > 0 && (
+                          <span className="bg-primary/10 text-primary text-[11px] font-bold px-2 py-0.5 rounded-full">
+                            {unreadCount} new
+                          </span>
+                        )}
+                      </div>
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleMarkAllRead}
+                          className="text-xs text-primary hover:underline font-medium"
+                        >
+                          Mark all as read
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto divide-y divide-border/60">
+                      {notifications.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-muted-foreground">
+                          No notifications yet.
+                        </div>
+                      ) : (
+                        notifications.map((notif) => (
+                          <div
+                            key={notif.id}
+                            onClick={() => handleNotificationClick(notif)}
+                            className={`p-3.5 hover:bg-muted/40 cursor-pointer transition-colors flex items-start gap-3 ${
+                              !notif.is_read ? "bg-primary/5" : ""
+                            }`}
+                          >
+                            <div className="mt-0.5 shrink-0">
+                              {notif.type === "success" ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                              ) : notif.type === "error" ? (
+                                <AlertCircle className="h-4 w-4 text-rose-600" />
+                              ) : (
+                                <Info className="h-4 w-4 text-blue-600" />
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              <p className={`text-xs ${!notif.is_read ? "font-bold text-foreground" : "font-medium text-foreground/80"}`}>
+                                {notif.title}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                                {notif.message}
+                              </p>
+                            </div>
+                            {!notif.is_read && (
+                              <span className="w-2 h-2 rounded-full bg-primary shrink-0 mt-1" />
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => navigate(isAdminLayout ? "/admin/settings" : userRole.toLowerCase() === "student" ? "/student/settings" : "/faculty/settings")}
+                className="p-2 rounded-lg hover:bg-accent transition-colors"
+                title="Settings"
+              >
+                <Settings className="w-5 h-5 text-foreground" />
               </button>
             </div>
           </div>

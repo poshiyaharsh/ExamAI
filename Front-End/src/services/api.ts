@@ -271,6 +271,7 @@ export type FacultyExam = {
   seed?: number;
   request_hash?: string;
   is_immutable?: boolean;
+  is_reviewed?: boolean;
   validation_report?: any;
   shuffle_questions?: boolean;
   shuffle_options?: boolean;
@@ -293,9 +294,43 @@ export type FacultyExam = {
   };
 };
 
+export type PaperGenerationJob = {
+  id: number;
+  exam_id: number;
+  exam_title: string;
+  department: string;
+  model: string;
+  status: "queued" | "running" | "completed" | "completed_with_warnings" | "failed" | "cancelled";
+  progress: number;
+  current_step: string;
+  error_message: string;
+  warnings: string[];
+  question_count_requested: number;
+  question_count_generated: number;
+  is_cancelled: boolean;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  elapsed_seconds: number;
+};
+
+export type AppNotification = {
+  id: number;
+  title: string;
+  message: string;
+  type: "info" | "success" | "warning" | "error";
+  link?: string;
+  is_read: boolean;
+  created_at: string;
+};
+
 export type GenerateExamResponse = {
+  job_id?: number;
   exam_id: number;
   status: string;
+  progress?: number;
+  current_step?: string;
+  question_count_requested?: number;
   question_count: number;
   requested_total_marks: number;
   actual_total_marks: number;
@@ -1280,6 +1315,21 @@ export const facultyExamApi = {
     const response = await apiClient.get<FacultyExam>(`/api/faculty/exams/${examId}/`);
     return response.data;
   },
+  deleteExam: async (examId: number): Promise<{ detail: string }> => {
+    const response = await apiClient.delete<{ detail: string }>(`/api/faculty/exams/${examId}/`);
+    return response.data;
+  },
+  duplicateExam: async (exam: FacultyExam): Promise<GenerateExamResponse> => {
+    return facultyPaperApi.generateExam({
+      title: `${exam.title} (Copy)`,
+      durationMinutes: exam.duration_minutes,
+      totalMarks: exam.total_marks,
+      topics: exam.topics?.length ? exam.topics : ["Core Syllabus"],
+      questionTypes: exam.question_types?.length ? exam.question_types : ["mcq", "subjective"],
+      difficultyDistribution: exam.difficulty_distribution || { easy: 30, medium: 50, hard: 20 },
+      aiModel: (exam.ai_model_used as any) || "phi3-mini",
+    });
+  },
   updateQuestion: async (examId: number, questionId: number, question: Partial<ExamQuestion>): Promise<ExamQuestion> => {
     const response = await apiClient.put<ExamQuestion>(`/api/faculty/exams/${examId}/questions/${questionId}/`, question);
     return response.data;
@@ -1353,6 +1403,44 @@ export const facultyExamApi = {
   },
   manualGradeAnswer: async (answerId: number, score: number, feedback: string): Promise<any> => {
     const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/manual-grade/`, { score, feedback });
+    return response.data;
+  },
+  confirmReview: async (examId: number): Promise<{ detail: string; exam: FacultyExam }> => {
+    const response = await apiClient.post<{ detail: string; exam: FacultyExam }>(`/api/faculty/exams/${examId}/confirm-review/`, {});
+    return response.data;
+  },
+};
+
+export const generationApi = {
+  getJob: async (jobId: number): Promise<PaperGenerationJob> => {
+    const response = await apiClient.get<PaperGenerationJob>(`/api/papers/generations/${jobId}/`);
+    return response.data;
+  },
+  getActiveJob: async (): Promise<{ active_job: PaperGenerationJob | null }> => {
+    const response = await apiClient.get<{ active_job: PaperGenerationJob | null }>("/api/papers/generations/active/");
+    return response.data;
+  },
+  getRecentJobs: async (): Promise<{ results: PaperGenerationJob[]; count: number }> => {
+    const response = await apiClient.get<{ results: PaperGenerationJob[]; count: number }>("/api/papers/generations/");
+    return response.data;
+  },
+  cancelJob: async (jobId: number): Promise<{ detail: string; job: PaperGenerationJob }> => {
+    const response = await apiClient.post<{ detail: string; job: PaperGenerationJob }>(`/api/papers/generations/${jobId}/cancel/`);
+    return response.data;
+  },
+};
+
+export const notificationApi = {
+  getNotifications: async (): Promise<{ unread_count: number; notifications: AppNotification[] }> => {
+    const response = await apiClient.get<{ unread_count: number; notifications: AppNotification[] }>("/api/notifications/");
+    return response.data;
+  },
+  markAsRead: async (id: number): Promise<{ detail: string }> => {
+    const response = await apiClient.post<{ detail: string }>(`/api/notifications/${id}/read/`);
+    return response.data;
+  },
+  markAllAsRead: async (): Promise<{ detail: string }> => {
+    const response = await apiClient.post<{ detail: string }>("/api/notifications/read-all/");
     return response.data;
   },
 };

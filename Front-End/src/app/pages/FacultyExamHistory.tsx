@@ -1,25 +1,42 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Bot,
+  Calendar,
+  Check,
   CheckCircle,
+  Clock,
+  Copy,
+  Cpu,
   Edit3,
   Eye,
   FileText,
+  Filter,
   History,
   LayoutDashboard,
   Loader2,
+  Plus,
   RefreshCw,
-  Save,
+  Search,
   Settings,
+  Sparkles,
+  Trash2,
   X,
   XCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { facultyExamApi, type FacultyExam } from "../../services/api";
+import { GenerationProgressModal } from "../components/GenerationProgressModal";
+import {
+  facultyExamApi,
+  generationApi,
+  type FacultyExam,
+  type PaperGenerationJob,
+} from "../../services/api";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },
@@ -31,7 +48,35 @@ const menuItems = [
 export function FacultyExamHistory() {
   const navigate = useNavigate();
   const [exams, setExams] = useState<FacultyExam[]>([]);
+  const [recentJobs, setRecentJobs] = useState<PaperGenerationJob[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Search & Filters
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "generating" | "draft" | "published" | "closed" | "failed">("all");
+  const [sortBy, setSortBy] = useState<"newest" | "title" | "marks">("newest");
+
+  // Viewed papers for "New" badge tracking
+  const [viewedPaperIds, setViewedPaperIds] = useState<number[]>(() => {
+    try {
+      const stored = localStorage.getItem("examai_viewed_papers");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Active generation modal
+  const [progressJobId, setProgressJobId] = useState<number | null>(null);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+
+  // Delete Confirmation Modal
+  const [examToDelete, setExamToDelete] = useState<FacultyExam | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Action states
+  const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
+  const [publishingId, setPublishingId] = useState<number | null>(null);
 
   // Attempts Modal State
   const [selectedExam, setSelectedExam] = useState<FacultyExam | null>(null);
@@ -42,8 +87,6 @@ export function FacultyExamHistory() {
   const [selectedAttemptId, setSelectedAttemptId] = useState<number | null>(null);
   const [attemptDetail, setAttemptDetail] = useState<any | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-
-  // Loading States for Actions
   const [reevaluatingAttempt, setReevaluatingAttempt] = useState(false);
   const [reevaluatingAnswerId, setReevaluatingAnswerId] = useState<number | null>(null);
 
@@ -53,11 +96,15 @@ export function FacultyExamHistory() {
   const [manualFeedback, setManualFeedback] = useState<string>("");
   const [savingGrade, setSavingGrade] = useState(false);
 
-  const loadExams = async () => {
+  const loadData = async () => {
     try {
-      const response = await facultyExamApi.getExams();
-      const loaded = Array.isArray(response) ? response : response.results ?? [];
-      setExams(loaded);
+      const [examRes, jobRes] = await Promise.all([
+        facultyExamApi.getExams(),
+        generationApi.getRecentJobs().catch(() => ({ results: [], count: 0 })),
+      ]);
+      const loadedExams = Array.isArray(examRes) ? examRes : examRes.results ?? [];
+      setExams(loadedExams);
+      setRecentJobs(jobRes.results || []);
     } catch {
       toast.error("Unable to load exams.");
     } finally {
@@ -66,19 +113,83 @@ export function FacultyExamHistory() {
   };
 
   useEffect(() => {
-    void loadExams();
+    void loadData();
   }, []);
 
-  const publish = async (examId: number) => {
-    try {
-      const published = await facultyExamApi.publishExam(examId);
-      setExams((current) => current.map((exam) => (exam.id === examId ? published : exam)));
-      toast.success("Exam published.");
-    } catch {
-      toast.error("Publishing failed. Check the question marks first.");
+  const markPaperAsViewed = (id: number) => {
+    if (!viewedPaperIds.includes(id)) {
+      const next = [...viewedPaperIds, id];
+      setViewedPaperIds(next);
+      try {
+        localStorage.setItem("examai_viewed_papers", JSON.stringify(next));
+      } catch {
+        // Ignore
+      }
     }
   };
 
+  const handleOpenEdit = (examId: number) => {
+    markPaperAsViewed(examId);
+    navigate(`/faculty/exams/${examId}/edit`);
+  };
+
+  const publish = async (exam: FacultyExam) => {
+    // Check review requirement
+    if (!exam.is_reviewed) {
+      toast.error("Review Required: Please open and review this draft paper before publishing it to students.", {
+        action: {
+          label: "Review Now",
+          onClick: () => handleOpenEdit(exam.id),
+        },
+      });
+      return;
+    }
+
+    setPublishingId(exam.id);
+    try {
+      const published = await facultyExamApi.publishExam(exam.id);
+      setExams((current) => current.map((e) => (e.id === exam.id ? published : e)));
+      toast.success("Exam published successfully! Students in your department can now access it.");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Publishing failed. Check question marks and review status.");
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
+  const handleDuplicate = async (exam: FacultyExam) => {
+    setDuplicatingId(exam.id);
+    try {
+      const res = await facultyExamApi.duplicateExam(exam);
+      toast.success(`Duplicated "${exam.title}"!`);
+      if (res.job_id) {
+        setProgressJobId(res.job_id);
+        setShowProgressModal(true);
+      }
+      await loadData();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to duplicate exam.");
+    } finally {
+      setDuplicatingId(null);
+    }
+  };
+
+  const confirmDeleteExam = async () => {
+    if (!examToDelete) return;
+    setDeleting(true);
+    try {
+      await facultyExamApi.deleteExam(examToDelete.id);
+      toast.success("Exam deleted successfully.");
+      setExams((prev) => prev.filter((e) => e.id !== examToDelete.id));
+      setExamToDelete(null);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to delete exam.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Student attempts review handlers
   const handleOpenAttempts = async (exam: FacultyExam) => {
     setSelectedExam(exam);
     setSelectedAttemptId(null);
@@ -111,7 +222,7 @@ export function FacultyExamHistory() {
     setReevaluatingAttempt(true);
     try {
       await facultyExamApi.reevaluateAttempt(attemptId, true);
-      toast.success("Attempt subjective evaluation completed!");
+      toast.success("Attempt evaluation refreshed!");
       await handleOpenAttemptDetail(attemptId);
       if (selectedExam) {
         const res = await facultyExamApi.getExamAttempts(selectedExam.id);
@@ -127,8 +238,8 @@ export function FacultyExamHistory() {
   const handleReevaluateAnswer = async (answerId: number) => {
     setReevaluatingAnswerId(answerId);
     try {
-      const res = await facultyExamApi.reevaluateAnswer(answerId, true);
-      toast.success(`Answer re-evaluated: awarded ${res.score_awarded} marks.`);
+      await facultyExamApi.reevaluateAnswer(answerId, true);
+      toast.success("Answer re-evaluated!");
       if (selectedAttemptId) {
         await handleOpenAttemptDetail(selectedAttemptId);
       }
@@ -166,67 +277,417 @@ export function FacultyExamHistory() {
     }
   };
 
+  // Filtered & Sorted Exams
+  const filteredExams = useMemo(() => {
+    let result = [...exams];
+
+    // Status filter
+    if (statusFilter !== "all") {
+      result = result.filter((e) => {
+        if (statusFilter === "generating") return e.status === "generating";
+        if (statusFilter === "draft") return e.status === "draft";
+        if (statusFilter === "published") return e.status === "published";
+        if (statusFilter === "closed") return e.status === "closed";
+        if (statusFilter === "failed") return e.status === "failed";
+        return true;
+      });
+    }
+
+    // Search query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (e) =>
+          e.title.toLowerCase().includes(q) ||
+          e.department?.toLowerCase().includes(q) ||
+          e.topics?.some((t) => t.toLowerCase().includes(q))
+      );
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      if (sortBy === "title") return a.title.localeCompare(b.title);
+      if (sortBy === "marks") return (b.total_marks || 0) - (a.total_marks || 0);
+      // newest
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    });
+
+    return result;
+  }, [exams, statusFilter, searchQuery, sortBy]);
+
+  // Check if an exam is newly generated (< 24 hours old and not in viewed list)
+  const isNewPaper = (exam: FacultyExam) => {
+    if (viewedPaperIds.includes(exam.id)) return false;
+    const createdTime = new Date(exam.created_at).getTime();
+    const now = Date.now();
+    return now - createdTime < 24 * 60 * 60 * 1000;
+  };
+
   return (
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Exam History</h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Review generated papers and manage publication.</p>
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">My Papers & Exams</h1>
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Manage draft papers, review AI synthesized questions, and publish exams to students.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate("/faculty/generate")}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:opacity-95 transition-all self-start sm:self-auto"
+          >
+            <Plus className="h-4 w-4" /> Generate New Paper
+          </button>
         </div>
+
+        {/* Filter & Search Bar */}
+        <div className="rounded-2xl border border-border bg-white p-4 shadow-xs space-y-3">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by paper title, department, or topic..."
+                className="w-full rounded-xl border border-border bg-muted/20 pl-10 pr-4 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+              />
+            </div>
+
+            {/* Sort Dropdown */}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs text-muted-foreground font-medium">Sort by:</span>
+              <select
+                value={sortBy}
+                onChange={(e: any) => setSortBy(e.target.value)}
+                className="rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs font-semibold text-foreground focus:outline-hidden"
+              >
+                <option value="newest">Newest First</option>
+                <option value="title">Title (A-Z)</option>
+                <option value="marks">Total Marks</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Status Filter Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pt-1 border-t border-border/60">
+            {[
+              { id: "all", label: "All Papers" },
+              { id: "generating", label: "Generating" },
+              { id: "draft", label: "Drafts (Needs Review)" },
+              { id: "published", label: "Published" },
+              { id: "closed", label: "Closed" },
+              { id: "failed", label: "Failed" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id as any)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+                  statusFilter === tab.id
+                    ? "bg-primary text-white shadow-xs"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Papers List */}
         {loading ? (
-          <p className="text-sm text-muted-foreground">Loading exams...</p>
-        ) : exams.length === 0 ? (
-          <div className="rounded-xl border border-border bg-white p-8 text-center text-sm text-muted-foreground shadow-sm">
-            No exams generated yet.
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-32 rounded-2xl border border-border bg-white animate-pulse p-6" />
+            ))}
+          </div>
+        ) : filteredExams.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed border-border bg-white p-12 text-center shadow-xs">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-4">
+              <FileText className="h-7 w-7" />
+            </div>
+            <h3 className="text-base font-bold text-foreground">No papers found</h3>
+            <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">
+              {searchQuery || statusFilter !== "all"
+                ? "No exams match your current filters. Try resetting the search or filter tabs."
+                : "No papers generated yet. Create your first balanced exam paper using AI from your syllabus."}
+            </p>
+            <div className="mt-6 flex justify-center gap-3">
+              {searchQuery || statusFilter !== "all" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setStatusFilter("all");
+                  }}
+                  className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted/50"
+                >
+                  Reset Filters
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate("/faculty/generate")}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-sm hover:opacity-95"
+                >
+                  <Plus className="h-4 w-4" /> Generate Your First Paper
+                </button>
+              )}
+            </div>
           </div>
         ) : (
-          <div className="space-y-4">
-            {exams.map((exam) => (
-              <div key={exam.id} className="rounded-xl border border-border bg-white p-5 sm:p-6 shadow-sm hover:shadow-md transition-all">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-base sm:text-lg font-semibold text-foreground">{exam.title}</h2>
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium border ${exam.status === "published" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : exam.status === "closed" ? "bg-muted text-muted-foreground border-border" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                        {exam.status}
-                      </span>
+          <div className="space-y-3.5">
+            {filteredExams.map((exam) => {
+              const isGen = exam.status === "generating";
+              const isDraft = exam.status === "draft";
+              const isReviewRequired = isDraft && !exam.is_reviewed;
+              const isPub = exam.status === "published";
+              const isFail = exam.status === "failed";
+              const isNew = isNewPaper(exam);
+
+              return (
+                <div
+                  key={exam.id}
+                  className={`rounded-2xl border transition-all p-5 sm:p-6 shadow-xs hover:shadow-md ${
+                    isReviewRequired
+                      ? "border-amber-200 bg-amber-50/20"
+                      : isGen
+                      ? "border-blue-200 bg-blue-50/20"
+                      : "border-border bg-white"
+                  }`}
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    {/* Left: Info */}
+                    <div className="space-y-2 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-base sm:text-lg font-bold text-foreground truncate">{exam.title}</h2>
+
+                        {/* "New" Badge */}
+                        {isNew && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-2 py-0.5 text-[10px] font-extrabold text-white shadow-xs">
+                            <Sparkles className="h-2.5 w-2.5" /> NEW
+                          </span>
+                        )}
+
+                        {/* Status Badge */}
+                        {isGen ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const job = recentJobs.find((j) => j.exam_id === exam.id);
+                              if (job) {
+                                setProgressJobId(job.id);
+                                setShowProgressModal(true);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors animate-pulse"
+                            title="Click to view live generation progress"
+                          >
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating...
+                          </button>
+                        ) : isReviewRequired ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-xs font-bold">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Generated · Review Required
+                          </span>
+                        ) : isDraft ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 px-2.5 py-0.5 text-xs font-semibold">
+                            <CheckCircle className="h-3.5 w-3.5 text-sky-600" /> Draft · Reviewed
+                          </span>
+                        ) : isPub ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold">
+                            <Check className="h-3.5 w-3.5" /> Published
+                          </span>
+                        ) : isFail ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-0.5 text-xs font-semibold">
+                            <XCircle className="h-3.5 w-3.5" /> Generation Failed
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-muted text-muted-foreground border border-border px-2.5 py-0.5 text-xs font-medium">
+                            {exam.status}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Meta Tags */}
+                      <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs text-muted-foreground">
+                        {exam.department && (
+                          <span className="font-semibold text-slate-700">{exam.department}</span>
+                        )}
+                        <span>{exam.question_count ?? exam.questions?.length ?? 0} Questions</span>
+                        <span>{exam.total_marks} Total Marks</span>
+                        <span>{exam.duration_minutes} Mins</span>
+                        {exam.ai_model_used && (
+                          <span className="font-mono text-[11px] bg-slate-100 px-2 py-0.5 rounded-md text-slate-600">
+                            Model: {exam.ai_model_used}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1 text-slate-400">
+                          <Calendar className="h-3 w-3" />
+                          {exam.created_at ? new Date(exam.created_at).toLocaleDateString() : ""}
+                        </span>
+                      </div>
+
+                      {/* Error details if failed */}
+                      {isFail && exam.error_message && (
+                        <p className="text-xs text-rose-600 font-medium">{exam.error_message}</p>
+                      )}
                     </div>
-                    <p className="mt-1.5 text-xs sm:text-sm text-muted-foreground">
-                      {exam.question_count ?? exam.questions?.length ?? 0} questions · {exam.total_marks} marks · {exam.duration_minutes} minutes
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/faculty/exams/${exam.id}/edit`)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3.5 py-2 text-xs sm:text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
-                    >
-                      <Edit3 className="h-4 w-4" /> Edit
-                    </button>
-                    {exam.status !== "published" && (
-                      <button
-                        type="button"
-                        onClick={() => void publish(exam.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-secondary px-3.5 py-2 text-xs sm:text-sm font-medium text-white shadow-sm hover:opacity-90 transition-all"
-                      >
-                        Publish
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void handleOpenAttempts(exam)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3.5 py-2 text-xs sm:text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                    >
-                      <Eye className="h-4 w-4" /> View attempts ({exam.attempts_count ?? 0})
-                    </button>
+
+                    {/* Right: Actions */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {isGen ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const job = recentJobs.find((j) => j.exam_id === exam.id);
+                            if (job) {
+                              setProgressJobId(job.id);
+                              setShowProgressModal(true);
+                            } else {
+                              toast.info("Checking generation status...");
+                              loadData();
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
+                        >
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> View Progress
+                        </button>
+                      ) : isFail ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate("/faculty/generate")}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> Retry
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(exam.id)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-foreground hover:bg-muted/50 transition-colors shadow-2xs"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" /> Review / Edit
+                          </button>
+
+                          {!isPub && (
+                            <button
+                              type="button"
+                              disabled={publishingId === exam.id}
+                              onClick={() => void publish(exam)}
+                              className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                                isReviewRequired
+                                  ? "bg-amber-500 hover:bg-amber-600 text-white shadow-sm"
+                                  : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white shadow-sm"
+                              }`}
+                              title={isReviewRequired ? "Review required before publishing" : "Publish exam to students"}
+                            >
+                              {publishingId === exam.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                              Publish
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            disabled={duplicatingId === exam.id}
+                            onClick={() => void handleDuplicate(exam)}
+                            className="inline-flex items-center gap-1 rounded-xl border border-border bg-white px-2.5 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                            title="Duplicate as new draft"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setExamToDelete(exam)}
+                            className="inline-flex items-center gap-1 rounded-xl border border-border bg-white px-2.5 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
+                            title="Delete exam"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenAttempts(exam)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Attempts ({exam.attempts_count ?? 0})
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
-        {/* Modal: Student Attempts List & Answer Review */}
+        {/* Delete Confirmation Modal */}
+        {examToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl border border-border shadow-2xl w-full max-w-md p-6 space-y-4 animate-in zoom-in-95 duration-150">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-rose-50 text-rose-600 shrink-0">
+                  <Trash2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-foreground text-base">Delete Exam</h3>
+                  <p className="text-xs text-muted-foreground">Are you sure you want to permanently delete this exam?</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-muted/40 text-xs space-y-1">
+                <p className="font-semibold text-foreground truncate">{examToDelete.title}</p>
+                <p className="text-muted-foreground">{examToDelete.total_marks} Marks · {examToDelete.department}</p>
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setExamToDelete(null)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted/50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={confirmDeleteExam}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-rose-700 disabled:opacity-50"
+                >
+                  {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Real-time Generation Progress Modal */}
+        <GenerationProgressModal
+          jobId={progressJobId}
+          isOpen={showProgressModal}
+          onClose={() => {
+            setShowProgressModal(false);
+            void loadData();
+          }}
+          onSuccess={() => {
+            void loadData();
+          }}
+        />
+
+        {/* Student Attempts Review Modal */}
         {selectedExam && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl border border-border shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -248,55 +709,48 @@ export function FacultyExamHistory() {
                       {selectedAttemptId ? `Review Attempt #${selectedAttemptId}` : `Student Attempts: ${selectedExam.title}`}
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      {selectedAttemptId
-                        ? `Student: ${attemptDetail?.student_name ?? "Loading..."} · Total Score: ${attemptDetail?.total_score ?? 0}/${selectedExam.total_marks}`
-                        : `Total ${attempts.length} attempt(s) recorded`}
+                      {selectedAttemptId ? "Detailed answer breakdown and evaluation review." : "Review student submissions and grades."}
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedExam(null);
-                    setSelectedAttemptId(null);
-                    setAttemptDetail(null);
-                  }}
-                  className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  onClick={() => setSelectedExam(null)}
+                  className="rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              {/* Body */}
-              <div className="p-6 overflow-y-auto flex-1 space-y-4">
-                {selectedAttemptId === null ? (
-                  /* Attempts List View */
+              {/* Content */}
+              <div className="p-6 overflow-y-auto flex-1">
+                {!selectedAttemptId ? (
                   loadingAttempts ? (
                     <div className="py-12 flex flex-col items-center justify-center gap-3 text-muted-foreground">
                       <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                      <p className="text-sm">Loading student attempts...</p>
+                      <p className="text-sm">Loading attempts...</p>
                     </div>
                   ) : attempts.length === 0 ? (
                     <div className="py-12 text-center text-sm text-muted-foreground">
-                      No students have attempted this exam yet.
+                      No students have submitted attempts for this exam yet.
                     </div>
                   ) : (
-                    <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
-                      {attempts.map((att) => (
-                        <div key={att.id} className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:bg-muted/30 transition-colors">
+                    <div className="space-y-3">
+                      {attempts.map((att: any) => (
+                        <div key={att.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-xl border border-border bg-white hover:bg-muted/30 transition-colors shadow-xs">
                           <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-sm text-foreground">{att.student_name}</span>
-                              <span className="text-xs text-muted-foreground">({att.student_email})</span>
-                              <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${att.status === "evaluated" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : att.status === "submitted" ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-muted text-muted-foreground border-border"}`}>
+                            <div className="font-semibold text-sm text-foreground">
+                              {att.student_name || `Student #${att.student_id}`}
+                              <span className="text-xs text-muted-foreground font-normal ml-2">({att.student_email})</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3">
+                              <span>Submitted: {new Date(att.submitted_at || att.created_at).toLocaleString()}</span>
+                              <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded-full bg-muted border border-border">
                                 {att.status}
                               </span>
                             </div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Submitted: {att.submitted_at ? new Date(att.submitted_at).toLocaleString() : "In progress"}
-                            </p>
                           </div>
-                          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                          <div className="flex items-center gap-3 shrink-0">
                             <span className="text-sm font-semibold text-primary">
                               {att.total_score} / {selectedExam.total_marks}
                             </span>
@@ -313,19 +767,15 @@ export function FacultyExamHistory() {
                     </div>
                   )
                 ) : (
-                  /* Single Attempt Drill-down Review */
                   loadingDetail ? (
                     <div className="py-12 flex flex-col items-center justify-center gap-3 text-muted-foreground">
                       <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                      <p className="text-sm">Loading attempt questions and evaluation breakdown...</p>
+                      <p className="text-sm">Loading attempt questions...</p>
                     </div>
                   ) : !attemptDetail ? (
-                    <div className="py-12 text-center text-sm text-rose-600">
-                      Failed to load attempt details.
-                    </div>
+                    <div className="py-12 text-center text-sm text-rose-600">Failed to load attempt details.</div>
                   ) : (
                     <div className="space-y-4">
-                      {/* Top Action Bar */}
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-muted/40 border border-border">
                         <div>
                           <div className="text-sm font-medium text-foreground">
@@ -353,7 +803,6 @@ export function FacultyExamHistory() {
                         </button>
                       </div>
 
-                      {/* Answers Breakdown */}
                       <div className="space-y-3">
                         {attemptDetail.answers?.map((ans: any, idx: number) => (
                           <div key={ans.id} className="rounded-xl border border-border bg-white p-4 shadow-sm space-y-3">
@@ -370,27 +819,20 @@ export function FacultyExamHistory() {
                               </div>
                             </div>
 
-                            {/* Student Answer */}
                             <div className="rounded-lg bg-muted/30 p-3 text-xs sm:text-sm">
                               <span className="font-medium text-muted-foreground block mb-1">Student Answer:</span>
                               <p className="text-foreground whitespace-pre-wrap">{ans.student_answer || "(No answer was submitted)"}</p>
                             </div>
 
-                            {/* Evaluation Info for Subjective */}
                             {ans.question_type === "subjective" && (
                               <div className="space-y-2">
                                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs font-semibold text-muted-foreground">Score:</span>
                                     <strong className="text-sm font-bold text-primary">{ans.score_awarded ?? 0} / {ans.marks}</strong>
-                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border ${ans.evaluation_status === "reviewed" ? "bg-purple-50 text-purple-700 border-purple-200" : ans.evaluation_status === "evaluated_ai" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : ans.evaluation_status === "evaluated_rules" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border ${ans.evaluation_status === "reviewed" ? "bg-purple-50 text-purple-700 border-purple-200" : ans.evaluation_status === "evaluated_ai" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
                                       {ans.evaluation_status}
                                     </span>
-                                    {ans.evaluation_model && (
-                                      <span className="text-[11px] text-muted-foreground font-mono">
-                                        ({ans.evaluation_provider}: {ans.evaluation_model})
-                                      </span>
-                                    )}
                                   </div>
 
                                   <div className="flex items-center gap-2">
@@ -399,7 +841,6 @@ export function FacultyExamHistory() {
                                       disabled={reevaluatingAnswerId === ans.id}
                                       onClick={() => void handleReevaluateAnswer(ans.id)}
                                       className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted/50 disabled:opacity-50 transition-colors"
-                                      title="Re-run AI / fallback evaluation"
                                     >
                                       {reevaluatingAnswerId === ans.id ? (
                                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -424,19 +865,8 @@ export function FacultyExamHistory() {
                                   </div>
                                 )}
 
-                                {/* Technical error warning for teacher view */}
-                                {ans.technical_error && (
-                                  <div className="rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-xs text-rose-700 flex items-start gap-2">
-                                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                                    <div>
-                                      <strong>Teacher Technical Log:</strong> {ans.technical_error}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Inline Manual Grade Editor */}
                                 {editingAnswerId === ans.id && (
-                                  <div className="mt-2 p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2 animate-in fade-in">
+                                  <div className="mt-2 p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
                                     <div className="flex items-center justify-between">
                                       <span className="text-xs font-semibold text-primary">Override / Edit Grade</span>
                                       <button
@@ -448,36 +878,30 @@ export function FacultyExamHistory() {
                                       </button>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                      <label className="text-xs text-muted-foreground">Score (0-{ans.marks}):</label>
                                       <input
                                         type="number"
-                                        step="0.5"
-                                        min="0"
-                                        max={ans.marks}
                                         value={manualScore}
                                         onChange={(e) => setManualScore(e.target.value)}
-                                        className="w-24 rounded border border-border px-2 py-1 text-xs text-foreground bg-white"
+                                        max={ans.marks}
+                                        min={0}
+                                        step={0.5}
+                                        className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
+                                        placeholder="Score"
                                       />
-                                    </div>
-                                    <div>
-                                      <label className="text-xs text-muted-foreground block mb-1">Teacher Feedback:</label>
-                                      <textarea
-                                        rows={2}
+                                      <input
+                                        type="text"
                                         value={manualFeedback}
                                         onChange={(e) => setManualFeedback(e.target.value)}
-                                        className="w-full rounded border border-border p-2 text-xs text-foreground bg-white"
-                                        placeholder="Enter constructive feedback for the student..."
+                                        className="flex-1 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
+                                        placeholder="Feedback comments"
                                       />
-                                    </div>
-                                    <div className="flex justify-end gap-2">
                                       <button
                                         type="button"
                                         disabled={savingGrade}
                                         onClick={() => void saveManualGrade(ans.id)}
-                                        className="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1 text-xs font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50"
+                                        className="bg-primary text-white text-xs px-3 py-1.5 rounded-md hover:opacity-90 disabled:opacity-50"
                                       >
-                                        {savingGrade ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                                        Save & Mark Reviewed
+                                        {savingGrade ? "Saving..." : "Save"}
                                       </button>
                                     </div>
                                   </div>
@@ -498,4 +922,3 @@ export function FacultyExamHistory() {
     </DashboardLayout>
   );
 }
-

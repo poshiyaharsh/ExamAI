@@ -30,13 +30,16 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { GenerationProgressModal } from "../components/GenerationProgressModal";
 import {
   facultyExamApi,
   facultyPaperApi,
   facultyProfileApi,
+  generationApi,
   type AiModel,
   type ExamQuestion,
   type FacultyExam,
+  type PaperGenerationJob,
   type PaperQuestionType,
   type SyllabusUploadData,
 } from "../../services/api";
@@ -134,6 +137,26 @@ export function FacultyGeneratePaper() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
 
+  // Active Job and Real-time Modal
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+
+  // Check for active running generation job on mount (restore after refresh / tab switch)
+  useEffect(() => {
+    generationApi
+      .getActiveJob()
+      .then((res) => {
+        if (res.active_job) {
+          setActiveJobId(res.active_job.id);
+          if (res.active_job.exam_id) {
+            setExamId(res.active_job.exam_id);
+          }
+          setShowProgressModal(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Fetch Faculty Profile to Lock Department
   useEffect(() => {
     facultyProfileApi
@@ -224,18 +247,42 @@ export function FacultyGeneratePaper() {
       setGenerationProgress(100);
       setExamId(res.exam_id);
 
-      // Load generated exam details
-      const fullExam = await facultyExamApi.getExam(res.exam_id);
-      if (fullExam.questions && fullExam.questions.length > 0) {
-        setQuestions(fullExam.questions);
-        toast.success(`Generated ${fullExam.questions.length} questions!`);
-      } else {
-        toast.info("Exam initialized. You can now add questions or customize content.");
+      if (res.job_id) {
+        setActiveJobId(res.job_id);
+        setShowProgressModal(true);
+      } else if (res.exam_id) {
+        // Fast generation from question bank pool
+        const fullExam = await facultyExamApi.getExam(res.exam_id);
+        if (fullExam.questions && fullExam.questions.length > 0) {
+          setQuestions(fullExam.questions);
+          toast.success(`Generated ${fullExam.questions.length} questions from question bank!`);
+        } else {
+          toast.info("Exam initialized. You can now author or customize questions.");
+        }
       }
-    } catch (err) {
-      toast.error(extractApiErrorMessage(err, "Failed to generate questions."));
+    } catch (err: any) {
+      if (err?.response?.status === 409 && err?.response?.data?.active_job_id) {
+        toast.info("A paper generation job is already running.");
+        setActiveJobId(err.response.data.active_job_id);
+        setShowProgressModal(true);
+      } else {
+        toast.error(extractApiErrorMessage(err, "Failed to initiate question generation."));
+      }
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleGenerationSuccess = async (job: PaperGenerationJob) => {
+    if (!job.exam_id) return;
+    try {
+      setExamId(job.exam_id);
+      const fullExam = await facultyExamApi.getExam(job.exam_id);
+      if (fullExam.questions && fullExam.questions.length > 0) {
+        setQuestions(fullExam.questions);
+      }
+    } catch (err) {
+      console.error("Failed to load completed exam:", err);
     }
   };
 
@@ -1171,6 +1218,24 @@ export function FacultyGeneratePaper() {
             </div>
           </div>
         )}
+
+        {/* Real-time Generation Progress / Status Modal */}
+        <GenerationProgressModal
+          jobId={activeJobId}
+          isOpen={showProgressModal}
+          onClose={() => setShowProgressModal(false)}
+          onSuccess={handleGenerationSuccess}
+          onReset={() => {
+            setQuestions([]);
+            setExamId(null);
+            setActiveJobId(null);
+            setCurrentStep(1);
+          }}
+          onChangeModel={() => {
+            setShowProgressModal(false);
+            setCurrentStep(1);
+          }}
+        />
       </div>
     </DashboardLayout>
   );
