@@ -1,3 +1,4 @@
+import difflib
 import json
 import logging
 import threading
@@ -11,10 +12,31 @@ from rest_framework.views import APIView
 
 from .models import Exam, Notification, PaperGenerationJob, Question
 from .permissions import IsFacultyUser
-from .utils.extract_text import extract_syllabus_text
+from .utils.evaluation_config import (
+    FACULTY_DEBUG_MODE,
+    OLLAMA_LONG_ANSWER_BATCH_SIZE,
+    OLLAMA_MAX_BATCH_SIZE,
+    OLLAMA_MAX_RETRIES,
+)
+from .utils.extract_text import (
+    chunk_syllabus_by_topics,
+    extract_syllabus_text,
+    get_relevant_syllabus_chunk,
+)
 from .utils.ollama_client import call_ollama, parse_json_safely
-from .utils.prompts import build_type_generation_prompt
-from .utils.validate_paper import compute_question_counts, validate_and_fix_paper
+from .utils.prompts import (
+    build_long_answer_step_a_prompt,
+    build_long_answer_step_b_prompt,
+    build_type_generation_prompt,
+    get_question_type_schema,
+)
+from .utils.validate_paper import (
+    canonicalize_type,
+    compute_question_counts,
+    repair_rubric_marks,
+    validate_and_fix_paper,
+    verify_grounding_evidence,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -123,79 +145,237 @@ def _validated_type_questions(data, question_type, default_marks=1):
     return [question for question in fixed_data['questions'] if question['type'] == canon]
 
 
-def _call_type_batch(question_type, count, marks_per_q, model_key, topics, difficulty_distribution, syllabus_text):
-    model_tag = MODEL_MAP[model_key]
-    prompt = build_type_generation_prompt(
-        question_type,
-        count,
-        marks_per_q,
-        topics,
-        difficulty_distribution,
-        syllabus_text,
-    )
+def deduplicate_questions(questions, similarity_threshold=0.85):
+    """
+    Deduplicates questions based on normalized text similarity.
+    Does not drop legitimately different questions.
+    """
+    unique = []
+    dropped_count = 0
+    for q in questions:
+        text_a = str(q.get('text', '')).strip().lower()
+        is_dup = False
+        for u in unique:
+            text_b = str(u.get('text', '')).strip().lower()
+            if difflib.SequenceMatcher(None, text_a, text_b).ratio() >= similarity_threshold:
+                is_dup = True
+                dropped_count += 1
+                break
+        if not is_dup:
+            unique.append(q)
+    if dropped_count:
+        logger.info("Deduplication removed %s duplicate questions", dropped_count)
+    return unique, dropped_count
+
+
+def _generate_single_long_answer(model_tag, marks_per_q, topic, difficulty, syllabus_chunk, progress_cb=None, item_idx=1, total_items=1):
+    """
+    Two-step reliable generation for a single long-answer question:
+    Step A: Question metadata, rubric criteria, word limit, source evidence (JSON Schema)
+    Step B: Comprehensive academic model answer (JSON Schema)
+    """
+    if progress_cb:
+        progress_cb(f"Long answer {item_idx}/{total_items}: crafting question & rubric")
+
     last_error = None
-    for temperature in (0.4, 0.2):
+    question_item = None
+
+    # Step A: Generate Question + Rubric Criteria
+    for attempt in range(OLLAMA_MAX_RETRIES + 1):
         try:
-            logger.info('Calling Ollama model key=%s tag=%s type=%s count=%s', model_key, model_tag, question_type, count)
-            raw_response = call_ollama(model_tag, prompt, temperature=temperature, num_predict=2048)
-            generated_data = parse_json_safely(raw_response)
-            questions = _validated_type_questions(generated_data, question_type, default_marks=marks_per_q)
-            logger.warning(
-                'Paper generation batch type=%s requested=%s returned=%s temperature=%s',
-                question_type,
-                count,
-                len(questions),
-                temperature,
+            feedback = f"Previous error: {last_error}" if attempt > 0 else None
+            prompt_a = build_long_answer_step_a_prompt(
+                count=1,
+                marks_per_question=marks_per_q,
+                topics=[topic] if topic else [],
+                difficulty_pct={difficulty: 100},
+                syllabus_text=syllabus_chunk,
+                retry_feedback=feedback,
             )
-            return questions[:count]
+            raw_a = call_ollama(
+                model=model_tag,
+                prompt=prompt_a,
+                format_schema=get_question_type_schema('long_answer_step_a'),
+                num_predict=400,
+                temperature=0.2,
+            )
+            parsed_a = parse_json_safely(raw_a)
+            candidates = _validated_type_questions(parsed_a, 'long_answer', default_marks=marks_per_q)
+            if candidates:
+                question_item = candidates[0]
+                break
         except Exception as exc:
             last_error = exc
-            logger.exception('Paper generation batch failed type=%s count=%s temperature=%s', question_type, count, temperature)
-    logger.warning('Paper generation batch abandoned type=%s count=%s error=%s', question_type, count, last_error)
+            logger.warning("Long answer Step A attempt %s failed for topic '%s': %s", attempt + 1, topic, exc)
+
+    if not question_item:
+        logger.error("Long answer Step A failed after retries for topic '%s': %s", topic, last_error)
+        return None
+
+    # Guarantee topic, marks, difficulty, and rubric marks sum
+    question_item['topic'] = topic or question_item.get('topic', '')
+    question_item['difficulty'] = difficulty
+    question_item['marks'] = marks_per_q
+    question_item['rubric'] = repair_rubric_marks(question_item.get('rubric'), marks_per_q)
+
+    # Step B: Generate Comprehensive Model Answer
+    if progress_cb:
+        progress_cb(f"Long answer {item_idx}/{total_items}: generating model answer")
+
+    model_answer = ""
+    for attempt in range(OLLAMA_MAX_RETRIES + 1):
+        try:
+            prompt_b = build_long_answer_step_b_prompt(
+                question_text=question_item['text'],
+                topic=question_item['topic'],
+                marks=question_item['marks'],
+                rubric=question_item['rubric'],
+                syllabus_chunk=syllabus_chunk,
+                word_limit=question_item.get('word_limit', 350),
+            )
+            raw_b = call_ollama(
+                model=model_tag,
+                prompt=prompt_b,
+                format_schema=get_question_type_schema('long_answer_step_b'),
+                num_predict=1024,
+                temperature=0.2,
+            )
+            parsed_b = parse_json_safely(raw_b)
+            ans = parsed_b.get('model_answer', '') if isinstance(parsed_b, dict) else ''
+            if ans and len(str(ans).split()) >= 30:
+                model_answer = str(ans).strip()
+                break
+        except Exception as exc:
+            logger.warning("Long answer Step B attempt %s failed: %s", attempt + 1, exc)
+
+    if not model_answer or len(model_answer.split()) < 30:
+        logger.info("Using secondary structured model answer synthesizer for question: %s", question_item['text'][:60])
+        model_answer = _ensure_subjective_model_answer(
+            question_item['text'],
+            question_item['topic'],
+            question_item['marks'],
+            syllabus_chunk,
+            model_name=None,
+        )
+
+    question_item['model_answer'] = model_answer
+
+    # Grounding check: verify source evidence exists in syllabus chunk
+    is_grounded = verify_grounding_evidence(question_item.get('source_evidence', ''), syllabus_chunk)
+    question_item['needs_review'] = not is_grounded or len(model_answer.split()) < 40
+
+    return question_item
+
+
+def _call_type_batch(question_type, count, marks_per_q, model_key, topics, difficulty_distribution, syllabus_chunk, retry_feedback=None):
+    """
+    Generates standard questions (MCQ, True/False, Fill in blanks, Short Answer) using Ollama JSON Schema.
+    """
+    model_tag = MODEL_MAP.get(model_key, model_key)
+    prompt = build_type_generation_prompt(
+        question_type=question_type,
+        count=count,
+        marks_per_question=marks_per_q,
+        topics=topics,
+        difficulty_pct=difficulty_distribution,
+        syllabus_text=syllabus_chunk,
+        retry_feedback=retry_feedback,
+    )
+    schema = get_question_type_schema(question_type)
+    num_pred = min(2048, max(512, count * 220 + 256))
+
+    for temperature in (0.2, 0.4):
+        try:
+            logger.info('Calling Ollama type=%s count=%s model=%s temp=%.1f', question_type, count, model_tag, temperature)
+            raw_response = call_ollama(
+                model=model_tag,
+                prompt=prompt,
+                format_schema=schema,
+                num_predict=num_pred,
+                temperature=temperature,
+            )
+            generated_data = parse_json_safely(raw_response)
+            questions = _validated_type_questions(generated_data, question_type, default_marks=marks_per_q)
+            logger.info('Generated %s of %s %s questions', len(questions), count, question_type)
+            return questions[:count]
+        except Exception as exc:
+            logger.warning('Batch call failed type=%s count=%s temp=%.1f err=%s', question_type, count, temperature, exc)
+
     return []
 
 
-def _generate_type_questions(question_type, count, marks_per_q, model_name, topics, difficulty_distribution, syllabus_text):
-    questions = []
-    for start in range(0, count, MAX_BATCH_SIZE):
-        requested_batch_count = min(MAX_BATCH_SIZE, count - start)
-        batch_questions = _call_type_batch(
-            question_type,
-            requested_batch_count,
-            marks_per_q,
-            model_name,
-            topics,
-            difficulty_distribution,
-            syllabus_text,
+def _generate_type_questions(question_type, count, marks_per_q, model_name, topics, difficulty_distribution, syllabus_text, chunks_map=None, progress_cb=None):
+    canon_type = canonicalize_type(question_type)
+    model_tag = MODEL_MAP.get(model_name, model_name)
+    generated = []
+
+    # Handle Long Answer / Subjective with two-step generation
+    if canon_type == 'long_answer':
+        selected_topics = list(topics) if topics else ['General']
+        difficulties = []
+        for diff, pct in (difficulty_distribution or {'medium': 100}).items():
+            diff_count = max(1, int(round((float(pct) / 100.0) * count))) if float(pct) > 0 else 0
+            difficulties.extend([diff] * diff_count)
+        while len(difficulties) < count:
+            difficulties.append('medium')
+
+        for item_idx in range(1, count + 1):
+            topic = selected_topics[(item_idx - 1) % len(selected_topics)]
+            difficulty = difficulties[(item_idx - 1) % len(difficulties)]
+            chunk = get_relevant_syllabus_chunk(syllabus_text, topic, chunks_map)
+
+            item = _generate_single_long_answer(
+                model_tag=model_tag,
+                marks_per_q=marks_per_q,
+                topic=topic,
+                difficulty=difficulty,
+                syllabus_chunk=chunk,
+                progress_cb=progress_cb,
+                item_idx=item_idx,
+                total_items=count,
+            )
+            if item:
+                generated.append(item)
+            else:
+                logger.warning("Long answer item %s of %s could not be generated.", item_idx, count)
+
+        return generated
+
+    # Objective & Short Answer generation in small batches
+    chunk = get_relevant_syllabus_chunk(syllabus_text, topics[0] if topics else '', chunks_map)
+    batch_size = max(1, min(OLLAMA_MAX_BATCH_SIZE, count))
+
+    for start in range(0, count, batch_size):
+        req_count = min(batch_size, count - start)
+        if progress_cb:
+            progress_cb(f"Generating {canon_type.replace('_', ' ').upper()} ({len(generated)} of {count})")
+
+        batch = _call_type_batch(
+            question_type=canon_type,
+            count=req_count,
+            marks_per_q=marks_per_q,
+            model_key=model_name,
+            topics=topics,
+            difficulty_distribution=difficulty_distribution,
+            syllabus_chunk=chunk,
         )
-        questions.extend(batch_questions)
-        shortfall = requested_batch_count - len(batch_questions)
-        if shortfall:
-            logger.warning(
-                'Paper generation batch shortfall type=%s requested=%s returned=%s retrying_shortfall=%s',
-                question_type,
-                requested_batch_count,
-                len(batch_questions),
-                shortfall,
+        generated.extend(batch)
+        shortfall = req_count - len(batch)
+        if shortfall > 0:
+            logger.info("Retrying shortfall of %s %s questions", shortfall, canon_type)
+            retry_batch = _call_type_batch(
+                question_type=canon_type,
+                count=shortfall,
+                marks_per_q=marks_per_q,
+                model_key=model_name,
+                topics=topics,
+                difficulty_distribution=difficulty_distribution,
+                syllabus_chunk=chunk,
+                retry_feedback=f"Shortfall: generate {shortfall} more {canon_type} questions.",
             )
-            retry_questions = _call_type_batch(
-                question_type,
-                shortfall,
-                marks_per_q,
-                model_name,
-                topics,
-                difficulty_distribution,
-                syllabus_text,
-            )
-            questions.extend(retry_questions[:shortfall])
-            if len(retry_questions) < shortfall:
-                logger.warning(
-                    'Paper generation final shortfall type=%s requested=%s returned=%s',
-                    question_type,
-                    shortfall,
-                    len(retry_questions),
-                )
-    return questions
+            generated.extend(retry_batch[:shortfall])
+
+    return generated
 
 
 def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text, blueprint=None):
@@ -213,33 +393,39 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
     try:
         counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
         total_requested = max(sum(counts.values()), 1)
-        logger.debug(
-            'Paper generation counts exam_id=%s counts=%s planned_total_marks=%s requested_total_marks=%s',
-            exam_id, counts, planned_total_marks, total_marks,
-        )
+
+        # Topic-based syllabus chunking cache
+        chunks_map = chunk_syllabus_by_topics(syllabus_text, topics)
 
         job.refresh_from_db()
         if job.is_cancelled:
             return
 
         job.current_step = f'Contacting AI model ({model_name})'
-        job.progress = 25
+        job.progress = 20
         job.save(update_fields=['current_step', 'progress'])
 
+        def update_job_step(step_text):
+            try:
+                job.refresh_from_db()
+                if not job.is_cancelled:
+                    job.current_step = step_text
+                    q_done = len(generated_questions)
+                    pct = 20 + int(60 * (q_done / total_requested))
+                    job.progress = min(pct, 80)
+                    job.question_count_generated = q_done
+                    job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
+            except Exception:
+                pass
+
         generated_questions = []
+        type_stats = {}
+
         for question_type, requested_count in counts.items():
             if requested_count > 0:
                 job.refresh_from_db()
                 if job.is_cancelled:
                     return
-
-                q_done = len(generated_questions)
-                pct = 25 + int(50 * (q_done / total_requested))
-                formatted_type = question_type.replace('_', ' ').upper()
-                job.current_step = f'Generating {formatted_type} questions ({q_done} of {total_requested})'
-                job.progress = min(pct, 75)
-                job.question_count_generated = q_done
-                job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
 
                 marks_per_q = MARKS_PER_TYPE.get(question_type, 1)
                 if blueprint and isinstance(blueprint, dict):
@@ -250,47 +436,57 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                         except (ValueError, TypeError):
                             pass
 
-                batch_res = _generate_type_questions(
-                    question_type,
-                    requested_count,
-                    marks_per_q,
-                    model_name,
-                    topics,
-                    difficulty_distribution,
-                    syllabus_text,
+                type_results = _generate_type_questions(
+                    question_type=question_type,
+                    count=requested_count,
+                    marks_per_q=marks_per_q,
+                    model_name=model_name,
+                    topics=topics,
+                    difficulty_distribution=difficulty_distribution,
+                    syllabus_text=syllabus_text,
+                    chunks_map=chunks_map,
+                    progress_cb=update_job_step,
                 )
-                generated_questions.extend(batch_res)
+                generated_questions.extend(type_results)
+                type_stats[question_type] = {
+                    'requested': requested_count,
+                    'generated': len(type_results),
+                    'shortfall': max(0, requested_count - len(type_results)),
+                }
 
         job.refresh_from_db()
         if job.is_cancelled:
             return
 
+        # Deduplicate generated questions
+        generated_questions, dropped_dups = deduplicate_questions(generated_questions, similarity_threshold=0.85)
+
         if not generated_questions:
             raise ValueError('AI model returned zero valid questions.')
 
-        # Step: Validating questions against schema
         job.current_step = 'Validating generated questions'
         job.progress = 85
         job.question_count_generated = len(generated_questions)
         job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
 
+        # Detailed warnings per type
         warnings = []
-        if len(generated_questions) < total_requested:
-            warnings.append(f'Generated {len(generated_questions)} of {total_requested} requested questions.')
+        has_shortfall = False
+        for q_type, stat in type_stats.items():
+            if stat['shortfall'] > 0:
+                has_shortfall = True
+                warnings.append(
+                    f"Generated {stat['generated']} of {stat['requested']} requested {q_type.replace('_', ' ').upper()} questions."
+                )
 
-        for idx, q in enumerate(generated_questions, 1):
-            if q.get('type') == 'mcq':
-                opts = q.get('options') or []
-                ans = str(q.get('correct_answer', '')).strip().lower()
-                clean_opts = [str(o).strip().lower() for o in opts]
-                if ans not in clean_opts and ans not in {'0', '1', '2', '3', 'a', 'b', 'c', 'd'}:
-                    warnings.append(f'Question {idx}: correct answer was not found in option choices.')
+        if dropped_dups > 0:
+            warnings.append(f"Removed {dropped_dups} duplicate question(s).")
 
-        actual_total_marks = sum(question['marks'] for question in generated_questions)
-        logger.debug(
-            'Paper generation result exam_id=%s actual_total_marks=%s requested_total_marks=%s question_count=%s',
-            exam_id, actual_total_marks, total_marks, len(generated_questions),
-        )
+        needs_review_count = sum(1 for q in generated_questions if q.get('needs_review'))
+        if needs_review_count > 0:
+            warnings.append(f"{needs_review_count} question(s) flagged for faculty review (grounding or length).")
+
+        actual_total_marks = sum(q['marks'] for q in generated_questions)
 
         # Step: Saving draft
         job.current_step = 'Saving draft paper'
@@ -306,6 +502,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                     from api.validators.question_bank import compute_text_hash
                     from api.models import Option
                     from api.utils.options import clean_options_list, clean_option_text
+
                     for question_order, generated_question in enumerate(generated_questions, start=1):
                         raw_options = generated_question.get('options')
                         correct_ans = generated_question.get('correct_answer')
@@ -313,7 +510,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                         clean_opts = clean_options_list(raw_options) if (raw_options and isinstance(raw_options, list)) else None
 
                         model_ans = generated_question.get('model_answer') or ''
-                        if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 40:
+                        if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 30:
                             model_ans = _ensure_subjective_model_answer(
                                 generated_question['text'],
                                 generated_question.get('topic') or '',
@@ -342,6 +539,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                             marks=generated_question['marks'],
                             topic_text=generated_question.get('topic') or '',
                         )
+
                         if clean_opts and isinstance(clean_opts, list) and q_type in {'mcq', 'true_false', 'truefalse'}:
                             opts_to_create = []
                             correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
@@ -363,6 +561,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                                 ))
                             if opts_to_create:
                                 Option.objects.bulk_create(opts_to_create)
+
                     exam.total_marks = actual_total_marks
                     exam.status = Exam.Status.DRAFT
                     exam.is_reviewed = False
@@ -377,12 +576,12 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
 
         final_status = (
             PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
-            if warnings
+            if (has_shortfall or warnings)
             else PaperGenerationJob.Status.COMPLETED
         )
         job.status = final_status
         job.progress = 100
-        job.current_step = 'Completed with warnings' if warnings else 'Paper generated successfully'
+        job.current_step = 'Completed with warnings' if (has_shortfall or warnings) else 'Paper generated successfully'
         job.warnings = warnings
         job.question_count_generated = len(generated_questions)
         job.completed_at = timezone.now()
@@ -392,13 +591,17 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
             Notification.objects.create(
                 user=job.faculty,
                 institution=job.institution,
-                title='Paper Ready',
-                message=f"Your paper '{exam.title}' has been generated ({len(generated_questions)} questions). Review required before publishing.",
-                type=Notification.NotificationType.WARNING if warnings else Notification.NotificationType.SUCCESS,
-                link=f'/faculty/exams/{exam.id}/edit',
+                title='Paper Ready' if not has_shortfall else 'Paper Ready with Warnings',
+                message=(
+                    f"Exam '{exam.title}' paper generated ({len(generated_questions)} questions)."
+                    if not has_shortfall
+                    else f"Exam '{exam.title}' generated with warnings. Review the paper and generate any missing questions."
+                ),
+                notification_type=Notification.NotificationType.SUCCESS if not has_shortfall else Notification.NotificationType.WARNING,
+                link=f"/faculty/exams/{exam.id}/edit",
             )
         except Exception:
-            logger.exception('Failed to create completion notification')
+            pass
 
     except Exception as exc:
         logger.exception('Background paper generation failed exam_id=%s', exam_id)
@@ -685,4 +888,148 @@ class ParseSyllabusView(APIView):
         except Exception as exc:
             logger.exception('Syllabus parsing failed')
             return Response({'detail': f'Failed to process syllabus: {str(exc)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GenerateMissingQuestionsView(APIView):
+    """
+    Endpoint to regenerate only missing question types/counts for an existing exam draft.
+    Never regenerates the whole paper.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def post(self, request, exam_id):
+        tenant_inst = getattr(request.user, 'institution', None)
+        exam = Exam.objects.filter(id=exam_id, institution=tenant_inst).first()
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status not in {Exam.Status.DRAFT, Exam.Status.GENERATING, Exam.Status.FAILED}:
+            return Response({'detail': 'Cannot generate questions for published or active exams.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Determine target counts
+        planned_counts, _ = compute_question_counts(
+            exam.question_types or ['mcq'],
+            exam.total_marks or 50,
+        )
+
+        existing_questions = list(exam.questions.filter(is_deleted=False))
+        existing_counts = {}
+        for q in existing_questions:
+            c_type = canonicalize_type(q.question_type)
+            existing_counts[c_type] = existing_counts.get(c_type, 0) + 1
+
+        shortfalls = {}
+        for q_type, target_count in planned_counts.items():
+            current_count = existing_counts.get(q_type, 0)
+            if current_count < target_count:
+                shortfalls[q_type] = target_count - current_count
+
+        if not shortfalls:
+            return Response({
+                'detail': 'All planned questions are already generated.',
+                'generated_count': 0,
+                'shortfalls': {},
+                'question_count': len(existing_questions),
+            }, status=status.HTTP_200_OK)
+
+        model_name = request.data.get('model') or exam.ai_model_used or 'llama3.2-3b'
+        topics = exam.topics or []
+        diff_dist = exam.difficulty_distribution or {'medium': 100}
+        syllabus_text = exam.source_syllabus_text or ''
+        chunks_map = chunk_syllabus_by_topics(syllabus_text, topics)
+
+        new_generated = []
+        for q_type, shortfall_count in shortfalls.items():
+            marks_per_q = MARKS_PER_TYPE.get(q_type, 1)
+            type_results = _generate_type_questions(
+                question_type=q_type,
+                count=shortfall_count,
+                marks_per_q=marks_per_q,
+                model_name=model_name,
+                topics=topics,
+                difficulty_distribution=diff_dist,
+                syllabus_text=syllabus_text,
+                chunks_map=chunks_map,
+            )
+            new_generated.extend(type_results)
+
+        if not new_generated:
+            return Response({
+                'detail': 'AI model was unable to generate the missing questions. Please check that Ollama is running and try again.',
+                'shortfalls': shortfalls,
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Save new questions to exam
+        current_max_order = max([q.order for q in existing_questions], default=0)
+        from api.validators.question_bank import compute_text_hash
+        from api.models import Option
+        from api.utils.options import clean_options_list, clean_option_text
+
+        created_objs = []
+        with transaction.atomic():
+            for idx, g_q in enumerate(new_generated, start=1):
+                raw_options = g_q.get('options')
+                correct_ans = g_q.get('correct_answer')
+                q_type = g_q['type']
+                clean_opts = clean_options_list(raw_options) if (raw_options and isinstance(raw_options, list)) else None
+
+                q_obj = Question.objects.create(
+                    exam=exam,
+                    institution=exam.institution,
+                    department=exam.department,
+                    order=current_max_order + idx,
+                    question_type=q_type,
+                    difficulty=g_q['difficulty'],
+                    text=g_q['text'],
+                    text_hash=compute_text_hash(g_q['text']),
+                    status=Question.Status.ACTIVE,
+                    options=clean_opts,
+                    correct_answer=correct_ans,
+                    model_answer=g_q.get('model_answer') or '',
+                    accepted_answers=g_q.get('accepted_answers') or [],
+                    rubric=g_q.get('rubric') or [],
+                    word_limit=g_q.get('word_limit'),
+                    source='ai_generated',
+                    marks=g_q['marks'],
+                    topic_text=g_q.get('topic') or '',
+                )
+                created_objs.append(q_obj)
+
+                if clean_opts and isinstance(clean_opts, list) and q_type in {'mcq', 'true_false', 'truefalse'}:
+                    opts_to_create = []
+                    correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
+                    for opt_idx, opt_txt in enumerate(clean_opts, start=1):
+                        is_corr = False
+                        clean_opt_str = clean_option_text(opt_txt).strip().lower()
+                        if correct_ans is not None:
+                            if isinstance(correct_ans, list):
+                                is_corr = clean_opt_str in [clean_option_text(c).strip().lower() for c in correct_ans]
+                            else:
+                                is_corr = (clean_opt_str == correct_str) or (str(opt_idx - 1) == correct_str) or (
+                                    correct_str in {'a': 0, 'b': 1, 'c': 2, 'd': 3} and opt_idx - 1 == {'a': 0, 'b': 1, 'c': 2, 'd': 3}[correct_str]
+                                ) or (clean_opt_str == 'true' and correct_str in {'true', 't', '1'}) or (clean_opt_str == 'false' and correct_str in {'false', 'f', '0'})
+                        opts_to_create.append(Option(
+                            question=q_obj,
+                            text=str(opt_txt),
+                            is_correct=is_corr,
+                            order=opt_idx,
+                        ))
+                    if opts_to_create:
+                        Option.objects.bulk_create(opts_to_create)
+
+            # Recalculate total marks
+            all_exam_questions = list(exam.questions.filter(is_deleted=False))
+            exam.total_marks = sum(q.marks for q in all_exam_questions)
+            exam.status = Exam.Status.DRAFT
+            exam.is_reviewed = False
+            exam.error_message = ''
+            exam.save(update_fields=['total_marks', 'status', 'is_reviewed', 'error_message', 'updated_at'])
+
+        return Response({
+            'detail': f'Successfully generated {len(created_objs)} missing question(s).',
+            'generated_count': len(created_objs),
+            'total_questions': len(all_exam_questions),
+            'actual_total_marks': exam.total_marks,
+        }, status=status.HTTP_201_CREATED)
+
 

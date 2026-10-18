@@ -148,13 +148,10 @@ def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):
 
         if q_type == 'mcq':
             options = raw_question.get('options')
-            if not isinstance(options, list) or len(options) < 2:
+            is_valid, _ = validate_mcq_options(options, correct_answer)
+            if not is_valid:
                 continue
-            # Validate options and deduplicate
-            cleaned_opts = [str(o).strip() for o in options if str(o).strip()]
-            if len(cleaned_opts) < 2:
-                continue
-            cleaned_options = clean_options_list(cleaned_opts)
+            cleaned_options = clean_options_list(options)
             correct_answer = _normalise_correct_answer(q_type, correct_answer, cleaned_options)
 
         elif q_type == 'true_false':
@@ -200,9 +197,20 @@ def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):
             else:
                 rubric = []
 
+            # Deterministic rubric marks repair to guarantee criteria sum == marks
+            rubric = repair_rubric_marks(rubric, marks)
+
             word_limit = raw_question.get('word_limit')
             if not word_limit or not isinstance(word_limit, int):
                 word_limit = 120 if q_type == 'short_answer' else 350
+
+        # Grounding & Verification
+        source_evidence = str(raw_question.get('source_evidence') or '').strip()
+        needs_review = False
+        if q_type in {'short_answer', 'long_answer'}:
+            # Flag for review if model answer is under 40 words
+            if len(model_answer.split()) < 40:
+                needs_review = True
 
         question = {
             'type': q_type,
@@ -216,6 +224,8 @@ def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):
             'accepted_answers': accepted_answers,
             'rubric': rubric,
             'word_limit': word_limit,
+            'source_evidence': source_evidence,
+            'needs_review': needs_review,
             'source': 'ai_generated',
         }
         valid_questions.append(question)
@@ -228,5 +238,88 @@ def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):
     actual_total_marks = sum(q['marks'] for q in valid_questions)
     fixed_data['total_marks'] = actual_total_marks
     return fixed_data, actual_total_marks
+
+
+def repair_rubric_marks(rubric: list, target_marks: float) -> list:
+    """
+    Deterministically repairs rubric criteria marks so they sum EXACTLY to target_marks.
+    Never rejects a question due to model arithmetic errors.
+    """
+    target = round(float(target_marks), 1)
+    if target <= 0:
+        target = 1.0
+
+    if not isinstance(rubric, list) or not rubric:
+        return [
+            {"criterion": "Core concepts and definition", "marks": round(target * 0.3, 1)},
+            {"criterion": "Detailed breakdown and mechanisms", "marks": round(target * 0.4, 1)},
+            {"criterion": "Practical application or example", "marks": round(target - round(target * 0.3, 1) - round(target * 0.4, 1), 1)}
+        ]
+
+    cleaned = []
+    for item in rubric:
+        if isinstance(item, dict):
+            crit = str(item.get("criterion") or item.get("name") or "Core concept").strip()
+            try:
+                m = float(item.get("marks", 0))
+            except (ValueError, TypeError):
+                m = 0.0
+            cleaned.append({"criterion": crit, "marks": max(0.0, m)})
+        elif isinstance(item, str) and item.strip():
+            cleaned.append({"criterion": item.strip(), "marks": 0.0})
+
+    if not cleaned:
+        return repair_rubric_marks([], target)
+
+    current_sum = sum(x["marks"] for x in cleaned)
+    if current_sum <= 0:
+        each = round(target / len(cleaned), 1)
+        for x in cleaned:
+            x["marks"] = each
+        cleaned[-1]["marks"] = round(target - sum(x["marks"] for x in cleaned[:-1]), 1)
+        return cleaned
+
+    scaled = []
+    running = 0.0
+    for i, x in enumerate(cleaned):
+        if i == len(cleaned) - 1:
+            final_mark = round(target - running, 1)
+            scaled.append({"criterion": x["criterion"], "marks": final_mark})
+        else:
+            proportional = round((x["marks"] / current_sum) * target, 1)
+            running += proportional
+            scaled.append({"criterion": x["criterion"], "marks": proportional})
+
+    return scaled
+
+
+def verify_grounding_evidence(source_evidence: str, syllabus_text: str) -> bool:
+    """
+    Checks if source_evidence quote exists in the syllabus text
+    via normalized substring or word-set overlap.
+    """
+    if not source_evidence or not syllabus_text:
+        return False
+
+    clean_ev = re.sub(r'[^a-zA-Z0-9\s]', '', source_evidence).strip().lower()
+    clean_syl = re.sub(r'[^a-zA-Z0-9\s]', '', syllabus_text).strip().lower()
+
+    if len(clean_ev) < 8:
+        return False
+
+    # Exact normalized substring
+    if clean_ev in clean_syl:
+        return True
+
+    # 4-word sliding window check
+    words = clean_ev.split()
+    if len(words) >= 4:
+        for idx in range(len(words) - 3):
+            sub = ' '.join(words[idx : idx + 4])
+            if sub in clean_syl:
+                return True
+
+    return False
+
 
 

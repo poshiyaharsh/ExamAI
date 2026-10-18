@@ -105,3 +105,103 @@ def detect_syllabus_topics(text: str) -> list[str]:
 
     return detected[:10]
 
+
+import hashlib
+import time
+
+_SYLLABUS_CACHE = {}
+
+
+def get_cached_syllabus_data(file_obj, filename=""):
+    """
+    Extracts text, topics, and chunks for a syllabus file once and caches them by SHA-256 hash.
+    """
+    from .evaluation_config import SYLLABUS_CACHE_TTL
+    file_obj.seek(0)
+    content = file_obj.read()
+    file_obj.seek(0)
+    
+    file_hash = hashlib.sha256(content).hexdigest()
+    now = time.time()
+    
+    if file_hash in _SYLLABUS_CACHE:
+        entry = _SYLLABUS_CACHE[file_hash]
+        if now - entry.get('time', 0) < SYLLABUS_CACHE_TTL:
+            return entry['data']
+
+    text = extract_syllabus_text(file_obj)
+    topics = detect_syllabus_topics(text)
+    chunks = chunk_syllabus_by_topics(text, topics)
+    data = {
+        'hash': file_hash,
+        'text': text,
+        'topics': topics,
+        'chunks': chunks,
+    }
+    _SYLLABUS_CACHE[file_hash] = {'data': data, 'time': now}
+    return data
+
+
+def chunk_syllabus_by_topics(text: str, topics: list) -> dict:
+    """
+    Splits the syllabus text into topic-based chunks.
+    Guarantees each chunk has at least 1500 chars (if available) and at most 3500 chars.
+    """
+    chunks = {}
+    if not text:
+        return {}
+    if not topics:
+        return {"General": text[:3500].strip()}
+
+    lower_text = text.lower()
+    indices = []
+    for t in topics:
+        clean_t = str(t).strip().lower()
+        idx = lower_text.find(clean_t)
+        if idx == -1:
+            words = [w for w in clean_t.split() if len(w) > 3]
+            if words:
+                idx = lower_text.find(words[0])
+        if idx != -1:
+            indices.append((idx, t))
+
+    indices.sort(key=lambda x: x[0])
+
+    if not indices:
+        chunk_sz = max(1500, len(text) // max(len(topics), 1))
+        for i, t in enumerate(topics):
+            chunks[t] = text[i * chunk_sz : min(len(text), (i + 1) * chunk_sz + 500)].strip()
+        return chunks
+
+    for i in range(len(indices)):
+        start_idx = indices[i][0]
+        # Allow overlap and ensure minimum readable chunk size
+        end_boundary = indices[i + 1][0] if i + 1 < len(indices) else len(text)
+        chunk_len = max(1500, min(3500, end_boundary - start_idx + 300))
+        chunk_content = text[start_idx : min(len(text), start_idx + chunk_len)].strip()
+        chunks[indices[i][1]] = chunk_content
+
+    for t in topics:
+        if t not in chunks:
+            chunks[t] = text[:2500].strip()
+
+    return chunks
+
+
+def get_relevant_syllabus_chunk(syllabus_text: str, topic: str, chunks_map: dict = None, max_chars: int = 3000) -> str:
+    """
+    Returns the most relevant section/chunk of the syllabus for the given topic.
+    """
+    if chunks_map and topic in chunks_map and chunks_map[topic]:
+        return chunks_map[topic][:max_chars]
+    if not syllabus_text:
+        return ""
+    if topic:
+        lower_text = syllabus_text.lower()
+        idx = lower_text.find(topic.lower())
+        if idx != -1:
+            start = max(0, idx - 200)
+            return syllabus_text[start : min(len(syllabus_text), start + max_chars)].strip()
+    return syllabus_text[:max_chars].strip()
+
+

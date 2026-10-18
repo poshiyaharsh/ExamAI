@@ -16,6 +16,7 @@ import {
   Save,
   ShieldCheck,
   Shuffle,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -60,6 +61,7 @@ export function EditPaperPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [shuffling, setShuffling] = useState(false);
   const [confirmingReview, setConfirmingReview] = useState(false);
+  const [generatingMissing, setGeneratingMissing] = useState(false);
 
   // Filters
   const [filterType, setFilterType] = useState<string>("all");
@@ -245,8 +247,42 @@ export function EditPaperPage() {
     }
   };
 
+  const handleGenerateMissing = async () => {
+    if (!id) return;
+    setGeneratingMissing(true);
+    try {
+      const res = await facultyExamApi.generateMissingQuestions(Number(id));
+      toast.success(res.detail || "Successfully generated missing question(s)!");
+      const refreshed = await facultyExamApi.getExam(Number(id));
+      setExam(refreshed);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to generate missing questions.");
+    } finally {
+      setGeneratingMissing(false);
+    }
+  };
+
   const isPublished = exam?.status === "published" || exam?.is_immutable;
   const isReviewed = Boolean(exam?.is_reviewed);
+
+  const typeCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      mcq: 0,
+      true_false: 0,
+      fill_blank: 0,
+      short_answer: 0,
+      long_answer: 0,
+    };
+    (exam?.questions || []).forEach((q) => {
+      const t = q.question_type;
+      if (t === "mcq") counts.mcq++;
+      else if (t === "true_false" || t === "truefalse") counts.true_false++;
+      else if (t === "fill_blank" || t === "fillblank") counts.fill_blank++;
+      else if (t === "short_answer") counts.short_answer++;
+      else if (t === "long_answer" || t === "subjective") counts.long_answer++;
+    });
+    return counts;
+  }, [exam?.questions]);
 
   // Computations & Validation Checks
   const computedTotalMarks = useMemo(
@@ -446,14 +482,50 @@ export function EditPaperPage() {
               </div>
             </div>
 
-            {/* Validation Warnings Box */}
-            {validationWarnings.length > 0 && (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 space-y-2">
-                <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  Validation Audit & Recommendations ({validationWarnings.length})
+            {/* Validation Warnings & Question Type Breakdown */}
+            {(validationWarnings.length > 0 || !marksMatch) && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    Validation Audit & Breakdown
+                  </div>
+                  {!isPublished && (
+                    <button
+                      type="button"
+                      disabled={generatingMissing}
+                      onClick={handleGenerateMissing}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-700 disabled:opacity-50 transition-all shrink-0 self-start sm:self-auto"
+                    >
+                      {generatingMissing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      {generatingMissing ? "Generating Missing Questions..." : "Generate Missing Questions"}
+                    </button>
+                  )}
                 </div>
-                <ul className="list-disc list-inside space-y-1 text-xs text-amber-800">
+
+                {/* Question Type Breakdown Pills */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[11px] font-semibold text-amber-900">Current Distribution:</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-200">
+                    MCQ: {typeCounts.mcq}
+                  </span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-200">
+                    True/False: {typeCounts.true_false}
+                  </span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-200">
+                    Fill Blank: {typeCounts.fill_blank}
+                  </span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-200">
+                    Short Answer: {typeCounts.short_answer}
+                  </span>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold border ${
+                    typeCounts.long_answer > 0 ? "bg-amber-100 text-amber-900 border-amber-200" : "bg-rose-100 text-rose-800 border-rose-300"
+                  }`}>
+                    Long Answer: {typeCounts.long_answer}
+                  </span>
+                </div>
+
+                <ul className="list-disc list-inside space-y-1 text-xs text-amber-800 pt-1 border-t border-amber-200/60">
                   {validationWarnings.map((w, idx) => (
                     <li key={idx}>{w}</li>
                   ))}

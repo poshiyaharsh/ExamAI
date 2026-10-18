@@ -14,6 +14,14 @@ OLLAMA_FALLBACK_MODELS: List[str] = [
 ]
 OLLAMA_TIMEOUT: int = int(os.getenv('OLLAMA_TIMEOUT', '180'))
 OLLAMA_NUM_CTX: int = int(os.getenv('OLLAMA_NUM_CTX', '4096'))
+OLLAMA_KEEP_ALIVE: str = os.getenv('OLLAMA_KEEP_ALIVE', '5m').strip()
+OLLAMA_TEMPERATURE: float = float(os.getenv('OLLAMA_TEMPERATURE', '0.2'))
+OLLAMA_MAX_PARALLEL: int = int(os.getenv('OLLAMA_MAX_PARALLEL', '1'))
+OLLAMA_MAX_BATCH_SIZE: int = int(os.getenv('OLLAMA_MAX_BATCH_SIZE', '4'))
+OLLAMA_LONG_ANSWER_BATCH_SIZE: int = int(os.getenv('OLLAMA_LONG_ANSWER_BATCH_SIZE', '1'))
+OLLAMA_MAX_RETRIES: int = int(os.getenv('OLLAMA_MAX_RETRIES', '2'))
+FACULTY_DEBUG_MODE: bool = os.getenv('FACULTY_DEBUG_MODE', 'false').strip().lower() in ('true', '1', 'yes')
+SYLLABUS_CACHE_TTL: int = int(os.getenv('SYLLABUS_CACHE_TTL', '3600'))
 
 EVAL_PROVIDER_ORDER: List[str] = [
     p.strip().lower()

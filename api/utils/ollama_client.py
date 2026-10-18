@@ -3,7 +3,7 @@ import logging
 import re
 import threading
 import time
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -160,24 +160,54 @@ def call_ollama_chat(
     return str(content)
 
 
-def call_ollama(model: str, prompt: str, timeout: int = 180, temperature: float = 0.4, num_predict: int = 2048) -> str:
+def call_ollama(
+    model: str,
+    prompt: str,
+    timeout: Optional[int] = None,
+    temperature: Optional[float] = None,
+    num_predict: int = 2048,
+    num_ctx: Optional[int] = None,
+    format_schema: Optional[Union[dict, str]] = None,
+    keep_alive: Optional[str] = None,
+) -> str:
     """
-    Legacy generate endpoint caller used by paper generation.
+    Calls Ollama generate endpoint with structured JSON schema support,
+    dynamic options, and guarded concurrency.
     """
-    # Auto-resolve or canonicalize tag if needed
+    from .evaluation_config import (
+        OLLAMA_KEEP_ALIVE,
+        OLLAMA_NUM_CTX,
+        OLLAMA_TEMPERATURE,
+        OLLAMA_TIMEOUT,
+        FACULTY_DEBUG_MODE,
+    )
+
     canonical_tag = canonicalize_model_tag(model)
     generate_url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
+
+    eff_temp = temperature if temperature is not None else OLLAMA_TEMPERATURE
+    eff_keep_alive = keep_alive or OLLAMA_KEEP_ALIVE
+
+    # Compute dynamic context if not provided
+    prompt_token_est = max(512, len(prompt) // 4)
+    eff_num_ctx = num_ctx or min(8192, max(OLLAMA_NUM_CTX, prompt_token_est + num_predict + 512))
+
+    # Dynamic timeout based on expected output tokens
+    eff_timeout = timeout or max(OLLAMA_TIMEOUT, int(num_predict * 0.15) + 60)
+
+    # Format parameter: structured schema dict or 'json'
+    eff_format = format_schema if format_schema is not None else 'json'
 
     payload_data = {
         'model': canonical_tag,
         'prompt': prompt,
         'stream': False,
-        'format': 'json',
-        'keep_alive': '10m',
+        'format': eff_format,
+        'keep_alive': eff_keep_alive,
         'options': {
-            'temperature': temperature,
+            'temperature': eff_temp,
             'num_predict': num_predict,
-            'num_ctx': 4096,
+            'num_ctx': eff_num_ctx,
         },
     }
     payload = json.dumps(payload_data).encode('utf-8')
@@ -188,9 +218,10 @@ def call_ollama(model: str, prompt: str, timeout: int = 180, temperature: float 
         method='POST',
     )
 
+    t_start = time.time()
     with _EVAL_INFERENCE_LOCK:
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with urlopen(request, timeout=eff_timeout) as response:
                 response_data = json.loads(response.read().decode('utf-8'))
         except HTTPError as exc:
             body = exc.read().decode('utf-8', errors='replace').strip()
@@ -199,11 +230,27 @@ def call_ollama(model: str, prompt: str, timeout: int = 180, temperature: float 
         except URLError as exc:
             raise RuntimeError(f'Unable to connect to Ollama for model tag "{canonical_tag}": {exc.reason}') from exc
         except TimeoutError as exc:
-            raise RuntimeError(f'Ollama request timed out for model tag "{canonical_tag}".') from exc
+            raise RuntimeError(f'Ollama request timed out after {eff_timeout}s for model tag "{canonical_tag}".') from exc
         except json.JSONDecodeError as exc:
             raise RuntimeError(f'Ollama returned an invalid JSON response for model tag "{canonical_tag}".') from exc
 
-    result = response_data.get('response')
+    duration = time.time() - t_start
+    result = response_data.get('response', '')
+    done_reason = response_data.get('done_reason', 'stop')
+    eval_count = response_data.get('eval_count', 0)
+
+    if FACULTY_DEBUG_MODE:
+        snippet = (result[:300] if result else '').replace('\n', ' ')
+        logger.info(
+            "Ollama call model=%s tokens=%s duration=%.2fs done_reason=%s snippet=%.300s",
+            canonical_tag, eval_count, duration, done_reason, snippet
+        )
+    else:
+        logger.info(
+            "Ollama call completed model=%s tokens=%s duration=%.2fs done_reason=%s",
+            canonical_tag, eval_count, duration, done_reason
+        )
+
     if not isinstance(result, str) or not result.strip():
         raise RuntimeError(f'Ollama response for model tag "{canonical_tag}" did not contain generated text.')
     return result
@@ -211,24 +258,64 @@ def call_ollama(model: str, prompt: str, timeout: int = 180, temperature: float 
 
 def parse_json_safely(raw: str) -> dict:
     """
-    Extracts and parses JSON object defensively from raw text,
-    stripping markdown fences or leading/trailing chatter.
+    Extracts and parses JSON object or array defensively from raw text.
+    Uses clean regex candidate extraction followed by json_repair.
+    Never uses eval.
     """
     cleaned = str(raw or '').strip()
     cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*```$', '', cleaned).strip()
 
-    candidates = [cleaned]
-    match = re.search(r'\{.*\}', cleaned, flags=re.DOTALL)
-    if match:
-        candidates.append(match.group(0))
+    # 1. Direct parse attempt
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            return {'questions': parsed}
+    except Exception:
+        pass
+
+    # 2. Extract balanced JSON substring via regex
+    candidates = []
+    obj_match = re.search(r'(\{[\s\S]*\})', cleaned)
+    if obj_match:
+        candidates.append(obj_match.group(1))
+
+    arr_match = re.search(r'(\[[\s\S]*\])', cleaned)
+    if arr_match:
+        candidates.append(arr_match.group(1))
 
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
             if isinstance(parsed, dict):
                 return parsed
-        except json.JSONDecodeError:
+            if isinstance(parsed, list):
+                return {'questions': parsed}
+        except Exception:
             continue
+
+    # 3. Tolerant parsing with json_repair
+    try:
+        import json_repair
+        repaired = json_repair.repair_json(cleaned, return_objects=True)
+        if isinstance(repaired, dict):
+            return repaired
+        if isinstance(repaired, list):
+            return {'questions': repaired}
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        try:
+            import json_repair
+            repaired = json_repair.repair_json(candidate, return_objects=True)
+            if isinstance(repaired, dict):
+                return repaired
+            if isinstance(repaired, list):
+                return {'questions': repaired}
+        except Exception:
+            pass
 
     raise ValueError('Output did not contain a valid JSON object.')
