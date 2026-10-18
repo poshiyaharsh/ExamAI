@@ -277,7 +277,7 @@ export function AdminExams() {
 
   return (
     <DashboardLayout userRole="Admin">
-      <div className="space-y-6">
+      <div className="space-y-6 min-w-0 max-w-full">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -504,181 +504,341 @@ export function AdminExams() {
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-muted/50 border-b border-border text-xs uppercase font-semibold text-muted-foreground tracking-wider">
-                  <tr>
-                    <th className="px-5 py-3.5">Exam Title & Subject</th>
-                    <th className="px-5 py-3.5">Faculty / Department</th>
-                    <th className="px-5 py-3.5">Duration</th>
-                    <th className="px-5 py-3.5">Total Marks</th>
-                    <th className="px-5 py-3.5 text-center">Questions</th>
-                    <th className="px-5 py-3.5 text-center">Attempts</th>
-                    <th className="px-5 py-3.5">Status</th>
-                    <th className="px-5 py-3.5">Created On</th>
-                    <th className="px-5 py-3.5 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border text-sm">
-                  {exams.map((exam) => {
-                    const badge = getStatusBadgeStyle(exam.status);
-                    return (
-                      <tr key={exam.id} className="hover:bg-muted/30 transition-colors">
-                        {/* Title & Subject */}
-                        <td className="px-5 py-3.5 max-w-[280px]">
-                          <div>
-                            <button
-                              onClick={() => void handleOpenDetail(exam.id)}
-                              className="font-semibold text-foreground hover:text-primary transition-colors text-left line-clamp-1 block text-sm"
-                              title={exam.title}
-                            >
-                              {exam.title}
-                            </button>
-                            <p className="text-xs text-muted-foreground font-medium mt-0.5 truncate">
-                              {exam.subject || "General Course"}
-                            </p>
-                            {Array.isArray(exam.topics) && exam.topics.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1 mt-1.5">
-                                {exam.topics.slice(0, 2).map((t, tIdx) => (
-                                  <span
-                                    key={tIdx}
-                                    className="inline-block px-1.5 py-0.5 rounded bg-muted/70 text-[10px] text-muted-foreground truncate max-w-[110px]"
-                                    title={t}
-                                  >
-                                    {t}
-                                  </span>
-                                ))}
-                                {exam.topics.length > 2 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleOpenDetail(exam.id)}
-                                    className="text-[10px] text-primary hover:underline font-semibold"
-                                  >
-                                    +{exam.topics.length - 2} more
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Faculty & Dept */}
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
-                              {exam.faculty?.name?.charAt(0) || "F"}
-                            </div>
-                            <div>
-                              <p className="font-medium text-foreground text-xs">{exam.faculty?.name || "Unknown Faculty"}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {exam.faculty?.department || exam.faculty?.email}
+            <div className="w-full min-w-0 max-w-full">
+              {/* Desktop/Tablet Table (>= 768px) with table-layout: fixed */}
+              <div className="hidden md:block overflow-x-auto w-full min-w-0">
+                <table className="w-full text-left border-collapse table-fixed">
+                  <colgroup>
+                    <col className="w-[30%] lg:w-[32%]" />
+                    <col className="w-[18%] lg:w-[18%]" />
+                    <col className="w-[10%] lg:w-[10%]" />
+                    <col className="w-[12%] lg:w-[12%]" />
+                    <col className="w-[8%] lg:w-[8%]" />
+                    <col className="hidden xl:table-column xl:w-[8%]" />
+                    <col className="w-[12%] lg:w-[10%]" />
+                    <col className="hidden 2xl:table-column 2xl:w-[10%]" />
+                    <col className="w-[10%] lg:w-[10%]" />
+                  </colgroup>
+                  <thead className="bg-muted/50 border-b border-border text-xs uppercase font-semibold text-muted-foreground tracking-wider">
+                    <tr>
+                      <th className="px-4 py-3.5 truncate">Exam Title & Subject</th>
+                      <th className="px-3 py-3.5 truncate">Faculty / Dept</th>
+                      <th className="px-3 py-3.5 truncate">Duration</th>
+                      <th className="px-3 py-3.5 truncate">Total Marks</th>
+                      <th className="px-3 py-3.5 text-center truncate">Questions</th>
+                      <th className="px-3 py-3.5 text-center truncate hidden xl:table-cell">Attempts</th>
+                      <th className="px-3 py-3.5 truncate">Status</th>
+                      <th className="px-3 py-3.5 truncate hidden 2xl:table-cell">Created On</th>
+                      <th className="px-4 py-3.5 text-right truncate">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border text-sm">
+                    {exams.map((exam) => {
+                      const badge = getStatusBadgeStyle(exam.status);
+                      return (
+                        <tr key={exam.id} className="hover:bg-muted/30 transition-colors">
+                          {/* Title & Subject */}
+                          <td className="px-4 py-3.5 overflow-hidden">
+                            <div className="min-w-0">
+                              <button
+                                onClick={() => void handleOpenDetail(exam.id)}
+                                className="font-semibold text-foreground hover:text-primary transition-colors text-left truncate block text-sm w-full"
+                                title={exam.title}
+                              >
+                                {exam.title}
+                              </button>
+                              <p className="text-xs text-muted-foreground font-medium mt-0.5 truncate" title={exam.subject || "General Course"}>
+                                {exam.subject || "General Course"}
                               </p>
+                              {Array.isArray(exam.topics) && exam.topics.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-1 mt-1.5 overflow-hidden">
+                                  {exam.topics.slice(0, 2).map((t, tIdx) => (
+                                    <span
+                                      key={tIdx}
+                                      className="inline-block px-1.5 py-0.5 rounded bg-muted/70 text-[10px] text-muted-foreground truncate max-w-[100px]"
+                                      title={t}
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                  {exam.topics.length > 2 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleOpenDetail(exam.id)}
+                                      className="text-[10px] text-primary hover:underline font-semibold shrink-0"
+                                    >
+                                      +{exam.topics.length - 2} more
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        </td>
+                          </td>
 
-                        {/* Duration */}
-                        <td className="px-5 py-3.5 text-xs text-foreground whitespace-nowrap">
-                          {exam.duration_minutes} min
-                        </td>
+                          {/* Faculty & Dept */}
+                          <td className="px-3 py-3.5 overflow-hidden">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
+                                {exam.faculty?.name?.charAt(0) || "F"}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-foreground text-xs truncate" title={exam.faculty?.name || "Unknown Faculty"}>
+                                  {exam.faculty?.name || "Unknown Faculty"}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate" title={exam.faculty?.department || exam.faculty?.email}>
+                                  {exam.faculty?.department || exam.faculty?.email}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
 
-                        {/* Total Marks */}
-                        <td className="px-5 py-3.5 text-xs text-foreground whitespace-nowrap">
-                          <span className="font-semibold">
+                          {/* Duration */}
+                          <td className="px-3 py-3.5 text-xs text-foreground truncate">
+                            {exam.duration_minutes} min
+                          </td>
+
+                          {/* Total Marks */}
+                          <td className="px-3 py-3.5 text-xs text-foreground overflow-hidden">
+                            <div className="truncate">
+                              <span className="font-semibold">
+                                {exam.total_marks}
+                                {exam.target_total_marks && exam.target_total_marks !== exam.total_marks
+                                  ? ` / ${exam.target_total_marks}`
+                                  : ""} pts
+                              </span>
+                            </div>
+                            {exam.marks_shortfall !== undefined && exam.marks_shortfall > 0 && (
+                              <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200 mt-0.5 truncate max-w-full">
+                                {exam.marks_shortfall} short
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Questions count */}
+                          <td className="px-3 py-3.5 text-xs text-center text-foreground font-medium">
+                            <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs">
+                              {exam.question_count}
+                            </span>
+                          </td>
+
+                          {/* Attempts count (hidden below xl) */}
+                          <td className="px-3 py-3.5 text-xs text-center text-foreground font-medium hidden xl:table-cell">
+                            <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs">
+                              {exam.attempts_count}
+                            </span>
+                          </td>
+
+                          {/* Status */}
+                          <td className="px-3 py-3.5 overflow-hidden">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border capitalize truncate max-w-full ${badge.bg} ${badge.border}`}
+                              title={exam.status}
+                            >
+                              {exam.status}
+                            </span>
+                          </td>
+
+                          {/* Created On (hidden below 2xl) */}
+                          <td className="px-3 py-3.5 text-xs text-muted-foreground truncate hidden 2xl:table-cell" title={formatDate(exam.created_at)}>
+                            {formatDate(exam.created_at)}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="px-4 py-3.5 text-right">
+                            <div className="inline-flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => void handleOpenDetail(exam.id)}
+                                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                                title="View Details"
+                                aria-label="View Details"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+
+                              {exam.status.toLowerCase() === "draft" && (
+                                <button
+                                  onClick={() => {
+                                    setActionExam(exam);
+                                    setActionType("publish");
+                                  }}
+                                  className="p-1.5 rounded-md hover:bg-emerald-50 text-emerald-600 transition-colors"
+                                  title="Publish Exam"
+                                  aria-label="Publish Exam"
+                                >
+                                  <Globe className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {exam.status.toLowerCase() === "published" && (
+                                <button
+                                  onClick={() => {
+                                    setActionExam(exam);
+                                    setActionType("unpublish");
+                                  }}
+                                  className="p-1.5 rounded-md hover:bg-amber-50 text-amber-600 transition-colors"
+                                  title="Unpublish Exam"
+                                  aria-label="Unpublish Exam"
+                                >
+                                  <Lock className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => {
+                                  setActionExam(exam);
+                                  setActionType("delete");
+                                }}
+                                className="p-1.5 rounded-md hover:bg-rose-50 text-rose-600 transition-colors"
+                                title="Delete Exam"
+                                aria-label="Delete Exam"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Stacked Cards (< 768px) with zero horizontal overflow */}
+              <div className="md:hidden divide-y divide-border">
+                {exams.map((exam) => {
+                  const badge = getStatusBadgeStyle(exam.status);
+                  return (
+                    <div key={exam.id} className="p-4 space-y-3">
+                      {/* Title & Status */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <button
+                            onClick={() => void handleOpenDetail(exam.id)}
+                            className="font-semibold text-foreground hover:text-primary transition-colors text-left text-sm line-clamp-1"
+                            title={exam.title}
+                          >
+                            {exam.title}
+                          </button>
+                          <p className="text-xs text-muted-foreground font-medium mt-0.5 truncate">
+                            {exam.subject || "General Course"}
+                          </p>
+                        </div>
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border capitalize shrink-0 ${badge.bg} ${badge.border}`}
+                        >
+                          {exam.status}
+                        </span>
+                      </div>
+
+                      {/* Faculty Info */}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px] shrink-0">
+                          {exam.faculty?.name?.charAt(0) || "F"}
+                        </div>
+                        <span className="font-medium text-foreground truncate">{exam.faculty?.name || "Unknown Faculty"}</span>
+                        <span>•</span>
+                        <span className="truncate">{exam.faculty?.department || exam.faculty?.email}</span>
+                      </div>
+
+                      {/* Compact Topics */}
+                      {Array.isArray(exam.topics) && exam.topics.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {exam.topics.slice(0, 2).map((t, tIdx) => (
+                            <span
+                              key={tIdx}
+                              className="inline-block px-1.5 py-0.5 rounded bg-muted text-[10px] text-muted-foreground truncate max-w-[120px]"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                          {exam.topics.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(exam.id)}
+                              className="text-[10px] text-primary font-semibold hover:underline"
+                            >
+                              +{exam.topics.length - 2} more
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 4-Stat Specs Grid */}
+                      <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 p-2.5 rounded-lg border border-border/50">
+                        <div>
+                          <span className="text-muted-foreground">Duration: </span>
+                          <strong className="text-foreground">{exam.duration_minutes}m</strong>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Marks: </span>
+                          <strong className="text-foreground">
                             {exam.total_marks}
                             {exam.target_total_marks && exam.target_total_marks !== exam.total_marks
-                              ? ` / ${exam.target_total_marks}`
-                              : ""} pts
-                          </span>
-                          {exam.marks_shortfall !== undefined && exam.marks_shortfall > 0 && (
-                            <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-200 mt-0.5 block w-fit">
-                              {exam.marks_shortfall} short
-                            </span>
-                          )}
-                        </td>
+                              ? `/${exam.target_total_marks}`
+                              : ""}{" "}
+                            pts
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Questions: </span>
+                          <strong className="text-foreground">{exam.question_count}</strong>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Attempts: </span>
+                          <strong className="text-foreground">{exam.attempts_count}</strong>
+                        </div>
+                      </div>
 
-                        {/* Questions count */}
-                        <td className="px-5 py-4 text-xs text-center text-foreground font-medium">
-                          <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs">
-                            {exam.question_count}
-                          </span>
-                        </td>
+                      {/* Shortfall notice if applicable */}
+                      {exam.marks_shortfall !== undefined && exam.marks_shortfall > 0 && (
+                        <div className="px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 text-xs font-medium border border-amber-200 flex items-center justify-between">
+                          <span>Shortfall detected:</span>
+                          <span className="font-bold">{exam.marks_shortfall} marks short</span>
+                        </div>
+                      )}
 
-                        {/* Attempts count */}
-                        <td className="px-5 py-4 text-xs text-center text-foreground font-medium">
-                          <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs">
-                            {exam.attempts_count}
-                          </span>
-                        </td>
-
-                        {/* Status */}
-                        <td className="px-5 py-4">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border capitalize ${badge.bg} ${badge.border}`}
+                      {/* Card Actions */}
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-[11px] text-muted-foreground">{formatDate(exam.created_at)}</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => void handleOpenDetail(exam.id)}
+                            className="px-2.5 py-1 rounded-md border border-border bg-card text-foreground hover:bg-muted text-xs font-medium transition-colors flex items-center gap-1"
+                            title="View Details"
                           >
-                            {exam.status}
-                          </span>
-                        </td>
-
-                        {/* Created On */}
-                        <td className="px-5 py-4 text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDate(exam.created_at)}
-                        </td>
-
-                        {/* Actions */}
-                        <td className="px-5 py-4 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              onClick={() => void handleOpenDetail(exam.id)}
-                              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                              title="View Full Exam & Questions"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-
-                            {exam.status.toLowerCase() === "draft" && (
-                              <button
-                                onClick={() => {
-                                  setActionExam(exam);
-                                  setActionType("publish");
-                                }}
-                                className="p-1.5 rounded-md hover:bg-emerald-50 text-emerald-600 transition-colors"
-                                title="Publish Exam"
-                              >
-                                <Globe className="w-4 h-4" />
-                              </button>
-                            )}
-
-                            {exam.status.toLowerCase() === "published" && (
-                              <button
-                                onClick={() => {
-                                  setActionExam(exam);
-                                  setActionType("unpublish");
-                                }}
-                                className="p-1.5 rounded-md hover:bg-amber-50 text-amber-600 transition-colors"
-                                title="Unpublish Exam (Move to Draft)"
-                              >
-                                <Lock className="w-4 h-4" />
-                              </button>
-                            )}
-
+                            <Eye className="w-3.5 h-3.5" />
+                            Details
+                          </button>
+                          {exam.status.toLowerCase() === "draft" && (
                             <button
                               onClick={() => {
                                 setActionExam(exam);
-                                setActionType("delete");
+                                setActionType("publish");
                               }}
-                              className="p-1.5 rounded-md hover:bg-rose-50 text-rose-600 transition-colors"
-                              title="Delete Exam"
+                              className="px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-medium transition-colors flex items-center gap-1"
+                              title="Publish"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Globe className="w-3.5 h-3.5" />
+                              Publish
                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          )}
+                          <button
+                            onClick={() => {
+                              setActionExam(exam);
+                              setActionType("delete");
+                            }}
+                            className="p-1 rounded-md hover:bg-rose-50 text-rose-600 transition-colors"
+                            title="Delete"
+                            aria-label="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 

@@ -710,8 +710,17 @@ export type FacultyOngoingExamItem = {
   total_marks: number;
   starts_at: string | null;
   ends_at: string | null;
-  submitted_count: number;
+  seconds_remaining?: number | null;
+  eligible_count?: number;
   eligible_students: number;
+  submitted_count: number;
+  in_progress_count?: number;
+  not_started_count?: number;
+  participation_percent?: number;
+  total_violations?: number;
+  flagged_students?: number;
+  question_count?: number;
+  topics?: string[];
 };
 
 export type FacultyUpcomingExamItem = {
@@ -733,9 +742,17 @@ export type FacultyRecentExamItem = {
   department: string;
   created_at: string;
   status: string;
+  question_count?: number;
+  total_marks?: number;
+  target_total_marks?: number;
+  marks_shortfall?: number;
   attempts_count: number;
   average_score: number | null;
   pass_rate: number | null;
+  is_reviewed?: boolean;
+  needs_attention?: boolean;
+  attention_reason?: string;
+  topics?: string[];
 };
 
 export type FacultyExamPerfItem = {

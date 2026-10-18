@@ -234,32 +234,47 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
         )}
       </AnimatePresence>
 
+      {/* Mobile Backdrop */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 backdrop-blur-xs z-30 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Main Content */}
-      <div className={`transition-all duration-300 ${sidebarOpen ? "ml-70" : "ml-0"}`}>
+      <div className={`transition-all duration-300 min-w-0 max-w-full ${sidebarOpen ? "lg:ml-70 ml-0" : "ml-0"}`}>
         {/* Top Bar */}
-        <header className="sticky top-0 z-30 bg-white border-b border-border">
-          <div className="px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-4">
+        <header className="sticky top-0 z-20 bg-white border-b border-border">
+          <div className="px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="p-2 rounded-lg hover:bg-accent transition-colors"
+                className="p-1.5 sm:p-2 rounded-lg hover:bg-accent transition-colors shrink-0"
+                aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
               >
                 {sidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
-              <Link to={dashboardPath} className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
+              <Link to={dashboardPath} className="flex items-center gap-2 sm:gap-3 min-w-0">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shrink-0">
                   <Brain className="w-4 h-4 text-white" />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-foreground leading-tight">ExamAI</p>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <p className="text-xs sm:text-sm font-semibold text-foreground leading-tight">ExamAI</p>
                     {institutionName && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-primary/10 text-primary border border-primary/20">
+                      <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-primary/10 text-primary border border-primary/20 truncate max-w-[120px]">
                         {institutionName}
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground leading-tight truncate">{pageTitle}</p>
+                  <p className="text-[11px] sm:text-xs text-muted-foreground leading-tight truncate">{pageTitle}</p>
                 </div>
               </Link>
             </div>
@@ -357,11 +372,12 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
         </header>
 
         {/* Page Content */}
-        <main className="p-6">
+        <main className="p-3.5 sm:p-6 min-w-0 max-w-full">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
+            className="min-w-0 max-w-full"
           >
             {children}
           </motion.div>

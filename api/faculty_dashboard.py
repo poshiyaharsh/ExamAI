@@ -127,9 +127,15 @@ class FacultyDashboardView(APIView):
         ongoing_exams_list = []
         for e in ongoing_qs:
             m = compute_live_exam_metrics(e, now=now)
-            topics = e.topics
-            subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
-            m['subject'] = subject
+            m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
+            viol_stats = StudentAttempt.objects.filter(exam=e).aggregate(
+                total_violations=models.Sum('violation_count'),
+                flagged_students=Count('id', filter=Q(violation_count__gt=0)),
+            )
+            m['total_violations'] = viol_stats.get('total_violations') or 0
+            m['flagged_students'] = viol_stats.get('flagged_students') or 0
+            m['question_count'] = e.questions.filter(is_deleted=False).count()
+            m['topics'] = e.topics[:2] if isinstance(e.topics, list) else []
             ongoing_exams_list.append(m)
 
         # 4. Upcoming Exams (scheduled for future or next unattempted)
@@ -143,12 +149,10 @@ class FacultyDashboardView(APIView):
 
         upcoming_exams_list = []
         for e in upcoming_qs:
-            topics = e.topics
-            subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
             upcoming_exams_list.append({
                 'id': e.id,
                 'title': e.title,
-                'subject': subject,
+                'subject': e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course'),
                 'department': e.department,
                 'duration_minutes': e.duration_minutes,
                 'total_marks': e.total_marks,
@@ -171,18 +175,34 @@ class FacultyDashboardView(APIView):
             e_avg = round(e_stats['avg'], 1) if e_stats.get('avg') is not None else None
             passes = e_stats.get('passes') or 0
             e_pass_rate = round((passes / cnt) * 100.0, 1) if cnt > 0 else None
-            topics = e.topics
-            subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
+
+            needs_attention = False
+            attention_reason = ""
+            if not e.is_reviewed and e.status == Exam.Status.DRAFT:
+                needs_attention = True
+                attention_reason = "Review required"
+            elif e.marks_shortfall and e.marks_shortfall > 0:
+                needs_attention = True
+                attention_reason = f"{e.marks_shortfall} short"
+
             recent_exams_list.append({
                 'id': e.id,
                 'title': e.title,
-                'subject': subject,
+                'subject': e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course'),
                 'department': e.department,
                 'created_at': e.created_at.isoformat(),
                 'status': e.status,
+                'question_count': e.questions.filter(is_deleted=False).count(),
+                'total_marks': e.total_marks,
+                'target_total_marks': e.target_total_marks or e.total_marks,
+                'marks_shortfall': e.marks_shortfall or 0,
                 'attempts_count': cnt,
                 'average_score': e_avg,
                 'pass_rate': e_pass_rate,
+                'is_reviewed': e.is_reviewed,
+                'needs_attention': needs_attention,
+                'attention_reason': attention_reason,
+                'topics': e.topics if isinstance(e.topics, list) else [],
             })
 
         # 6. Exam Performance for Bar Chart (last 8-10 published exams)
