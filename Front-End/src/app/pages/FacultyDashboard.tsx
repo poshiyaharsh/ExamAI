@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { ExamDetailsModal } from "../components/ExamDetailsModal";
 import {
   Activity,
   AlertCircle,
@@ -41,6 +42,7 @@ import { DashboardLayout } from "../components/DashboardLayout";
 import {
   facultyDashboardApi,
   type FacultyDashboardData,
+  type FacultyOngoingExamItem,
 } from "../../services/api";
 
 const menuItems = [
@@ -91,15 +93,22 @@ function formatRelativeTime(dateStr: string): string {
   }
 }
 
-function formatTimeRemaining(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) return "Active window";
-  if (seconds <= 0) return "Closing now";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m remaining`;
-  if (m > 0) return `${m}m ${s}s remaining`;
-  return `${s}s remaining`;
+function formatLiveCountdown(endsAt: string | null | undefined, serverNow?: string): string {
+  if (!endsAt) return "No end time";
+  try {
+    const endMs = new Date(endsAt).getTime();
+    const nowMs = serverNow ? new Date(serverNow).getTime() : Date.now();
+    const diffSec = Math.max(0, Math.floor((endMs - nowMs) / 1000));
+    if (diffSec <= 0) return "Closing now";
+    const h = Math.floor(diffSec / 3600);
+    const m = Math.floor((diffSec % 3600) / 60);
+    const s = diffSec % 60;
+    if (h > 0) return `Closes in ${h}h ${m}m`;
+    if (m > 0) return `Closes in ${m}m ${s}s`;
+    return `Closes in ${s}s`;
+  } catch {
+    return "Active";
+  }
 }
 
 function getPerformanceBadge(avg: number | null) {
@@ -111,11 +120,13 @@ function getPerformanceBadge(avg: number | null) {
 }
 
 export function FacultyDashboard() {
+  const navigate = useNavigate();
   const [data, setData] = useState<FacultyDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [error, setError] = useState("");
+  const [selectedExamForDetails, setSelectedExamForDetails] = useState<FacultyOngoingExamItem | null>(null);
 
   const loadDashboard = async (silent = false) => {
     try {
@@ -347,7 +358,7 @@ export function FacultyDashboard() {
                 </div>
 
                 {/* Ongoing Exams Highlight Section */}
-                <div className="bg-card rounded-xl border border-border shadow-xs overflow-hidden min-w-0 max-w-full">
+                <div id="ongoing-live-exams" className="bg-card rounded-xl border border-border shadow-xs overflow-hidden min-w-0 max-w-full">
                   <div className="p-4 sm:p-5 border-b border-border bg-emerald-500/5 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
                       <span className="relative flex h-2.5 w-2.5">
@@ -356,7 +367,7 @@ export function FacultyDashboard() {
                       </span>
                       <h3 className="font-bold text-foreground text-sm sm:text-base">Ongoing Live Exams</h3>
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        {ongoingExams.length} Live
+                        {data?.total_live_count ?? ongoingExams.length} Live
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -372,7 +383,7 @@ export function FacultyDashboard() {
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
                       </button>
                       <Link
-                        to="/faculty/history?status=live"
+                        to="/faculty/history?status=published"
                         className="text-primary hover:underline font-semibold flex items-center gap-1"
                       >
                         View all <ArrowRight className="w-3 h-3" />
@@ -404,11 +415,14 @@ export function FacultyDashboard() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {ongoingExams.slice(0, 3).map((exam) => {
                           const sec = exam.seconds_remaining;
-                          const totalSec = (exam.duration_minutes || 60) * 60;
+                          const totalSec = exam.window_total_seconds || (exam.duration_minutes || 60) * 60;
                           const elapsedSec = sec !== null && sec !== undefined ? Math.max(0, totalSec - sec) : 0;
-                          const progressPct = Math.min(100, Math.max(0, Math.round((elapsedSec / totalSec) * 100)));
-                          const isUrgent = sec !== null && sec !== undefined && sec < 120;
-                          const isWarning = sec !== null && sec !== undefined && sec < 600 && !isUrgent;
+                          const progressPct = sec !== null && sec !== undefined
+                            ? Math.min(100, Math.max(0, Math.round((elapsedSec / totalSec) * 100)))
+                            : 0;
+                          const isUrgent = sec !== null && sec !== undefined && sec < 600;
+                          const isWarning = sec !== null && sec !== undefined && sec < 1800 && !isUrgent;
+                          const countdownText = formatLiveCountdown(exam.ends_at, data?.server_now);
 
                           return (
                             <div
@@ -440,80 +454,149 @@ export function FacultyDashboard() {
                                     </span>
                                     <span
                                       className={`font-semibold text-xs ${
-                                        isUrgent
+                                        !exam.ends_at
+                                          ? "text-muted-foreground"
+                                          : isUrgent
                                           ? "text-rose-600 animate-pulse font-bold"
                                           : isWarning
                                           ? "text-amber-600 font-bold"
                                           : "text-foreground"
                                       }`}
                                     >
-                                      {formatTimeRemaining(sec)}
+                                      {countdownText}
                                     </span>
                                   </div>
                                   <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
                                     <div
                                       className={`h-full rounded-full transition-all duration-500 ${
-                                        isUrgent
+                                        !exam.ends_at
+                                          ? "bg-muted-foreground/30"
+                                          : isUrgent
                                           ? "bg-rose-500"
                                           : isWarning
                                           ? "bg-amber-500"
                                           : "bg-emerald-500"
                                       }`}
-                                      style={{ width: `${progressPct}%` }}
+                                      style={{ width: `${exam.ends_at ? progressPct : 100}%` }}
                                     />
                                   </div>
                                 </div>
 
-                                {/* 4 Live Stats Tiles */}
+                                {/* 4 Live Stats Tiles (Consistent single-line labels, aligned numbers) */}
                                 <div className="grid grid-cols-4 gap-1.5 text-center bg-muted/40 p-2 rounded-lg border border-border/50">
-                                  <div className="p-1">
-                                    <p className="text-[10px] text-muted-foreground uppercase font-medium">In Progress</p>
-                                    <p className="text-sm font-bold text-blue-600">{exam.in_progress_count || 0}</p>
+                                  <div
+                                    className="p-1 min-h-[52px] flex flex-col justify-between"
+                                    title="Students currently taking this exam"
+                                  >
+                                    <p className="text-[10px] text-muted-foreground uppercase font-medium truncate">
+                                      In progress
+                                    </p>
+                                    <p className="text-sm font-bold text-blue-600">
+                                      {exam.in_progress_count ?? exam.in_progress ?? 0}
+                                    </p>
                                   </div>
-                                  <div className="p-1">
-                                    <p className="text-[10px] text-muted-foreground uppercase font-medium">Submitted</p>
-                                    <p className="text-sm font-bold text-emerald-600">{exam.submitted_count || 0}</p>
+                                  <div
+                                    className="p-1 min-h-[52px] flex flex-col justify-between"
+                                    title="Students who submitted their exam"
+                                  >
+                                    <p className="text-[10px] text-muted-foreground uppercase font-medium truncate">
+                                      Submitted
+                                    </p>
+                                    <p className="text-sm font-bold text-emerald-600">
+                                      {exam.submitted_count ?? exam.submitted ?? 0}
+                                    </p>
                                   </div>
-                                  <div className="p-1">
-                                    <p className="text-[10px] text-muted-foreground uppercase font-medium">Not Started</p>
-                                    <p className="text-sm font-bold text-slate-600">{exam.not_started_count || 0}</p>
+                                  <div
+                                    className="p-1 min-h-[52px] flex flex-col justify-between"
+                                    title="Eligible students who have not started yet"
+                                  >
+                                    <p className="text-[10px] text-muted-foreground uppercase font-medium truncate">
+                                      Not started
+                                    </p>
+                                    <p className="text-sm font-bold text-slate-600">
+                                      {exam.not_started_count ?? exam.not_started ?? 0}
+                                    </p>
                                   </div>
-                                  <div className="p-1">
-                                    <p className="text-[10px] text-muted-foreground uppercase font-medium">Flagged</p>
+                                  <div
+                                    className={`p-1 min-h-[52px] flex flex-col justify-between rounded transition-colors ${
+                                      (exam.flagged_students || 0) > 0
+                                        ? "bg-rose-50/80 cursor-pointer hover:bg-rose-100"
+                                        : ""
+                                    }`}
+                                    title={`${exam.total_violations || 0} violation events logged by ${
+                                      exam.flagged_students || 0
+                                    } student(s)`}
+                                    onClick={() => {
+                                      if ((exam.flagged_students || 0) > 0) {
+                                        navigate(`/faculty/exams/${exam.id}/monitor?filter=flagged`);
+                                      }
+                                    }}
+                                  >
+                                    <p className="text-[10px] text-muted-foreground uppercase font-medium truncate">
+                                      Flagged
+                                    </p>
                                     <p
                                       className={`text-sm font-bold ${
-                                        (exam.total_violations || 0) > 0 ? "text-rose-600" : "text-muted-foreground"
+                                        (exam.flagged_students || 0) > 0 ? "text-rose-600" : "text-muted-foreground"
                                       }`}
                                     >
-                                      {exam.total_violations || 0}
+                                      {exam.flagged_students || 0}
                                     </p>
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Card Actions */}
+                              {/* Card Actions (Distinct Monitor vs View) */}
                               <div className="flex items-center gap-2 pt-2 border-t border-border">
                                 <Link
-                                  to={`/faculty/history`}
-                                  className="flex-1 py-1.5 px-3 rounded-lg bg-primary text-white text-xs font-semibold hover:opacity-90 transition-all text-center flex items-center justify-center gap-1.5 shadow-xs"
+                                  to={`/faculty/exams/${exam.id}/monitor`}
+                                  className="flex-1 py-1.5 px-3 rounded-lg bg-primary text-white text-xs font-semibold hover:opacity-90 transition-all text-center flex items-center justify-center gap-1.5 shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                  title="Open live monitoring dashboard for real-time student tracking"
+                                  aria-label={`Monitor live exam ${exam.title}`}
                                 >
-                                  <Eye className="w-3.5 h-3.5" />
+                                  <Activity className="w-3.5 h-3.5" />
                                   Monitor
                                 </Link>
-                                <Link
-                                  to={`/faculty/history`}
-                                  className="py-1.5 px-3 rounded-lg border border-border bg-card text-foreground hover:bg-muted text-xs font-medium transition-colors text-center"
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedExamForDetails(exam)}
+                                  className="py-1.5 px-3 rounded-lg border border-border bg-card text-foreground hover:bg-muted text-xs font-medium transition-colors text-center flex items-center justify-center gap-1.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                  title="View exam details and specifications"
+                                  aria-label={`View specifications for ${exam.title}`}
                                 >
+                                  <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                                   View
-                                </Link>
+                                </button>
                               </div>
                             </div>
                           );
                         })}
                       </div>
+
+                      {/* Footer: Showing 3 of N Live Exams indicator */}
+                      {(data?.total_live_count ?? ongoingExams.length) > 3 && (
+                        <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            Showing 3 of <strong>{data?.total_live_count ?? ongoingExams.length}</strong> live exams
+                          </span>
+                          <Link
+                            to="/faculty/history?status=published"
+                            className="font-semibold text-primary hover:underline flex items-center gap-1"
+                          >
+                            View all live exams ({data?.total_live_count ?? ongoingExams.length}) <ArrowRight className="w-3 h-3" />
+                          </Link>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
+
+                {/* Read-Only Exam Details Modal */}
+                <ExamDetailsModal
+                  exam={selectedExamForDetails}
+                  isOpen={Boolean(selectedExamForDetails)}
+                  onClose={() => setSelectedExamForDetails(null)}
+                />
 
                 {/* 2-Column Visualizations: Exam Performance & Score Distribution */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

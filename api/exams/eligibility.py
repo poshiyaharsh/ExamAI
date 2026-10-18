@@ -140,15 +140,22 @@ def compute_live_exam_metrics(
 
     attempts = StudentAttempt.objects.filter(
         exam=exam,
-    ).values('student_id', 'status')
+    ).values('student_id', 'status', 'violation_count')
 
     submitted_count = 0
     in_progress_count = 0
     ineligible_attempts = 0
+    flagged_user_ids: Set[int] = set()
+    total_violations = 0
 
     for att in attempts:
         s_id = att['student_id']
         st = att['status']
+        vc = int(att['violation_count'] or 0)
+        total_violations += vc
+        if vc > 0:
+            flagged_user_ids.add(s_id)
+
         if s_id in eligible_user_ids:
             if st in COMPLETED_STATUSES:
                 submitted_count += 1
@@ -167,6 +174,10 @@ def compute_live_exam_metrics(
     if exam.ends_at:
         seconds_remaining = max(0, int((exam.ends_at - now).total_seconds()))
 
+    window_total_seconds = None
+    if exam.starts_at and exam.ends_at:
+        window_total_seconds = max(1, int((exam.ends_at - exam.starts_at).total_seconds()))
+
     creator = exam.created_by
     f_name = f"{creator.first_name} {creator.last_name}".strip() or creator.username if creator else "Faculty"
 
@@ -179,12 +190,20 @@ def compute_live_exam_metrics(
         'total_marks': exam.total_marks,
         'starts_at': exam.starts_at.isoformat() if exam.starts_at else None,
         'ends_at': exam.ends_at.isoformat() if exam.ends_at else None,
+        'server_now': now.isoformat(),
         'seconds_remaining': seconds_remaining,
+        'window_total_seconds': window_total_seconds,
+        'assigned_total': eligible_count,
         'eligible_count': eligible_count,
         'eligible_students': eligible_count,  # backward compatibility alias
         'submitted_count': submitted_count,
+        'submitted': submitted_count,
         'in_progress_count': in_progress_count,
+        'in_progress': in_progress_count,
         'not_started_count': not_started_count,
+        'not_started': not_started_count,
+        'flagged_students': len(flagged_user_ids),
+        'total_violations': total_violations,
         'participation_percent': participation_percent,
         'ineligible_attempts': ineligible_attempts,
     }

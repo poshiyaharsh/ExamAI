@@ -233,31 +233,36 @@ class StudentPerformanceResultsView(StudentPerformancePermissionMixin, APIView):
         end_idx = start_idx + page_size
         page_attempts = list(attempts_qs[start_idx:end_idx])
 
+        from .utils.results import compute_attempt_result_status
+
         results = []
         for a in page_attempts:
-            topics = a.exam.topics
-            subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
+            topics = a.exam.topics if isinstance(a.exam.topics, list) else []
+            subject = a.exam.subject or (topics[0] if topics else 'General')
             faculty = a.exam.created_by
             faculty_name = f"{faculty.first_name} {faculty.last_name}".strip() or faculty.username
-            pct = round(a.percentage, 1)
             time_sec, time_formatted = _format_time_taken(a.started_at, a.submitted_at)
+            
+            status_info = compute_attempt_result_status(a, exam=a.exam)
 
             results.append({
                 'attempt_id': a.id,
                 'exam_id': a.exam.id,
                 'exam_title': a.exam.title,
                 'subject': subject,
+                'topics': topics,
                 'department': a.exam.department,
                 'faculty_name': faculty_name,
                 'faculty_email': faculty.email,
                 'date': a.submitted_at.isoformat() if a.submitted_at else a.started_at.isoformat(),
-                'marks_obtained': round(float(a.total_score or 0.0), 1),
-                'total_marks': a.exam.total_marks,
-                'percentage': pct,
-                'is_passed': pct >= PASSING_PERCENTAGE,
+                'marks_obtained': status_info['marks_obtained'],
+                'total_marks': status_info['total_marks'],
+                'percentage': status_info['percentage'],
+                'is_passed': status_info['is_passed'],
                 'time_taken_seconds': time_sec,
                 'time_taken': time_formatted,
                 'status': a.status,
+                'result_status': status_info,
             })
 
         total_pages = (total_count + page_size - 1) // page_size if page_size else 1

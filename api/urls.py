@@ -16,6 +16,7 @@ from .exam_management import (
     SwapQuestionView,
 )
 from .faculty_dashboard import FacultyDashboardView
+from .faculty_monitor import FacultyLiveMonitorView
 from .faculty_evaluation import (
     FacultyAttemptDetailView,
     FacultyExamAttemptsListView,
@@ -101,6 +102,7 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
     path('faculty/exams/<int:exam_id>/adjust-marks/', AdjustMarksView.as_view(), name='faculty-exam-adjust-marks'),
+    path('faculty/exams/<int:exam_id>/live-monitor/', FacultyLiveMonitorView.as_view(), name='faculty-exam-live-monitor'),
     path('faculty/exams/<int:exam_id>/attempts/', FacultyExamAttemptsListView.as_view(), name='faculty-exam-attempts'),
     path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
     path('faculty/attempts/<int:attempt_id>/', FacultyAttemptDetailView.as_view(), name='faculty-attempt-detail'),
