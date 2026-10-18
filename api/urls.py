@@ -21,11 +21,13 @@ from .faculty_evaluation import (
 )
 from .generate_paper import GeneratePaperView
 from .student_exam import (
+    HeartbeatView,
     SaveAnswerView,
     StartAttemptView,
     StudentAttemptDetailView,
     StudentExamListView,
     SubmitAttemptView,
+    ViolationEventView,
 )
 from .student_dashboard import StudentDashboardView
 from .student_performance import (
@@ -72,6 +74,8 @@ urlpatterns = [
     path('student/exams/', StudentExamListView.as_view(), name='student-exam-list'),
     path('student/exams/<int:exam_id>/start/', StartAttemptView.as_view(), name='student-exam-start'),
     path('student/attempts/<int:attempt_id>/save/', SaveAnswerView.as_view(), name='student-answer-save'),
+    path('student/attempts/<int:attempt_id>/violation/', ViolationEventView.as_view(), name='student-attempt-violation'),
+    path('student/attempts/<int:attempt_id>/heartbeat/', HeartbeatView.as_view(), name='student-attempt-heartbeat'),
     path('student/attempts/<int:attempt_id>/submit/', SubmitAttemptView.as_view(), name='student-attempt-submit'),
     path('student/attempts/<int:attempt_id>/', StudentAttemptDetailView.as_view(), name='student-attempt-detail'),
     path('student/dashboard', StudentDashboardView.as_view(), name='student-dashboard-no-slash'),

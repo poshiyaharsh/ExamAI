@@ -1,8 +1,10 @@
 from datetime import timedelta
 import logging
-import threading
+import random
+import secrets
+import time
 
-from django.db import transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
@@ -10,9 +12,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Exam, Question, StudentAnswer, StudentAttempt
+from .models import AttemptEvent, Exam, Question, StudentAnswer, StudentAttempt
 from .permissions import IsStudentUser
 from .serializers import StudentAttemptSerializer, StudentExamSerializer
+from .utils.exam_attempt_helper import (
+    initialize_attempt_orders,
+    map_submitted_answer_to_canonical,
+    sanitize_questions_for_attempt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,36 +28,14 @@ class StudentExamPermissionMixin:
     permission_classes = [IsAuthenticated, IsStudentUser]
 
 
-def _available_exam_queryset(user=None):
-    now = timezone.now()
-    qs = Exam.objects.filter(status=Exam.Status.PUBLISHED).filter(
-        Q(starts_at__isnull=True) | Q(starts_at__lte=now),
-        Q(ends_at__isnull=True) | Q(ends_at__gte=now),
-    ).prefetch_related('questions')
-    if user:
-        from .utils.departments import get_student_department
-        dept = get_student_department(user)
-        if not dept:
-            return qs.none()
-        qs = qs.filter(department__iexact=dept)
-    return qs
-
-
 def _deadline(attempt):
+    if attempt.expires_at:
+        return attempt.expires_at
     return attempt.started_at + timedelta(minutes=attempt.exam.duration_minutes)
 
 
 def _normalise(value):
     return ' '.join(str(value if value is not None else '').split()).casefold()
-
-
-def _is_objective(question):
-    return question.question_type in {'mcq', 'truefalse', 'fillblank'}
-
-
-def _objective_correct(question, answer_text):
-    from .utils.scoring import is_objective_answer_correct
-    return is_objective_answer_correct(question, answer_text)
 
 
 class StudentExamListView(StudentExamPermissionMixin, APIView):
@@ -72,7 +57,9 @@ class StudentExamListView(StudentExamPermissionMixin, APIView):
 
         attempts = {
             attempt.exam_id: attempt
-            for attempt in StudentAttempt.objects.filter(institution=tenant, student=request.user, exam__in=exams)
+            for attempt in StudentAttempt.objects.filter(
+                institution=tenant, student=request.user, exam__in=exams
+            ).order_by('attempt_number')
         }
         result = []
         for exam in exams.order_by('-created_at'):
@@ -87,6 +74,8 @@ class StudentExamListView(StudentExamPermissionMixin, APIView):
                     'attempt_id': attempt.id if attempt else None,
                     'available': can_start,
                     'availability_reason': reason,
+                    'allow_retakes': exam.allow_retakes,
+                    'max_warnings': exam.max_warnings,
                 }
             )
         cache.set(cache_key, result, timeout=60)
@@ -111,28 +100,112 @@ class StartAttemptView(StudentExamPermissionMixin, APIView):
         if not can_start:
             return Response({'detail': reason or 'Exam is not currently available.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        attempt, created = StudentAttempt.objects.get_or_create(
-            exam=exam,
-            student=request.user,
-            defaults={'institution': tenant, 'status': StudentAttempt.Status.IN_PROGRESS},
-        )
-        if not attempt.institution:
-            attempt.institution = tenant
-            attempt.save(update_fields=['institution'])
+        now = timezone.now()
 
-        if attempt.status in {'submitted', 'auto_submitted', 'evaluated'}:
-            return Response({'detail': 'This exam attempt has already been submitted.'}, status=status.HTTP_400_BAD_REQUEST)
-        if timezone.now() >= _deadline(attempt):
-            attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
-            attempt.submitted_at = timezone.now()
-            attempt.save(update_fields=['status', 'submitted_at'])
-            return Response({'detail': 'The exam deadline has passed.'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            existing_attempts = list(
+                StudentAttempt.objects.select_for_update()
+                .filter(exam=exam, student=request.user, institution=tenant)
+                .order_by('-attempt_number')
+            )
+
+            active_attempt = next(
+                (att for att in existing_attempts if att.status == StudentAttempt.Status.IN_PROGRESS),
+                None,
+            )
+
+            if active_attempt:
+                # Check if deadline passed
+                deadline = _deadline(active_attempt)
+                if now >= deadline:
+                    active_attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
+                    active_attempt.submitted_at = now
+                    active_attempt.submit_reason = 'time_up'
+                    active_attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
+                    from .utils.scoring import calculate_and_save_attempt_score
+                    calculate_and_save_attempt_score(active_attempt, is_auto_submit=True)
+                    return Response({'detail': 'The exam deadline has passed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+                # Resume existing active attempt
+                attempt = active_attempt
+                created = False
+            elif existing_attempts:
+                # Previous attempt exists and is finished
+                if not exam.allow_retakes:
+                    return Response(
+                        {'detail': 'This exam attempt has already been submitted.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                # Retake allowed
+                next_number = existing_attempts[0].attempt_number + 1
+                session_token = secrets.token_hex(24)
+                expires_at = now + timedelta(minutes=exam.duration_minutes)
+                attempt = StudentAttempt(
+                    exam=exam,
+                    institution=tenant,
+                    student=request.user,
+                    attempt_number=next_number,
+                    status=StudentAttempt.Status.IN_PROGRESS,
+                    expires_at=expires_at,
+                    active_session_token=session_token,
+                )
+                initialize_attempt_orders(attempt, exam)
+                attempt.save()
+                created = True
+            else:
+                # Brand new attempt
+                session_token = secrets.token_hex(24)
+                expires_at = now + timedelta(minutes=exam.duration_minutes)
+                attempt = StudentAttempt(
+                    exam=exam,
+                    institution=tenant,
+                    student=request.user,
+                    attempt_number=1,
+                    status=StudentAttempt.Status.IN_PROGRESS,
+                    expires_at=expires_at,
+                    active_session_token=session_token,
+                )
+                initialize_attempt_orders(attempt, exam)
+                attempt.save()
+                created = True
+
+            # If existing attempt didn't have orders (created prior to shuffle feature)
+            if not attempt.question_order:
+                initialize_attempt_orders(attempt, exam)
+                if not attempt.active_session_token:
+                    attempt.active_session_token = secrets.token_hex(24)
+                if not attempt.expires_at:
+                    attempt.expires_at = _deadline(attempt)
+                attempt.save(update_fields=['question_order', 'option_orders', 'max_score', 'active_session_token', 'expires_at'])
+
+        sanitized_questions = sanitize_questions_for_attempt(attempt)
+        deadline = attempt.expires_at or _deadline(attempt)
+
+        exam_payload = {
+            'id': exam.id,
+            'title': exam.title,
+            'department': exam.department,
+            'duration_minutes': exam.duration_minutes,
+            'total_marks': float(attempt.max_score or exam.total_marks or 0.0),
+            'topics': exam.topics,
+            'starts_at': exam.starts_at,
+            'ends_at': exam.ends_at,
+            'questions': sanitized_questions,
+            'shuffle_questions': exam.shuffle_questions,
+            'shuffle_options': exam.shuffle_options,
+            'max_warnings': exam.max_warnings,
+        }
+
         return Response(
             {
                 'attempt_id': attempt.id,
-                'exam': StudentExamSerializer(exam).data,
+                'exam': exam_payload,
                 'started_at': attempt.started_at,
-                'deadline': _deadline(attempt),
+                'deadline': deadline.isoformat(),
+                'expires_at': deadline.isoformat(),
+                'session_token': attempt.active_session_token,
+                'violation_count': attempt.violation_count,
+                'max_warnings': exam.max_warnings,
                 'created': created,
             }
         )
@@ -140,9 +213,6 @@ class StartAttemptView(StudentExamPermissionMixin, APIView):
 
 class SaveAnswerView(StudentExamPermissionMixin, APIView):
     def post(self, request, attempt_id):
-        import random
-        import time
-        from django.db import IntegrityError, OperationalError, transaction
         from api.tenant import get_user_institution
 
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
@@ -164,11 +234,18 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
             return Response({'detail': 'This attempt is no longer active.'}, status=status.HTTP_400_BAD_REQUEST)
 
         now = timezone.now()
-        if (attempt.exam.ends_at and attempt.exam.ends_at < now) or now >= _deadline(attempt):
+        deadline = attempt.expires_at or _deadline(attempt)
+        grace_period = timedelta(seconds=5)
+
+        # Enforce server-side timer with 5-second network grace period
+        if (attempt.exam.ends_at and attempt.exam.ends_at < now) or now > (deadline + grace_period):
             if attempt.status == StudentAttempt.Status.IN_PROGRESS:
                 attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
                 attempt.submitted_at = now
-                attempt.save(update_fields=['status', 'submitted_at'])
+                attempt.submit_reason = 'time_up'
+                attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
+                from .utils.scoring import calculate_and_save_attempt_score
+                calculate_and_save_attempt_score(attempt, is_auto_submit=True)
             return Response({'detail': 'The exam deadline has passed.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Support both batch ({'answers': [...]}) and single ({'question_id': ..., 'answer_text': ...})
@@ -182,46 +259,67 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
             items_to_save = [{'question_id': q_id, 'answer_text': request.data.get('answer_text', '')}]
 
         if not items_to_save:
-            return Response({'saved': True, 'count': 0})
+            return Response({'saved': True, 'count': 0, 'saved_at': now.isoformat()})
 
-        # Pre-validate all questions belonging to this exam and tenant BEFORE transaction
+        # Pre-validate questions: must belong to exam and attempt.question_order (if set)
         question_ids = [item.get('question_id') for item in items_to_save if item.get('question_id') is not None]
-        valid_questions = {
-            q.id: q
-            for q in Question.objects.filter(id__in=question_ids, exam=attempt.exam, institution=tenant)
-        }
+        allowed_qids = set(attempt.question_order) if attempt.question_order else None
+
+        q_query = Question.objects.filter(id__in=question_ids, exam=attempt.exam, institution=tenant)
+        if allowed_qids is not None:
+            q_query = q_query.filter(id__in=allowed_qids)
+
+        valid_questions = {q.id: q for q in q_query}
 
         validated_items = []
         for item in items_to_save:
             qid = item.get('question_id')
             if qid in valid_questions:
-                validated_items.append((valid_questions[qid], str(item.get('answer_text', ''))))
+                raw_text = str(item.get('answer_text', ''))
+                # Map option back to canonical choice before storing
+                canonical_text, applied_perm = map_submitted_answer_to_canonical(
+                    attempt, valid_questions[qid], raw_text
+                )
+                validated_items.append((valid_questions[qid], canonical_text, applied_perm))
 
         if not validated_items:
-            return Response({'detail': 'No valid questions found for this exam.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'No valid questions found for this exam attempt.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Execute write inside a minimal atomic block with SQLite lock retries
         max_retries = 3
         for attempt_idx in range(max_retries):
             try:
                 with transaction.atomic():
-                    for question, ans_text in validated_items:
+                    for question, ans_text, perm in validated_items:
+                        defaults = {
+                            'institution': tenant,
+                            'answer_text': ans_text,
+                            'selected_option_order': perm,
+                        }
                         try:
                             StudentAnswer.objects.update_or_create(
                                 attempt=attempt,
                                 question=question,
-                                defaults={'institution': tenant, 'answer_text': ans_text},
+                                defaults=defaults,
                             )
                         except IntegrityError:
                             StudentAnswer.objects.filter(
                                 attempt=attempt,
                                 question=question,
-                            ).update(institution=tenant, answer_text=ans_text)
+                            ).update(**defaults)
 
                 if len(validated_items) == 1:
-                    q, text = validated_items[0]
-                    return Response({'saved': True, 'question_id': q.id, 'answer_text': text})
-                return Response({'saved': True, 'count': len(validated_items)})
+                    q, text, _ = validated_items[0]
+                    return Response({
+                        'saved': True,
+                        'question_id': q.id,
+                        'answer_text': text,
+                        'saved_at': now.isoformat(),
+                    })
+                return Response({
+                    'saved': True,
+                    'count': len(validated_items),
+                    'saved_at': now.isoformat(),
+                })
 
             except OperationalError as exc:
                 from .utils.db_retry import is_lock_or_deadlock
@@ -286,13 +384,168 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
                 return Response({'detail': 'This attempt cannot be submitted.'}, status=status.HTTP_400_BAD_REQUEST)
 
             now = timezone.now()
-            auto_submitted = now >= _deadline(attempt)
+            deadline = attempt.expires_at or _deadline(attempt)
+            requested_reason = request.data.get('reason')
+            if requested_reason in {'time_up', 'violations', 'manual'}:
+                submit_reason = requested_reason
+            else:
+                submit_reason = 'time_up' if now >= deadline else 'manual'
+
+            auto_submitted = (submit_reason in {'time_up', 'violations'}) or (now >= deadline)
+            attempt.submit_reason = submit_reason
+            attempt.submitted_at = now
+            attempt.save(update_fields=['submit_reason', 'submitted_at'])
+
             from .utils.scoring import calculate_and_save_attempt_score
             calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
 
         attempt.refresh_from_db()
         return Response(StudentAttemptSerializer(attempt).data, status=status.HTTP_200_OK)
 
+
+class ViolationEventView(StudentExamPermissionMixin, APIView):
+    """
+    Records proctoring violation events (fullscreen exit, tab hidden, window blur, etc.).
+    Automatically submits attempt if violation_count exceeds exam.max_warnings.
+    """
+    def post(self, request, attempt_id):
+        from api.tenant import get_user_institution
+
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        with transaction.atomic():
+            attempt = (
+                StudentAttempt.objects.select_for_update()
+                .filter(id=attempt_id, student=request.user, institution=tenant)
+                .select_related('exam')
+                .first()
+            )
+            if not attempt:
+                return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            if attempt.status != StudentAttempt.Status.IN_PROGRESS:
+                return Response({
+                    'detail': 'Attempt is not in progress.',
+                    'status': attempt.status,
+                    'auto_submitted': True,
+                    'violation_count': attempt.violation_count,
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            event_type = request.data.get('event_type', AttemptEvent.EventType.CUSTOM)
+            metadata = request.data.get('metadata') or {}
+            if not isinstance(metadata, dict):
+                metadata = {'raw': str(metadata)}
+
+            # Increment violation count
+            attempt.violation_count += 1
+            max_warnings = attempt.exam.max_warnings
+
+            # Log event
+            AttemptEvent.objects.create(
+                attempt=attempt,
+                institution=tenant,
+                event_type=event_type,
+                metadata=metadata,
+                timestamp=timezone.now(),
+            )
+
+            # Auto-submit if exceeded max warnings (e.g. 4th violation when max_warnings=3)
+            if attempt.violation_count >= max_warnings + 1:
+                now = timezone.now()
+                attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
+                attempt.submitted_at = now
+                attempt.submit_reason = 'violations'
+                attempt.save(update_fields=['violation_count', 'status', 'submitted_at', 'submit_reason'])
+
+                from .utils.scoring import calculate_and_save_attempt_score
+                calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+
+                return Response({
+                    'auto_submitted': True,
+                    'submit_reason': 'violations',
+                    'violation_count': attempt.violation_count,
+                    'max_warnings': max_warnings,
+                    'warnings_left': 0,
+                    'message': f'Violation limit exceeded ({attempt.violation_count}/{max_warnings}). The exam has been automatically submitted.',
+                }, status=status.HTTP_200_OK)
+
+            attempt.save(update_fields=['violation_count'])
+
+            warnings_left = max(0, max_warnings - attempt.violation_count + 1)
+            return Response({
+                'auto_submitted': False,
+                'violation_count': attempt.violation_count,
+                'max_warnings': max_warnings,
+                'warnings_left': warnings_left,
+                'message': f'Warning {attempt.violation_count} of {max_warnings}: Proctoring violation detected ({event_type}).',
+            }, status=status.HTTP_200_OK)
+
+
+class HeartbeatView(StudentExamPermissionMixin, APIView):
+    """
+    Heartbeat endpoint to track active session, check for concurrent tabs,
+    and monitor remaining time.
+    """
+    def post(self, request, attempt_id):
+        from api.tenant import get_user_institution
+
+        tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(
+            id=attempt_id, student=request.user, institution=tenant
+        ).select_related('exam').first()
+        if not attempt:
+            return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if attempt.status != StudentAttempt.Status.IN_PROGRESS:
+            return Response({
+                'active': False,
+                'status': attempt.status,
+                'submit_reason': attempt.submit_reason,
+            })
+
+        # Check session token concurrency
+        session_token = request.data.get('session_token')
+        if attempt.active_session_token and session_token and session_token != attempt.active_session_token:
+            AttemptEvent.objects.create(
+                attempt=attempt,
+                institution=tenant,
+                event_type=AttemptEvent.EventType.CONCURRENT_TAB,
+                metadata={'provided_token': session_token[:8] + '...'},
+            )
+            return Response({
+                'active': False,
+                'concurrent_session': True,
+                'message': 'A newer session has been opened in another window or tab.',
+            }, status=status.HTTP_409_CONFLICT)
+
+        now = timezone.now()
+        deadline = attempt.expires_at or _deadline(attempt)
+        if now >= deadline:
+            attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
+            attempt.submitted_at = now
+            attempt.submit_reason = 'time_up'
+            attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
+            from .utils.scoring import calculate_and_save_attempt_score
+            calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+            return Response({
+                'active': False,
+                'expired': True,
+                'auto_submitted': True,
+                'submit_reason': 'time_up',
+            })
+
+        seconds_left = max(0, int((deadline - now).total_seconds()))
+        return Response({
+            'active': True,
+            'seconds_left': seconds_left,
+            'violation_count': attempt.violation_count,
+            'max_warnings': attempt.exam.max_warnings,
+        })
 
 
 class StudentAttemptDetailView(StudentExamPermissionMixin, APIView):
@@ -302,7 +555,12 @@ class StudentAttemptDetailView(StudentExamPermissionMixin, APIView):
         if not tenant:
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        attempt = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant).select_related('exam').prefetch_related('answers__question').first()
+        attempt = (
+            StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant)
+            .select_related('exam')
+            .prefetch_related('answers__question')
+            .first()
+        )
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
         from .utils.departments import check_student_exam_access
