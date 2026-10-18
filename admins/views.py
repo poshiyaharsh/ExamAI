@@ -1,5 +1,6 @@
 from rest_framework import status
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.db import OperationalError, ProgrammingError
 from django.db import transaction
 import datetime
@@ -1397,6 +1398,62 @@ class AdminExamAuditAPIView(APIView):
                 'healthy_exams_count': clean_count,
                 'issue_exams_count': len(issues),
                 'issues': issues,
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class AdminUserDepartmentChangeAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def post(self, request, user_id):
+        institution = _get_admin_institution(request.user)
+        if not institution:
+            return Response({'status': 'error', 'message': 'Admin institution not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        target_user = User.objects.filter(id=user_id).first()
+        if not target_user:
+            return Response({'status': 'error', 'message': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        profile = getattr(target_user, 'student_profile', None) or getattr(target_user, 'faculty_profile', None)
+        if not profile or profile.institution_id != institution.id:
+            return Response({'status': 'error', 'message': 'User does not belong to your institution.'}, status=status.HTTP_404_NOT_FOUND)
+
+        new_dept = request.data.get('department', '').strip()
+        reason = request.data.get('reason', '').strip()
+        if not new_dept:
+            return Response({'status': 'error', 'message': 'New department is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not reason:
+            return Response({'status': 'error', 'message': 'A reason is required for administrative department changes.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from api.utils.departments import validate_department_name
+        is_valid, norm_dept = validate_department_name(new_dept, institution=institution)
+        if not is_valid:
+            return Response({'status': 'error', 'message': f'Invalid department "{new_dept}". Must be an allowed department.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_dept = profile.department or 'Unassigned'
+        profile.department = norm_dept
+        profile._allow_department_change = True
+        profile.save(update_fields=['department'])
+
+        from admins.models import DepartmentChangeAuditLog
+        log = DepartmentChangeAuditLog.objects.create(
+            user=target_user,
+            institution=institution,
+            changed_by=request.user,
+            previous_department=old_dept,
+            new_department=norm_dept,
+            reason=reason,
+        )
+
+        return Response({
+            'status': 'success',
+            'message': f'Department successfully changed from {old_dept} to {norm_dept}.',
+            'data': {
+                'user_id': target_user.id,
+                'email': target_user.email,
+                'department': norm_dept,
+                'audit_id': log.id,
+                'timestamp': log.timestamp.isoformat(),
             }
         }, status=status.HTTP_200_OK)
 

@@ -72,6 +72,12 @@ class Exam(models.Model):
 	request_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)
 	validation_report = models.JSONField(default=dict, blank=True)
 	is_immutable = models.BooleanField(default=False)
+	shuffle_questions = models.BooleanField(default=True)
+	shuffle_options = models.BooleanField(default=True)
+	random_subset_size = models.PositiveIntegerField(null=True, blank=True)
+	max_warnings = models.PositiveIntegerField(default=3)
+	allow_retakes = models.BooleanField(default=False)
+	show_result_immediately = models.BooleanField(default=True)
 	starts_at = models.DateTimeField(null=True, blank=True)
 	ends_at = models.DateTimeField(null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
@@ -399,16 +405,25 @@ class StudentAttempt(models.Model):
 		db_index=True,
 	)
 	student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='exam_attempts')
+	attempt_number = models.PositiveIntegerField(default=1)
 	started_at = models.DateTimeField(auto_now_add=True)
 	submitted_at = models.DateTimeField(null=True, blank=True)
+	expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
 	status = models.CharField(max_length=20, choices=Status.choices, default=Status.IN_PROGRESS)
+	submit_reason = models.CharField(max_length=30, blank=True, default='manual')
+	violation_count = models.PositiveIntegerField(default=0)
+	question_order = models.JSONField(default=list, blank=True)
+	option_orders = models.JSONField(default=dict, blank=True)
+	active_session_token = models.CharField(max_length=64, blank=True, default='')
+	max_score = models.FloatField(default=0)
 	total_score = models.FloatField(default=0)
 
 	class Meta:
-		unique_together = ('exam', 'student')
+		unique_together = ('exam', 'student', 'attempt_number')
 		indexes = [
 			models.Index(fields=['institution', 'student']),
 			models.Index(fields=['institution', 'exam']),
+			models.Index(fields=['expires_at']),
 		]
 
 	def save(self, *args, **kwargs):
@@ -449,6 +464,7 @@ class StudentAnswer(models.Model):
 	)
 	question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='student_answers')
 	answer_text = models.TextField(blank=True, default='')
+	selected_option_order = models.JSONField(null=True, blank=True)
 	is_correct = models.BooleanField(null=True, blank=True)
 	score_awarded = models.FloatField(null=True, blank=True)
 	ai_feedback = models.TextField(blank=True, default='')
@@ -461,6 +477,7 @@ class StudentAnswer(models.Model):
 	evaluation_provider = models.CharField(max_length=50, blank=True, default='')
 	evaluation_model = models.CharField(max_length=100, blank=True, default='')
 	technical_error = models.TextField(blank=True, default='')
+	saved_at = models.DateTimeField(auto_now=True)
 
 	class Meta:
 		constraints = [
@@ -469,5 +486,34 @@ class StudentAnswer(models.Model):
 		indexes = [
 			models.Index(fields=['institution', 'attempt']),
 			models.Index(fields=['evaluation_status']),
+		]
+
+
+class AttemptEvent(models.Model):
+	class EventType(models.TextChoices):
+		FULLSCREEN_EXIT = 'fullscreen_exit', 'Fullscreen Exit'
+		TAB_HIDDEN = 'tab_hidden', 'Tab Hidden'
+		WINDOW_BLUR = 'window_blur', 'Window Blur'
+		RELOAD = 'reload', 'Page Reload'
+		CONCURRENT_TAB = 'concurrent_tab', 'Concurrent Tab Detected'
+		HEARTBEAT = 'heartbeat', 'Heartbeat'
+		CUSTOM = 'custom', 'Custom Violation'
+
+	attempt = models.ForeignKey(StudentAttempt, on_delete=models.CASCADE, related_name='events', db_index=True)
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='attempt_events',
+		db_index=True,
+	)
+	event_type = models.CharField(max_length=40, choices=EventType.choices)
+	metadata = models.JSONField(default=dict, blank=True)
+	timestamp = models.DateTimeField(default=timezone.now, db_index=True)
+
+	class Meta:
+		ordering = ['-timestamp']
+		indexes = [
+			models.Index(fields=['attempt', 'event_type']),
+			models.Index(fields=['institution', 'timestamp']),
 		]
 

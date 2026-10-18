@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Brain, Eye, EyeOff, User, Mail, Lock, Building2, GraduationCap, Briefcase, Shield, CheckCircle2 } from "lucide-react";
 import axios from "axios";
 
-import { authApi, institutionsApi, type InstitutionOption, type UserRole } from "../../services/api";
+import { authApi, institutionsApi, departmentsApi, type DepartmentOption, type InstitutionOption, type UserRole } from "../../services/api";
 import { useAuth } from "../context/useAuth";
 
 function extractApiErrorMessage(apiError: unknown): string | null {
@@ -68,6 +68,9 @@ export function Login() {
   const [institutions, setInstitutions] = useState<InstitutionOption[]>([]);
   const [selectedInstitutionId, setSelectedInstitutionId] = useState("");
   const [institutionsLoading, setInstitutionsLoading] = useState(false);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [selectedDepartment, setSelectedDepartment] = useState("");
+  const [departmentsLoading, setDepartmentsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -106,6 +109,42 @@ export function Login() {
     };
   }, []);
 
+  useEffect(() => {
+    if (isLogin || (role !== "student" && role !== "faculty")) {
+      return;
+    }
+
+    let isMounted = true;
+    const loadDepartments = async () => {
+      setDepartmentsLoading(true);
+      try {
+        const instId = selectedInstitutionId ? Number(selectedInstitutionId) : undefined;
+        const response = await departmentsApi.getDepartments(instId);
+        if (isMounted) {
+          setDepartments(response.data || []);
+          // Reset selected department if it is not in the new list
+          if (selectedDepartment && response.data && !response.data.some((d) => d.department_name === selectedDepartment)) {
+            setSelectedDepartment("");
+          }
+        }
+      } catch {
+        if (isMounted) {
+          setDepartments([]);
+        }
+      } finally {
+        if (isMounted) {
+          setDepartmentsLoading(false);
+        }
+      }
+    };
+
+    void loadDepartments();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isLogin, role, selectedInstitutionId]);
+
   const navigateByRole = (userRole: UserRole) => {
     switch (userRole) {
       case "admin":
@@ -125,9 +164,15 @@ export function Login() {
     setSuccessMessage("");
 
     if (!isLogin) {
-      if ((role === "student" || role === "faculty") && !selectedInstitutionId) {
-        setError("Please select an institution.");
-        return;
+      if ((role === "student" || role === "faculty")) {
+        if (!selectedInstitutionId) {
+          setError("Please select an institution.");
+          return;
+        }
+        if (!selectedDepartment) {
+          setError("Please select your department.");
+          return;
+        }
       }
 
       if (password !== confirmPassword) {
@@ -171,6 +216,10 @@ export function Login() {
           institution_id:
             role === "student" || role === "faculty"
               ? Number(selectedInstitutionId)
+              : undefined,
+          department:
+            role === "student" || role === "faculty"
+              ? selectedDepartment
               : undefined,
         });
         setAuthenticatedSession({
@@ -292,6 +341,38 @@ export function Login() {
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+
+            {!isLogin && (role === "student" || role === "faculty") && (
+              <div>
+                <label className="block text-xs sm:text-sm font-medium mb-1 text-foreground flex items-center gap-1.5">
+                  <GraduationCap className="w-3.5 h-3.5 text-primary" />
+                  Department
+                </label>
+                <select
+                  value={selectedDepartment}
+                  onChange={(event) => setSelectedDepartment(event.target.value)}
+                  disabled={departmentsLoading}
+                  className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                  required
+                >
+                  <option value="">
+                    {departmentsLoading
+                      ? "Loading departments..."
+                      : selectedInstitutionId
+                      ? "Select department"
+                      : "Select an institution first"}
+                  </option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.department_name}>
+                      {dept.department_name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Note: Department is permanent and cannot be changed after sign-up.
+                </p>
               </div>
             )}
 

@@ -214,6 +214,17 @@ class StudentProfileAPIView(APIView):
                 'Unable to update student profile.',
             )
 
+        # Explicit protection: department cannot be edited if already set
+        if profile.department and profile.department.strip() not in ('', 'Unassigned', 'unassigned'):
+            if 'department' in request.data and request.data['department'].strip().lower() != profile.department.strip().lower():
+                return Response(
+                    {
+                        'status': 'error',
+                        'message': 'Department cannot be changed once assigned. Contact admin to request a change.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         serializer = StudentProfileDepartmentUpdateSerializer(profile, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()

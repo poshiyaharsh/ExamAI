@@ -121,6 +121,8 @@ class ExamListSerializer(serializers.ModelSerializer):
             'id', 'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'status', 'error_message', 'seed', 'request_hash', 'is_immutable',
+            'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
+            'allow_retakes', 'show_result_immediately',
             'starts_at', 'ends_at', 'created_at', 'updated_at',
             'question_count', 'attempts_count',
         )
@@ -136,6 +138,8 @@ class ExamDetailSerializer(serializers.ModelSerializer):
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'starts_at', 'ends_at',
             'error_message', 'seed', 'request_hash', 'validation_report', 'is_immutable',
+            'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
+            'allow_retakes', 'show_result_immediately',
             'created_at', 'updated_at', 'questions',
         )
         read_only_fields = ('id', 'ai_model_used', 'source_syllabus_text', 'created_at', 'updated_at', 'questions')
@@ -147,6 +151,8 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
         fields = (
             'title', 'department', 'duration_minutes', 'total_marks', 'topics',
             'difficulty_distribution', 'question_types', 'starts_at', 'ends_at', 'status',
+            'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
+            'allow_retakes', 'show_result_immediately',
         )
 
 
@@ -223,6 +229,8 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
         attempt = getattr(obj, 'attempt', None)
         if not attempt:
             return False
+        if not getattr(attempt.exam, 'show_result_immediately', True):
+            return False
         return attempt.status in (StudentAttempt.Status.SUBMITTED, StudentAttempt.Status.AUTO_SUBMITTED, StudentAttempt.Status.EVALUATED)
 
     def get_correct_answer(self, obj):
@@ -252,8 +260,18 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
 class StudentAttemptSerializer(serializers.ModelSerializer):
     answers = StudentAnswerSerializer(many=True, read_only=True)
     exam_title = serializers.CharField(source='exam.title', read_only=True)
-    exam_total_marks = serializers.IntegerField(source='exam.total_marks', read_only=True)
+    exam_total_marks = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentAttempt
-        fields = ('id', 'exam', 'exam_title', 'exam_total_marks', 'started_at', 'submitted_at', 'status', 'total_score', 'answers')
+        fields = (
+            'id', 'exam', 'exam_title', 'exam_total_marks', 'attempt_number',
+            'started_at', 'submitted_at', 'expires_at', 'status', 'submit_reason',
+            'violation_count', 'max_score', 'total_score', 'answers',
+        )
+
+    def get_exam_total_marks(self, obj):
+        try:
+            return float(obj.max_score or obj.exam.total_marks or 0.0)
+        except (ValueError, TypeError):
+            return 0.0

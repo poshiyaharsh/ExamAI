@@ -6,8 +6,10 @@ from .exam_management import (
     ClearFacultyPaperCacheView,
     ExamDetailView,
     ExamListView,
+    ExamQuestionCreateView,
     PublishExamView,
     QuestionUpdateView,
+    ReorderQuestionsView,
     ShuffleExamView,
     SwapQuestionView,
 )
@@ -21,11 +23,13 @@ from .faculty_evaluation import (
 )
 from .generate_paper import GeneratePaperView
 from .student_exam import (
+    HeartbeatView,
     SaveAnswerView,
     StartAttemptView,
     StudentAttemptDetailView,
     StudentExamListView,
     SubmitAttemptView,
+    ViolationEventView,
 )
 from .student_dashboard import StudentDashboardView
 from .student_performance import (
@@ -59,6 +63,8 @@ urlpatterns = [
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
     path('faculty/exams/<int:exam_id>/shuffle/', ShuffleExamView.as_view(), name='faculty-exam-shuffle'),
+    path('faculty/exams/<int:exam_id>/questions/', ExamQuestionCreateView.as_view(), name='faculty-exam-question-create'),
+    path('faculty/exams/<int:exam_id>/questions/reorder/', ReorderQuestionsView.as_view(), name='faculty-exam-questions-reorder'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/swap/', SwapQuestionView.as_view(), name='faculty-exam-question-swap'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
@@ -72,6 +78,8 @@ urlpatterns = [
     path('student/exams/', StudentExamListView.as_view(), name='student-exam-list'),
     path('student/exams/<int:exam_id>/start/', StartAttemptView.as_view(), name='student-exam-start'),
     path('student/attempts/<int:attempt_id>/save/', SaveAnswerView.as_view(), name='student-answer-save'),
+    path('student/attempts/<int:attempt_id>/violation/', ViolationEventView.as_view(), name='student-attempt-violation'),
+    path('student/attempts/<int:attempt_id>/heartbeat/', HeartbeatView.as_view(), name='student-attempt-heartbeat'),
     path('student/attempts/<int:attempt_id>/submit/', SubmitAttemptView.as_view(), name='student-attempt-submit'),
     path('student/attempts/<int:attempt_id>/', StudentAttemptDetailView.as_view(), name='student-attempt-detail'),
     path('student/dashboard', StudentDashboardView.as_view(), name='student-dashboard-no-slash'),

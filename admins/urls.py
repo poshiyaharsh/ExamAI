@@ -12,6 +12,7 @@ from .views import (
     AdminExamDetailAPIView,
     AdminExamAuditAPIView,
     AdminStudentResultsAPIView,
+    AdminUserDepartmentChangeAPIView,
 )
 from api.admin_dashboard import AdminDashboardView, LiveRosterView
 
@@ -40,5 +41,7 @@ urlpatterns = [
     path('exams/<int:exam_id>/', AdminExamDetailAPIView.as_view(), name='admin-exam-detail'),
     path('exams/<int:exam_id>/live-roster', LiveRosterView.as_view(), name='admin-exam-live-roster-no-slash'),
     path('exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='admin-exam-live-roster'),
+    path('users/<int:user_id>/change-department', AdminUserDepartmentChangeAPIView.as_view(), name='admin-user-change-dept-no-slash'),
+    path('users/<int:user_id>/change-department/', AdminUserDepartmentChangeAPIView.as_view(), name='admin-user-change-dept'),
     path('question-bank/', include('api.urls_question_bank')),
 ]

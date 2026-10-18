@@ -26,6 +26,7 @@ class FacultySignupSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     institution_id = serializers.IntegerField(write_only=True)
+    department = serializers.CharField(max_length=120, required=True, allow_blank=False, trim_whitespace=True)
 
     def validate_email(self, value):
         normalized = value.lower().strip()
@@ -33,11 +34,26 @@ class FacultySignupSerializer(serializers.Serializer):
             raise serializers.ValidationError('Registration could not be completed with this email. If you have an account, please sign in or reset your password.')
         return normalized
 
-    def create(self, validated_data):
-        email = validated_data['email']
-        institution = AdminInstitution.objects.filter(id=validated_data['institution_id']).first()
+    def validate(self, attrs):
+        institution = AdminInstitution.objects.filter(id=attrs.get('institution_id')).first()
         if not institution:
             raise serializers.ValidationError({'institution_id': 'Please select a valid institution.'})
+
+        raw_dept = attrs.get('department')
+        from api.utils.departments import validate_department_name
+        is_valid, norm_dept = validate_department_name(raw_dept, institution=institution)
+        if not is_valid:
+            raise serializers.ValidationError(
+                {'department': f'Invalid department "{raw_dept}". Please select a valid department from the allowed list.'}
+            )
+        attrs['department'] = norm_dept
+        attrs['institution'] = institution
+        return attrs
+
+    def create(self, validated_data):
+        email = validated_data['email']
+        institution = validated_data['institution']
+        department = validated_data['department']
 
         try:
             with transaction.atomic():
@@ -48,7 +64,7 @@ class FacultySignupSerializer(serializers.Serializer):
                     last_name=validated_data['last_name'].strip(),
                     password=validated_data['password'],
                 )
-                FacultyProfile.objects.create(user=user, institution=institution)
+                FacultyProfile.objects.create(user=user, institution=institution, department=department)
                 return user
         except (OperationalError, ProgrammingError) as exc:
             raise serializers.ValidationError(
@@ -108,11 +124,23 @@ class FacultyProfileDepartmentUpdateSerializer(serializers.ModelSerializer):
         model = FacultyProfile
         fields = ('department',)
 
-    def validate_department(self, value):
-        cleaned = value.strip()
-        if not cleaned:
-            raise serializers.ValidationError('Department must not be empty.')
-        return cleaned
+    def validate(self, attrs):
+        if self.instance and self.instance.department and self.instance.department.strip() not in ('', 'Unassigned', 'unassigned'):
+            raise serializers.ValidationError({'department': 'Department cannot be changed once assigned. Contact admin to request a change.'})
+
+        raw_dept = attrs.get('department', '').strip()
+        if not raw_dept:
+            raise serializers.ValidationError({'department': 'Department must not be empty.'})
+
+        from api.utils.departments import validate_department_name
+        institution = getattr(self.instance, 'institution', None)
+        is_valid, norm_dept = validate_department_name(raw_dept, institution=institution)
+        if not is_valid:
+            raise serializers.ValidationError(
+                {'department': f'Invalid department "{raw_dept}". Please select a valid department from the allowed list.'}
+            )
+        attrs['department'] = norm_dept
+        return attrs
 
 
 ALLOWED_AI_MODELS = ('ollama-qwen2.5-3b', 'ollama-llama3.2-3b', 'ollama-phi3-mini')

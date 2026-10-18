@@ -35,6 +35,59 @@ def normalize_department(value: Optional[str]) -> str:
     return DEPARTMENT_LOOKUP.get(lower_cleaned, cleaned)
 
 
+def get_valid_department_names(institution=None):
+    """
+    Returns the list of valid department names.
+    If an institution is provided, uses its AdminDepartment catalog, initializing
+    missing defaults if necessary. Otherwise returns DEFAULT_DEPARTMENT_NAMES.
+    """
+    if not institution:
+        return list(DEFAULT_DEPARTMENT_NAMES)
+
+    try:
+        from admins.models import AdminDepartment
+        existing = list(
+            AdminDepartment.objects.filter(institution=institution)
+            .order_by('department_name')
+            .values_list('department_name', flat=True)
+        )
+        if not existing:
+            # Seed default departments for institution if none exist
+            AdminDepartment.objects.bulk_create(
+                [AdminDepartment(institution=institution, department_name=dept) for dept in DEFAULT_DEPARTMENT_NAMES],
+                ignore_conflicts=True,
+            )
+            existing = list(
+                AdminDepartment.objects.filter(institution=institution)
+                .order_by('department_name')
+                .values_list('department_name', flat=True)
+            )
+        return existing or list(DEFAULT_DEPARTMENT_NAMES)
+    except Exception:
+        return list(DEFAULT_DEPARTMENT_NAMES)
+
+
+def validate_department_name(value: Optional[str], institution=None) -> Tuple[bool, str]:
+    """
+    Validates whether a department string is allowed.
+    Returns (is_valid, normalized_department_name).
+    """
+    if not value or not str(value).strip():
+        return False, ''
+
+    cleaned = ' '.join(str(value).strip().split())
+    valid_names = get_valid_department_names(institution)
+    valid_lookup = {name.lower(): name for name in valid_names}
+
+    if cleaned.lower() in valid_lookup:
+        return True, valid_lookup[cleaned.lower()]
+
+    if cleaned.lower() in DEPARTMENT_LOOKUP:
+        return True, DEPARTMENT_LOOKUP[cleaned.lower()]
+
+    return False, cleaned
+
+
 def get_student_department(user) -> str:
     """Safely retrieve the normalized department for a student user."""
     if not user or not user.is_authenticated:

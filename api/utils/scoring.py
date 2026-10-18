@@ -93,7 +93,14 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
     subjective_answers = []
 
     with transaction.atomic():
-        questions = list(exam.questions.all().order_by('order', 'id'))
+        if attempt.question_order:
+            q_map = {
+                q.id: q
+                for q in exam.questions.filter(id__in=attempt.question_order, is_deleted=False)
+            }
+            questions = [q_map[qid] for qid in attempt.question_order if qid in q_map]
+        else:
+            questions = list(exam.questions.filter(is_deleted=False).order_by('order', 'id'))
         if not questions:
             if not attempt.submitted_at:
                 attempt.submitted_at = now
@@ -174,7 +181,7 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
             (ans.score_awarded or 0)
             for ans in existing_answers.values()
         )
-        exam_total = exam.total_marks or sum(q.marks for q in questions) or 1
+        exam_total = float(attempt.max_score or exam.total_marks or sum(q.marks for q in questions) or 1)
         percentage = round((float(marks_obtained) / float(exam_total)) * 100.0, 2)
         is_passed = percentage >= PASSING_PERCENTAGE
 

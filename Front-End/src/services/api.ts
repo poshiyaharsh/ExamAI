@@ -29,6 +29,7 @@ export type AuthPayload = {
   email: string;
   password: string;
   institution_id?: number;
+  department?: string;
 };
 
 export type InstitutionOption = {
@@ -257,6 +258,7 @@ export type ExamQuestion = {
 export type FacultyExam = {
   id: number;
   title: string;
+  department?: string;
   duration_minutes: number;
   total_marks: number;
   topics: string[];
@@ -270,6 +272,12 @@ export type FacultyExam = {
   request_hash?: string;
   is_immutable?: boolean;
   validation_report?: any;
+  shuffle_questions?: boolean;
+  shuffle_options?: boolean;
+  random_subset_size?: number | null;
+  max_warnings?: number;
+  allow_retakes?: boolean;
+  show_result_immediately?: boolean;
   starts_at: string | null;
   ends_at: string | null;
   created_at: string;
@@ -319,6 +327,9 @@ export type StudentExam = {
   topics: string[];
   starts_at: string | null;
   ends_at: string | null;
+  shuffle_questions?: boolean;
+  shuffle_options?: boolean;
+  max_warnings?: number;
   questions?: Array<Omit<ExamQuestion, "correct_answer" | "model_answer">>;
 };
 
@@ -334,9 +345,14 @@ export type StudentAttempt = {
   exam: number;
   exam_title: string;
   exam_total_marks: number;
+  attempt_number?: number;
   started_at: string;
   submitted_at: string | null;
+  expires_at?: string;
   status: "in_progress" | "submitted" | "auto_submitted" | "evaluated";
+  submit_reason?: string;
+  violation_count?: number;
+  max_score?: number;
   total_score: number;
   answers: Array<{
     question: number;
@@ -356,9 +372,33 @@ export type StudentExamStartResponse = {
   exam: StudentExam;
   started_at: string;
   deadline: string;
+  expires_at?: string;
+  session_token?: string;
+  violation_count?: number;
+  max_warnings?: number;
   created: boolean;
 };
 export type StudentAttemptResponse = StudentAttempt;
+
+export type ProctoringViolationResponse = {
+  auto_submitted: boolean;
+  submit_reason?: string;
+  violation_count: number;
+  max_warnings: number;
+  warnings_left: number;
+  message: string;
+};
+
+export type ProctoringHeartbeatResponse = {
+  active: boolean;
+  seconds_left?: number;
+  expired?: boolean;
+  auto_submitted?: boolean;
+  concurrent_session?: boolean;
+  violation_count?: number;
+  max_warnings?: number;
+  message?: string;
+};
 
 export type AdminStudentRow = {
   id: number;
@@ -901,8 +941,9 @@ export const institutionsApi = {
 };
 
 export const departmentsApi = {
-  getDepartments: async (): Promise<DepartmentsResponse> => {
-    const response = await apiClient.get<DepartmentsResponse>("/api/departments");
+  getDepartments: async (institutionId?: number): Promise<DepartmentsResponse> => {
+    const params = institutionId ? { institution_id: institutionId } : undefined;
+    const response = await apiClient.get<DepartmentsResponse>("/api/departments", { params });
     return response.data;
   },
 };
@@ -974,8 +1015,36 @@ export const studentExamApi = {
     });
     return response.data;
   },
-  submitAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
-    const response = await apiClient.post<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/submit/`, {});
+  recordViolation: async (
+    attemptId: number,
+    eventType: string,
+    metadata?: Record<string, unknown>
+  ): Promise<ProctoringViolationResponse> => {
+    const response = await apiClient.post<ProctoringViolationResponse>(
+      `/api/student/attempts/${attemptId}/violation/`,
+      {
+        event_type: eventType,
+        metadata: metadata || {},
+      }
+    );
+    return response.data;
+  },
+  sendHeartbeat: async (
+    attemptId: number,
+    sessionToken?: string
+  ): Promise<ProctoringHeartbeatResponse> => {
+    const response = await apiClient.post<ProctoringHeartbeatResponse>(
+      `/api/student/attempts/${attemptId}/heartbeat/`,
+      {
+        session_token: sessionToken,
+      }
+    );
+    return response.data;
+  },
+  submitAttempt: async (attemptId: number, reason: string = 'manual'): Promise<StudentAttemptResponse> => {
+    const response = await apiClient.post<StudentAttemptResponse>(`/api/student/attempts/${attemptId}/submit/`, {
+      reason,
+    });
     return response.data;
   },
   getAttempt: async (attemptId: number): Promise<StudentAttemptResponse> => {
@@ -1248,6 +1317,38 @@ export const facultyExamApi = {
   },
   reevaluateAnswer: async (answerId: number, force: boolean = false): Promise<any> => {
     const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/re-evaluate/`, { force });
+    return response.data;
+  },
+  updateExam: async (examId: number, patchData: Partial<FacultyExam>): Promise<FacultyExam> => {
+    const response = await apiClient.patch<FacultyExam>(`/api/faculty/exams/${examId}/`, patchData);
+    return response.data;
+  },
+  addQuestion: async (
+    examId: number,
+    data: {
+      bank_question_id?: number;
+      text?: string;
+      question_type?: string;
+      difficulty?: string;
+      marks?: number;
+      options?: string[];
+      correct_answer?: any;
+      topic?: string;
+    }
+  ): Promise<ExamQuestion> => {
+    const response = await apiClient.post<ExamQuestion>(`/api/faculty/exams/${examId}/questions/`, data);
+    return response.data;
+  },
+  deleteQuestion: async (examId: number, questionId: number): Promise<{ deleted: boolean; id: number }> => {
+    const response = await apiClient.delete<{ deleted: boolean; id: number }>(
+      `/api/faculty/exams/${examId}/questions/${questionId}/`
+    );
+    return response.data;
+  },
+  reorderQuestions: async (examId: number, questionIds: number[]): Promise<FacultyExam> => {
+    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/questions/reorder/`, {
+      question_ids: questionIds,
+    });
     return response.data;
   },
   manualGradeAnswer: async (answerId: number, score: number, feedback: string): Promise<any> => {

@@ -230,6 +230,7 @@ class AdminLiveExamsIsolationTestCase(TestCase):
 
         # Transfer Bob to Mechanical Engineering
         bob_profile = self.stu_a2.student_profile
+        bob_profile._allow_department_change = True
         bob_profile.department = 'Mechanical Engineering'
         bob_profile.save()
 
