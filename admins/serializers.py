@@ -451,17 +451,31 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
             instance.student_id = validated_data['student_id']
             update_fields.append('student_id')
 
+        old_dept = instance.department
+        new_dept = None
         department = self.context.get('department')
         if department:
-            instance.department = department.department_name
-            update_fields.append('department')
+            new_dept = department.department_name
         elif 'department' in validated_data:
-            instance.department = validated_data['department']
-            update_fields.append('department')
+            new_dept = validated_data['department'].strip()
 
-        if 'department' in validated_data:
-            # handled above
-            pass
+        if new_dept and new_dept != old_dept:
+            instance.department = new_dept
+            instance._allow_department_change = True
+            update_fields.append('department')
+            request_user = self.context.get('request').user if self.context.get('request') else None
+            try:
+                from admins.models import DepartmentChangeAuditLog
+                DepartmentChangeAuditLog.objects.create(
+                    user=instance.user,
+                    institution=instance.institution,
+                    changed_by=request_user,
+                    previous_department=old_dept or 'Unassigned',
+                    new_department=new_dept,
+                    reason=self.context.get('reason', 'Admin updated student profile'),
+                )
+            except Exception:
+                pass
 
         if update_fields:
             instance.save(update_fields=update_fields)
@@ -731,7 +745,24 @@ class AdminFacultyUpdateSerializer(serializers.Serializer):
             instance.employee_id = validated_data['employee_id'] or None
 
         if 'department' in validated_data:
-            instance.department = validated_data['department'].strip()
+            new_dept = validated_data['department'].strip()
+            old_dept = instance.department
+            if new_dept and new_dept != old_dept:
+                instance.department = new_dept
+                instance._allow_department_change = True
+                request_user = self.context.get('request').user if self.context.get('request') else None
+                try:
+                    from admins.models import DepartmentChangeAuditLog
+                    DepartmentChangeAuditLog.objects.create(
+                        user=instance.user,
+                        institution=instance.institution,
+                        changed_by=request_user,
+                        previous_department=old_dept or 'Unassigned',
+                        new_department=new_dept,
+                        reason=self.context.get('reason', 'Admin updated faculty profile'),
+                    )
+                except Exception:
+                    pass
 
         if 'designation' in validated_data:
             instance.designation = validated_data['designation'].strip()

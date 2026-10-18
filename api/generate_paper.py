@@ -311,13 +311,35 @@ class GeneratePaperView(APIView):
             safe_payload = dict(request.data)
         logger.debug('Received payload: %s', safe_payload)
         logger.debug('Received files: %s', {key: value.name for key, value in request.FILES.items()})
+        from .utils.departments import get_faculty_department, normalize_department
+        from api.tenant import get_user_institution
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant_inst:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        faculty_dept = get_faculty_department(request.user)
+        if not faculty_dept or faculty_dept.lower() in ('', 'unassigned'):
+            return Response(
+                {'detail': 'You must have an assigned department to create or generate exams. Please contact admin.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        client_dept = normalize_department(request.data.get('department'))
+        if client_dept and client_dept.lower() != faculty_dept.lower():
+            return Response(
+                {'detail': f'Access denied: Faculty may only create exams for their own department ({faculty_dept}).'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        assigned_dept = faculty_dept
+
         try:
             title = str(request.data.get('title', '')).strip()
-            duration_minutes = int(request.data.get('duration_minutes', 0))
+            duration_val = request.data.get('duration_minutes') or request.data.get('duration') or 0
+            duration_minutes = int(duration_val)
             total_marks = int(request.data.get('total_marks', 0))
             topics = _as_list(request.data.get('topics'), request.data, 'topics')
             question_types = _as_list(request.data.get('question_types'), request.data, 'question_types')
-            difficulty_distribution = _as_dict(request.data.get('difficulty_distribution', {}))
+            difficulty_distribution = _as_dict(request.data.get('difficulty_distribution') or request.data.get('difficulty_mix') or {})
             model_alias = str(request.data.get('ai_model', '')).strip()
             model_name = model_alias
             if not title or duration_minutes <= 0 or total_marks <= 0:
@@ -350,23 +372,6 @@ class GeneratePaperView(APIView):
                 )
         else:
             logger.debug('No syllabus uploaded; generation will use topics only.')
-
-        from .utils.departments import get_faculty_department, normalize_department
-        from api.tenant import get_user_institution
-        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
-        if not tenant_inst:
-            return Response({'detail': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        faculty_dept = get_faculty_department(request.user)
-        client_dept = normalize_department(request.data.get('department'))
-        assigned_dept = faculty_dept or client_dept
-        if not assigned_dept:
-            return Response(
-                {
-                    'detail': 'A valid department is required to create an exam. Please set your department in your profile settings or specify a department in the request.'
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         idempotency_key = request.headers.get('Idempotency-Key') or request.data.get('idempotency_key')
         force_regenerate = str(request.data.get('force_regenerate', '')).lower() in ('true', '1', 'yes')

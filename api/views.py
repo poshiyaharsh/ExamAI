@@ -407,16 +407,32 @@ class InstitutionListAPIView(APIView):
 
 
 class DepartmentListAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [AllowAny]
 
     def get(self, request):
-        institution = AdminInstitution.objects.filter(admin=request.user).first()
+        institution = None
+        if request.user.is_authenticated:
+            institution = AdminInstitution.objects.filter(admin=request.user).first()
+            if not institution:
+                from api.tenant import get_user_institution
+                institution = get_user_institution(request.user)
+
         if not institution:
+            inst_id = request.query_params.get('institution_id')
+            if inst_id:
+                try:
+                    institution = AdminInstitution.objects.filter(id=int(inst_id), status=AdminInstitution.STATUS_ACTIVE).first()
+                except (ValueError, TypeError):
+                    institution = None
+
+        if not institution:
+            # Return global default department catalog if no institution is specified
+            data = [{'id': idx + 1, 'department_name': name} for idx, name in enumerate(DEFAULT_DEPARTMENT_NAMES)]
             return Response(
                 {
                     'status': 'success',
-                    'message': 'Institution information not created yet.',
-                    'data': [],
+                    'message': 'Default department catalog fetched.',
+                    'data': data,
                 },
                 status=status.HTTP_200_OK,
             )

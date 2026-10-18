@@ -85,3 +85,35 @@ class AdminDepartment(models.Model):
 
     def __str__(self):
         return f'{self.department_name} ({self.institution.institution_code})'
+
+
+class DepartmentChangeAuditLog(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='department_audit_logs',
+    )
+    institution = models.ForeignKey(
+        AdminInstitution,
+        on_delete=models.CASCADE,
+        related_name='department_audit_logs',
+        null=True,
+        blank=True,
+    )
+    changed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='admin_dept_changes',
+    )
+    previous_department = models.CharField(max_length=120)
+    new_department = models.CharField(max_length=120)
+    reason = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f'{self.user.username}: {self.previous_department} -> {self.new_department}'

@@ -61,7 +61,23 @@ class StudentProfile(models.Model):
                 self.save(update_fields=['student_id'])
                 return self.student_id
 
-        raise ValueError('Unable to allocate a unique student ID. Please try again.')
+    def clean(self):
+        super().clean()
+        if self.pk:
+            orig_dept = StudentProfile.objects.filter(pk=self.pk).values_list('department', flat=True).first()
+            if orig_dept and orig_dept.strip() not in ('', 'Unassigned', 'unassigned'):
+                if self.department != orig_dept and not getattr(self, '_allow_department_change', False):
+                    from django.core.exceptions import ValidationError
+                    raise ValidationError({'department': 'Department is immutable once assigned. Contact admin to request a change.'})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            orig_dept = StudentProfile.objects.filter(pk=self.pk).values_list('department', flat=True).first()
+            if orig_dept and orig_dept.strip() not in ('', 'Unassigned', 'unassigned'):
+                if self.department != orig_dept and not getattr(self, '_allow_department_change', False):
+                    from django.core.exceptions import ValidationError
+                    raise ValidationError({'department': 'Department is immutable once assigned. Contact admin to request a change.'})
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'Student: {self.user.username}'

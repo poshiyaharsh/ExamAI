@@ -29,6 +29,7 @@ export type AuthPayload = {
   email: string;
   password: string;
   institution_id?: number;
+  department?: string;
 };
 
 export type InstitutionOption = {
@@ -901,8 +902,9 @@ export const institutionsApi = {
 };
 
 export const departmentsApi = {
-  getDepartments: async (): Promise<DepartmentsResponse> => {
-    const response = await apiClient.get<DepartmentsResponse>("/api/departments");
+  getDepartments: async (institutionId?: number): Promise<DepartmentsResponse> => {
+    const params = institutionId ? { institution_id: institutionId } : undefined;
+    const response = await apiClient.get<DepartmentsResponse>("/api/departments", { params });
     return response.data;
   },
 };

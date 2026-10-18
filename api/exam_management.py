@@ -26,12 +26,17 @@ class FacultyExamViewMixin:
 
     def get_exam(self, request, exam_id):
         from api.tenant import get_user_institution
+        from api.utils.departments import get_faculty_department
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
         if not tenant:
             return None
-        return Exam.objects.filter(
+        faculty_dept = get_faculty_department(request.user)
+        qs = Exam.objects.filter(
             created_by=request.user, institution=tenant, id=exam_id
-        ).prefetch_related(
+        )
+        if faculty_dept and faculty_dept.lower() not in ('', 'unassigned'):
+            qs = qs.filter(department__iexact=faculty_dept)
+        return qs.prefetch_related(
             'questions__option_items',
             'questions__topic',
             'questions__subject',
@@ -44,13 +49,18 @@ class ExamListView(APIView):
 
     def get(self, request):
         from api.tenant import get_user_institution
+        from api.utils.departments import get_faculty_department
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
         if not tenant:
             return Response([])
 
+        faculty_dept = get_faculty_department(request.user)
+        qs = Exam.objects.filter(created_by=request.user, institution=tenant)
+        if faculty_dept and faculty_dept.lower() not in ('', 'unassigned'):
+            qs = qs.filter(department__iexact=faculty_dept)
+
         exams = (
-            Exam.objects.filter(created_by=request.user, institution=tenant)
-            .annotate(question_count=Count('questions', distinct=True), attempts_count=Count('attempts', distinct=True))
+            qs.annotate(question_count=Count('questions', distinct=True), attempts_count=Count('attempts', distinct=True))
             .order_by('-created_at')
         )
         logger.debug('Faculty exam list user=%s user_id=%s count=%s', request.user, request.user.id, exams.count())

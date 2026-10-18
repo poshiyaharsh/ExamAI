@@ -269,20 +269,50 @@ export function StudentSettings() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-foreground mb-1.5">Department</label>
-                <select
-                  value={department}
-                  onChange={(event) => setDepartment(event.target.value)}
-                  disabled={profileLoading || savingProfile}
-                  className="w-full px-3.5 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:bg-muted/50 disabled:text-muted-foreground"
-                >
-                  <option value="">Select Department</option>
-                  {departmentOptions.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
+                <label className="block text-xs font-medium text-foreground mb-1.5 flex items-center justify-between">
+                  <span>Department</span>
+                  {department && department !== "Unassigned" && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground font-normal">
+                      <Lock className="w-3 h-3 text-muted-foreground" />
+                      Locked
+                    </span>
+                  )}
+                </label>
+                {department && department !== "Unassigned" ? (
+                  <div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={profileLoading ? "Loading..." : department}
+                        disabled
+                        className="w-full px-3.5 py-2 pl-9 rounded-lg border border-border bg-muted/40 text-foreground text-sm cursor-not-allowed font-medium"
+                      />
+                      <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1">
+                      Department cannot be changed. Contact admin.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <select
+                      value={department}
+                      onChange={(event) => setDepartment(event.target.value)}
+                      disabled={profileLoading || savingProfile}
+                      className="w-full px-3.5 py-2 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:bg-muted/50 disabled:text-muted-foreground"
+                    >
+                      <option value="">Select Department (Required)</option>
+                      {departmentOptions.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-amber-600 mt-1">
+                      Pick your department once. Once saved, it will be locked permanently.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
             <div>
@@ -296,15 +326,17 @@ export function StudentSettings() {
             </div>
             {profileError && <p className="text-xs sm:text-sm text-destructive font-medium">{profileError}</p>}
             {profileSuccess && <p className="text-xs sm:text-sm text-emerald-600 font-medium">{profileSuccess}</p>}
-            <div className="pt-2">
-              <button
-                onClick={handleProfileSave}
-                disabled={profileLoading || savingProfile}
-                className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {savingProfile ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
+            {(!department || department === "Unassigned") && (
+              <div className="pt-2">
+                <button
+                  onClick={handleProfileSave}
+                  disabled={profileLoading || savingProfile || !department || department === "Unassigned"}
+                  className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingProfile ? "Saving..." : "Lock & Save Department"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
