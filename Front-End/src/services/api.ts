@@ -1392,6 +1392,13 @@ export const facultyExamApi = {
     const response = await apiClient.delete<{ status: string; message: string }>("/api/faculty/exams/cache/");
     return response.data;
   },
+  generateMissingQuestions: async (examId: number, model?: string): Promise<{ detail: string; generated_count: number; total_questions: number; actual_total_marks: number }> => {
+    const response = await apiClient.post<{ detail: string; generated_count: number; total_questions: number; actual_total_marks: number }>(
+      `/api/faculty/exams/${examId}/generate-missing/`,
+      { model }
+    );
+    return response.data;
+  },
   getExamAttempts: async (examId: number): Promise<{ exam_id: number; exam_title: string; attempts: any[] }> => {
     const response = await apiClient.get<{ exam_id: number; exam_title: string; attempts: any[] }>(`/api/faculty/exams/${examId}/attempts/`);
     return response.data;

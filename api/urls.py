@@ -23,7 +23,7 @@ from .faculty_evaluation import (
     FacultyReevaluateAttemptView,
     FacultySuggestGradeView,
 )
-from .generate_paper import GeneratePaperView, ParseSyllabusView
+from .generate_paper import GenerateMissingQuestionsView, GeneratePaperView, ParseSyllabusView
 from .notifications_views import (
     NotificationListView,
     NotificationMarkAllReadView,
@@ -74,6 +74,7 @@ urlpatterns = [
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
     path('faculty/syllabus/parse/', ParseSyllabusView.as_view(), name='faculty-syllabus-parse'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
+    path('faculty/exams/<int:exam_id>/generate-missing/', GenerateMissingQuestionsView.as_view(), name='faculty-exam-generate-missing'),
     path('papers/generations/active/', PaperGenerationJobActiveView.as_view(), name='paper-generation-active'),
     path('papers/generations/<int:job_id>/cancel/', PaperGenerationJobCancelView.as_view(), name='paper-generation-cancel'),
     path('papers/generations/<int:job_id>/', PaperGenerationJobDetailView.as_view(), name='paper-generation-detail'),
