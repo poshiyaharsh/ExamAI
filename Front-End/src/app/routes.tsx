@@ -10,6 +10,7 @@ import { FacultyDashboard } from "./pages/FacultyDashboard";
 import { FacultyGeneratePaper } from "./pages/FacultyGeneratePaper";
 import { FacultyGeneratingPaper } from "./pages/FacultyGeneratingPaper";
 import { FacultyExamHistory } from "./pages/FacultyExamHistory";
+import { FacultyLiveMonitor } from "./pages/FacultyLiveMonitor";
 import { EditPaperPage } from "./pages/EditPaperPage";
 import { FacultySettings } from "./pages/FacultySettings";
 import { QuestionBank } from "./pages/QuestionBank";
@@ -119,6 +120,14 @@ export const router = createBrowserRouter([
     Component: () => (
       <FacultyOnly>
         <FacultyExamHistory />
+      </FacultyOnly>
+    ),
+  },
+  {
+    path: "/faculty/exams/:id/monitor",
+    Component: () => (
+      <FacultyOnly>
+        <FacultyLiveMonitor />
       </FacultyOnly>
     ),
   },

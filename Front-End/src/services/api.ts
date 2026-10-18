@@ -637,15 +637,26 @@ export type StudentDashboardRecentResult = {
   exam_id: number;
   exam_title: string;
   subject: string;
+  topics?: string[];
   department: string;
   faculty_name: string;
   date: string;
-  marks_obtained: number;
+  marks_obtained: number | null;
   total_marks: number;
-  percentage: number;
-  is_passed: boolean;
+  percentage: number | null;
+  is_passed: boolean | null;
   time_taken: string;
   status: string;
+  result_status?: {
+    status_code?: string;
+    label?: string;
+    sub_label?: string;
+    tooltip?: string;
+    badge_variant?: string;
+    is_passed?: boolean | null;
+    is_provisional?: boolean;
+    submit_reason?: string;
+  };
 };
 
 export type StudentDashboardTrendItem = {
@@ -706,21 +717,90 @@ export type FacultyOngoingExamItem = {
   title: string;
   subject: string;
   department: string;
+  faculty_name?: string;
   duration_minutes: number;
   total_marks: number;
   starts_at: string | null;
   ends_at: string | null;
+  server_now?: string;
   seconds_remaining?: number | null;
+  window_total_seconds?: number | null;
+  assigned_total?: number;
   eligible_count?: number;
   eligible_students: number;
   submitted_count: number;
+  submitted?: number;
   in_progress_count?: number;
+  in_progress?: number;
   not_started_count?: number;
+  not_started?: number;
   participation_percent?: number;
   total_violations?: number;
   flagged_students?: number;
   question_count?: number;
   topics?: string[];
+  all_topics?: string[];
+};
+
+export type LiveStudentViolationEvent = {
+  id: number;
+  event_type: string;
+  event_label: string;
+  metadata: Record<string, any>;
+  timestamp: string;
+};
+
+export type LiveStudentRosterItem = {
+  student_user_id: number;
+  student_id: string;
+  name: string;
+  email: string;
+  department: string;
+  status: "not_started" | "in_progress" | "submitted" | "auto_submitted" | string;
+  submit_reason?: string | null;
+  questions_answered: number;
+  total_questions: number;
+  progress_percent: number;
+  time_left_seconds: number;
+  violation_count: number;
+  last_activity: string | null;
+  attempt_id: number | null;
+  violations_timeline: LiveStudentViolationEvent[];
+};
+
+export type FacultyLiveMonitorData = {
+  exam: {
+    id: number;
+    title: string;
+    subject: string;
+    department: string;
+    status: string;
+    is_live: boolean;
+    duration_minutes: number;
+    total_marks: number;
+    max_warnings: number;
+    starts_at: string | null;
+    ends_at: string | null;
+    seconds_remaining: number | null;
+    window_total_seconds: number | null;
+    server_now: string;
+    total_questions: number;
+  };
+  summary: {
+    assigned_total: number;
+    in_progress: number;
+    submitted: number;
+    not_started: number;
+    flagged_students: number;
+    total_violations: number;
+    participation_percent: number;
+  };
+  roster: LiveStudentRosterItem[];
+};
+
+export type FacultyLiveMonitorResponse = {
+  status: string;
+  data: FacultyLiveMonitorData;
 };
 
 export type FacultyUpcomingExamItem = {
@@ -811,6 +891,8 @@ export type FacultyDashboardData = {
   profile: FacultyDashboardProfile;
   stats: FacultyDashboardStats;
   ongoing_exams: FacultyOngoingExamItem[];
+  total_live_count?: number;
+  server_now?: string;
   upcoming_exams: FacultyUpcomingExamItem[];
   recent_exams: FacultyRecentExamItem[];
   exam_performance: FacultyExamPerfItem[];
@@ -1178,6 +1260,13 @@ export const studentDashboardApi = {
 export const facultyDashboardApi = {
   getDashboard: async (): Promise<FacultyDashboardResponse> => {
     const response = await apiClient.get<FacultyDashboardResponse>("/api/faculty/dashboard/");
+    return response.data;
+  },
+};
+
+export const facultyLiveMonitorApi = {
+  getExamMonitor: async (examId: number): Promise<FacultyLiveMonitorResponse> => {
+    const response = await apiClient.get<FacultyLiveMonitorResponse>(`/api/faculty/exams/${examId}/live-monitor/`);
     return response.data;
   },
 };

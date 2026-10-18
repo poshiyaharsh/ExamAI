@@ -176,30 +176,35 @@ class StudentDashboardView(APIView):
 
         upcoming_exams = [_serialize_exam(e) for e in future_exams]
 
+        from .utils.results import compute_attempt_result_status
+
         # 5. Recent results (last 5 completed attempts)
         recent_results_qs = completed_attempts_qs.order_by('-submitted_at', '-started_at', '-id')[:5]
         recent_results = []
         for a in recent_results_qs:
-            topics = a.exam.topics
-            subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
+            topics = a.exam.topics if isinstance(a.exam.topics, list) else []
+            subject = a.exam.subject or (topics[0] if topics else 'General')
             faculty = a.exam.created_by
             faculty_name = f"{faculty.first_name} {faculty.last_name}".strip() or faculty.username
-            pct = round(a.percentage, 1)
+            
+            status_info = compute_attempt_result_status(a, exam=a.exam)
 
             recent_results.append({
                 'attempt_id': a.id,
                 'exam_id': a.exam.id,
                 'exam_title': a.exam.title,
                 'subject': subject,
+                'topics': topics,
                 'department': a.exam.department,
                 'faculty_name': faculty_name,
                 'date': a.submitted_at.isoformat() if a.submitted_at else a.started_at.isoformat(),
-                'marks_obtained': round(float(a.total_score or 0.0), 1),
-                'total_marks': a.exam.total_marks,
-                'percentage': pct,
-                'is_passed': pct >= PASSING_PERCENTAGE,
+                'marks_obtained': status_info['marks_obtained'],
+                'total_marks': status_info['total_marks'],
+                'percentage': status_info['percentage'],
+                'is_passed': status_info['is_passed'],
                 'time_taken': _format_time_taken(a.started_at, a.submitted_at),
                 'status': a.status,
+                'result_status': status_info,
             })
 
         # 6. Performance trend (last 6-8 scores chronologically)
@@ -215,16 +220,15 @@ class StudentDashboardView(APIView):
             for a in latest_for_trend
         ]
 
-        # 7. Subject strengths (aggregation)
-        grouped_topics = (
-            completed_attempts_qs.values('exam__topics')
+        # 7. Subject strengths (aggregation by exam__subject)
+        grouped_subjects = (
+            completed_attempts_qs.values('exam__subject')
             .annotate(avg_score=Avg(pct_expr), count=Count('id'))
             .order_by('-avg_score')
         )
         subject_list = []
-        for item in grouped_topics:
-            raw = item.get('exam__topics')
-            s_name = ', '.join(str(t) for t in raw) if isinstance(raw, list) and raw else 'General'
+        for item in grouped_subjects:
+            s_name = item.get('exam__subject') or 'General'
             subject_list.append({
                 'subject': s_name,
                 'average_score': round(item['avg_score'], 1) if item.get('avg_score') is not None else 0.0,

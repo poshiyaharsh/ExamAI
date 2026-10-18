@@ -128,12 +128,17 @@ class FacultyDashboardView(APIView):
         }
 
         # 3. Ongoing Exams (currently live)
-        ongoing_qs = faculty_exams.filter(
+        ongoing_base_qs = faculty_exams.filter(
             status=Exam.Status.PUBLISHED
         ).filter(
             Q(starts_at__isnull=True) | Q(starts_at__lte=now),
             Q(ends_at__isnull=True) | Q(ends_at__gte=now),
-        ).order_by('ends_at', '-created_at')[:5]
+        )
+        total_live_count = ongoing_base_qs.count()
+        ongoing_qs = ongoing_base_qs.order_by(
+            F('ends_at').asc(nulls_last=True),
+            '-created_at'
+        )[:6]
 
         from api.exams.eligibility import compute_live_exam_metrics
 
@@ -142,14 +147,9 @@ class FacultyDashboardView(APIView):
             for e in ongoing_qs:
                 m = compute_live_exam_metrics(e, now=now)
                 m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
-                viol_stats = StudentAttempt.objects.filter(exam=e).aggregate(
-                    total_violations=Sum('violation_count'),
-                    flagged_students=Count('id', filter=Q(violation_count__gt=0)),
-                )
-                m['total_violations'] = viol_stats.get('total_violations') or 0
-                m['flagged_students'] = viol_stats.get('flagged_students') or 0
                 m['question_count'] = e.questions.filter(is_deleted=False).count()
                 m['topics'] = e.topics[:2] if isinstance(e.topics, list) else []
+                m['all_topics'] = e.topics if isinstance(e.topics, list) else []
                 ongoing_exams_list.append(m)
         except Exception as ex:
             logger.warning("Error computing ongoing live exams: %s", ex, exc_info=True)
@@ -393,6 +393,8 @@ class FacultyDashboardView(APIView):
                 'profile': profile_data,
                 'stats': stats_data,
                 'ongoing_exams': ongoing_exams_list,
+                'total_live_count': total_live_count,
+                'server_now': now.isoformat(),
                 'upcoming_exams': upcoming_exams_list,
                 'recent_exams': recent_exams_list,
                 'exam_performance': exam_perf_data,

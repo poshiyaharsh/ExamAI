@@ -266,13 +266,14 @@ class StudentAttemptSerializer(serializers.ModelSerializer):
     answers = StudentAnswerSerializer(many=True, read_only=True)
     exam_title = serializers.CharField(source='exam.title', read_only=True)
     exam_total_marks = serializers.SerializerMethodField()
+    result_status = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentAttempt
         fields = (
             'id', 'exam', 'exam_title', 'exam_total_marks', 'attempt_number',
             'started_at', 'submitted_at', 'expires_at', 'status', 'submit_reason',
-            'violation_count', 'max_score', 'total_score', 'answers',
+            'violation_count', 'max_score', 'total_score', 'answers', 'result_status',
         )
 
     def get_exam_total_marks(self, obj):
@@ -280,3 +281,7 @@ class StudentAttemptSerializer(serializers.ModelSerializer):
             return float(obj.max_score or obj.exam.total_marks or 0.0)
         except (ValueError, TypeError):
             return 0.0
+
+    def get_result_status(self, obj):
+        from .utils.results import compute_attempt_result_status
+        return compute_attempt_result_status(obj)

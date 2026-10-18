@@ -23,15 +23,69 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import { DashboardLayout } from "../components/DashboardLayout";
+import { AttemptStatusBadge } from "../components/AttemptStatusBadge";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipProvider as UITooltipProvider,
+  TooltipTrigger,
+} from "../components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "../components/ui/popover";
 import {
   studentDashboardApi,
   type StudentDashboardData,
+  type StudentDashboardRecentResult,
 } from "../../services/api";
+
+function formatShortDate(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return dateStr;
+  }
+}
+
+function formatFullDateTime(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleString("en-US", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+function getOutcomeBarColor(item: StudentDashboardRecentResult): string {
+  const code = (item.result_status?.status_code || (item.is_passed ? "pass" : "fail")).toLowerCase();
+  switch (code) {
+    case "pass":
+      return "bg-emerald-500";
+    case "fail":
+      return "bg-rose-500";
+    case "pending_grading":
+      return "bg-amber-500";
+    case "auto_submitted":
+      return item.is_passed ? "bg-amber-500" : "bg-rose-500";
+    default:
+      return "bg-primary";
+  }
+}
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/student" },
@@ -351,7 +405,7 @@ export function StudentDashboard() {
                           <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
                           <XAxis dataKey="date" stroke="#6B7280" fontSize={11} tickLine={false} />
                           <YAxis domain={[0, 100]} stroke="#6B7280" fontSize={11} tickLine={false} unit="%" />
-                          <Tooltip
+                          <RechartsTooltip
                             formatter={(val: any) => [`${val}%`, "Percentage"]}
                             labelFormatter={(l) => `Date: ${l}`}
                             contentStyle={{ backgroundColor: "#FFFFFF", borderRadius: "8px", borderColor: "#E5E7EB", fontSize: "12px" }}
@@ -413,70 +467,180 @@ export function StudentDashboard() {
             )}
 
             {/* Recent Results Table / Cards */}
-            <div className="bg-white rounded-xl shadow-2xs border border-border overflow-hidden">
-              <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between">
+            <div id="recent-exam-results" className="bg-white rounded-xl shadow-2xs border border-border overflow-hidden min-w-0 max-w-full">
+              <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between gap-3">
                 <div>
                   <h3 className="font-semibold text-foreground text-sm sm:text-base">Recent Exam Results</h3>
                   <p className="text-xs text-muted-foreground">Your most recently completed examinations</p>
                 </div>
                 {recentResults.length > 0 && (
-                  <Link to="/student/performance" className="text-xs font-medium text-primary hover:underline flex items-center gap-1">
+                  <Link to="/student/performance" className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 shrink-0">
                     View all in Performance <ArrowRight className="w-3 h-3" />
                   </Link>
                 )}
               </div>
 
               {recentResults.length === 0 ? (
-                <div className="p-8 text-center">
-                  <FileText className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
-                  <p className="text-xs sm:text-sm text-muted-foreground">
-                    You haven't taken any exams yet. Start an available exam above to see your scores here.
+                <div className="p-10 text-center space-y-2">
+                  <FileText className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+                  <h4 className="text-sm font-semibold text-foreground">You haven't taken any exams yet</h4>
+                  <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                    Start an available exam above to see your scores and detailed performance analytics here.
                   </p>
                 </div>
               ) : (
                 <>
-                  {/* Desktop Table */}
-                  <div className="hidden sm:block overflow-x-auto">
-                    <table className="w-full text-left text-xs sm:text-sm">
-                      <thead className="border-b border-border bg-muted/30 text-muted-foreground font-medium">
+                  {/* Desktop Table (Fixed layout, nowrap values, rich status badges, zero horizontal scroll) */}
+                  <div className="hidden sm:block overflow-x-hidden">
+                    <table className="table-fixed w-full text-left text-xs sm:text-sm" role="table" aria-label="Recent Exam Results">
+                      <thead className="sticky top-0 z-10 border-b border-border bg-muted/40 backdrop-blur-xs text-muted-foreground font-medium text-xs">
                         <tr>
-                          <th className="py-3 px-4">Exam</th>
-                          <th className="py-3 px-4">Subject</th>
-                          <th className="py-3 px-4">Marks</th>
-                          <th className="py-3 px-4">Percentage</th>
-                          <th className="py-3 px-4">Date</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4 text-right">Action</th>
+                          <th scope="col" className="py-3 px-3 w-[29%] text-left font-semibold">Exam</th>
+                          <th scope="col" className="py-3 px-2 w-[11%] text-right font-semibold">Marks</th>
+                          <th scope="col" className="py-3 px-3 w-[14%] text-left font-semibold">Percentage</th>
+                          <th scope="col" className="py-3 px-2 w-[11%] text-left font-semibold">Date</th>
+                          <th scope="col" className="py-3 px-3 w-[21%] text-left font-semibold">Status</th>
+                          <th scope="col" className="py-3 px-3 w-[14%] text-right font-semibold">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {recentResults.map((item) => (
-                          <tr key={item.attempt_id} className="hover:bg-muted/20 transition-colors">
-                            <td className="py-3.5 px-4 font-semibold text-foreground">{item.exam_title}</td>
-                            <td className="py-3.5 px-4 text-muted-foreground">{item.subject}</td>
-                            <td className="py-3.5 px-4 font-medium text-foreground">{item.marks_obtained} / {item.total_marks}</td>
-                            <td className="py-3.5 px-4 font-bold text-foreground">{item.percentage}%</td>
-                            <td className="py-3.5 px-4 text-muted-foreground whitespace-nowrap">
-                              {new Date(item.date).toLocaleDateString()}
+                        {recentResults.slice(0, 5).map((item) => (
+                          <tr key={item.attempt_id} className="hover:bg-muted/20 transition-colors h-14">
+                            {/* Exam Cell */}
+                            <td className="py-3 px-4 align-middle">
+                              <div className="min-w-0 pr-2">
+                                <UITooltipProvider delayDuration={200}>
+                                  <UITooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="block font-semibold text-foreground truncate cursor-default text-xs sm:text-sm">
+                                        {item.exam_title}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-sm">
+                                      {item.exam_title}
+                                    </TooltipContent>
+                                  </UITooltip>
+                                </UITooltipProvider>
+
+                                <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground truncate">
+                                  <span className="truncate font-medium text-muted-foreground/90">{item.subject}</span>
+                                  {item.topics && item.topics.length > 0 && (
+                                    <>
+                                      <span className="text-muted-foreground/40 shrink-0">•</span>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {item.topics.slice(0, 2).map((topic, idx) => (
+                                          <span
+                                            key={idx}
+                                            className="px-1.5 py-0.2 bg-muted/60 text-muted-foreground text-[10px] rounded border border-border/50 truncate max-w-[85px]"
+                                            title={topic}
+                                          >
+                                            {topic}
+                                          </span>
+                                        ))}
+                                        {item.topics.length > 2 && (
+                                          <Popover>
+                                            <PopoverTrigger asChild>
+                                              <button
+                                                type="button"
+                                                className="px-1 py-0.2 text-[10px] font-semibold text-primary hover:underline bg-primary/5 rounded border border-primary/20 cursor-pointer"
+                                                title="View all topics"
+                                                aria-label={`View ${item.topics.length - 2} more topics`}
+                                              >
+                                                +{item.topics.length - 2} more
+                                              </button>
+                                            </PopoverTrigger>
+                                            <PopoverContent className="w-64 p-3 text-xs" align="start">
+                                              <p className="font-semibold text-foreground mb-1.5 pb-1 border-b border-border">
+                                                All Topics ({item.topics.length})
+                                              </p>
+                                              <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                                                {item.topics.map((t, i) => (
+                                                  <div key={i} className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+                                                    <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
+                                                    <span className="truncate">{t}</span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </PopoverContent>
+                                          </Popover>
+                                        )}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             </td>
-                            <td className="py-3.5 px-4">
-                              {item.is_passed ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <CheckCircle className="w-3 h-3" /> PASS
-                                </span>
+
+                            {/* Marks Cell */}
+                            <td className="py-3 px-2 text-right whitespace-nowrap align-middle">
+                              <span className="font-mono tabular-nums text-xs sm:text-sm font-semibold text-foreground">
+                                {item.marks_obtained !== null && item.marks_obtained !== undefined
+                                  ? `${item.marks_obtained} / ${item.total_marks}`
+                                  : `- / ${item.total_marks}`}
+                              </span>
+                            </td>
+
+                            {/* Percentage Cell */}
+                            <td className="py-3 px-3 align-middle">
+                              <div className="flex flex-col pr-2">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-bold text-xs sm:text-sm text-foreground tabular-nums">
+                                    {item.percentage !== null && item.percentage !== undefined
+                                      ? `${item.percentage}%`
+                                      : "-"}
+                                  </span>
+                                  {item.result_status?.is_provisional && (
+                                    <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 px-1 py-0.2 rounded">
+                                      Provisional
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mt-1">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-300 ${getOutcomeBarColor(item)}`}
+                                    style={{ width: `${Math.min(100, Math.max(0, item.percentage || 0))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Date Cell */}
+                            <td className="py-3 px-2 whitespace-nowrap text-muted-foreground text-xs align-middle">
+                              <UITooltipProvider delayDuration={200}>
+                                <UITooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="cursor-default font-medium">{formatShortDate(item.date)}</span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-xs">
+                                    {formatFullDateTime(item.date)}
+                                  </TooltipContent>
+                                </UITooltip>
+                              </UITooltipProvider>
+                            </td>
+
+                            {/* Status Cell */}
+                            <td className="py-3 px-3 whitespace-nowrap align-middle">
+                              <AttemptStatusBadge
+                                resultStatus={item.result_status}
+                                status={item.status}
+                                isPassed={item.is_passed}
+                                size="sm"
+                              />
+                            </td>
+
+                            {/* Action Cell */}
+                            <td className="py-3 px-3 text-right whitespace-nowrap align-middle">
+                              {item.result_status?.status_code === "not_attempted" ? (
+                                <span className="text-xs text-muted-foreground/60 italic">No result</span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                                  <XCircle className="w-3 h-3" /> FAIL
-                                </span>
+                                <Link
+                                  to={`/student/results/${item.attempt_id}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-primary hover:bg-primary/10 border border-primary/20 transition-colors whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                  aria-label={`View result for ${item.exam_title}`}
+                                >
+                                  View Result
+                                </Link>
                               )}
-                            </td>
-                            <td className="py-3.5 px-4 text-right">
-                              <Link
-                                to={`/student/results/${item.attempt_id}`}
-                                className="text-primary hover:underline font-medium text-xs"
-                              >
-                                View Result
-                              </Link>
                             </td>
                           </tr>
                         ))}
@@ -484,34 +648,66 @@ export function StudentDashboard() {
                     </table>
                   </div>
 
-                  {/* Mobile Stacked Cards */}
-                  <div className="sm:hidden divide-y divide-border p-3 space-y-3">
-                    {recentResults.map((item) => (
-                      <div key={item.attempt_id} className="pt-3 first:pt-0 space-y-2">
+                  {/* Mobile Stacked Cards (Below tablet breakpoint) */}
+                  <div className="sm:hidden divide-y divide-border p-3.5 space-y-3.5">
+                    {recentResults.slice(0, 5).map((item) => (
+                      <div key={item.attempt_id} className="pt-3.5 first:pt-0 space-y-2.5">
                         <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h4 className="font-semibold text-foreground text-sm">{item.exam_title}</h4>
-                            <p className="text-xs text-muted-foreground">
-                              {item.subject} · {new Date(item.date).toLocaleDateString()}
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-semibold text-foreground text-sm truncate" title={item.exam_title}>
+                              {item.exam_title}
+                            </h4>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">
+                              {item.subject}
                             </p>
                           </div>
-                          {item.is_passed ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              PASS
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                              FAIL
-                            </span>
-                          )}
+                          <AttemptStatusBadge
+                            resultStatus={item.result_status}
+                            status={item.status}
+                            isPassed={item.is_passed}
+                            size="sm"
+                          />
                         </div>
-                        <div className="flex items-center justify-between text-xs text-muted-foreground bg-muted/40 p-2 rounded-lg">
-                          <span>Marks: <strong className="text-foreground">{item.marks_obtained}/{item.total_marks}</strong></span>
-                          <span>Score: <strong className="text-foreground">{item.percentage}%</strong></span>
-                          <Link to={`/student/results/${item.attempt_id}`} className="text-primary font-semibold">
-                            Details →
+
+                        <div className="bg-muted/30 p-2.5 rounded-lg space-y-2 border border-border/50 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Marks:</span>
+                            <span className="font-mono font-semibold text-foreground">
+                              {item.marks_obtained !== null && item.marks_obtained !== undefined
+                                ? `${item.marks_obtained} / ${item.total_marks}`
+                                : `- / ${item.total_marks}`}
+                            </span>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground">Score:</span>
+                              <span className="font-bold text-foreground">
+                                {item.percentage !== null && item.percentage !== undefined ? `${item.percentage}%` : "-"}
+                              </span>
+                            </div>
+                            <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${getOutcomeBarColor(item)}`}
+                                style={{ width: `${Math.min(100, Math.max(0, item.percentage || 0))}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-muted-foreground text-[11px] pt-1 border-t border-border/40">
+                            <span>Date: {formatShortDate(item.date)}</span>
+                            <span>Duration: {item.time_taken}</span>
+                          </div>
+                        </div>
+
+                        {item.result_status?.status_code === "not_attempted" ? (
+                          <span className="block text-center text-xs text-muted-foreground/60 italic py-1.5">No result</span>
+                        ) : (
+                          <Link
+                            to={`/student/results/${item.attempt_id}`}
+                            className="w-full py-2 px-3 rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-white font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 text-center focus:outline-none focus:ring-2 focus:ring-primary/40"
+                          >
+                            View Result
                           </Link>
-                        </div>
+                        )}
                       </div>
                     ))}
                   </div>
