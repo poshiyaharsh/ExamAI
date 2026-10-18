@@ -307,12 +307,15 @@ def evaluate_subjective_chain(answer_obj: Any, force: bool = False) -> Dict[str,
             answer_obj.score_awarded = score
             answer_obj.is_correct = (score >= (0.4 * float(question.marks or 10)))
             answer_obj.ai_feedback = feedback
+            answer_obj.ai_suggested_score = score
+            answer_obj.ai_suggested_feedback = feedback
             answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_AI
             answer_obj.evaluation_provider = "ollama"
             answer_obj.evaluation_model = model_used
             answer_obj.technical_error = ""
             answer_obj.save(update_fields=[
                 'score_awarded', 'is_correct', 'ai_feedback',
+                'ai_suggested_score', 'ai_suggested_feedback',
                 'evaluation_status', 'evaluation_provider', 'evaluation_model', 'technical_error'
             ])
             return {

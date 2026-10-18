@@ -46,3 +46,62 @@ def extract_syllabus_text(django_file):
         raise ValueError('The uploaded DOCX did not contain extractable text.')
 
     return text
+
+
+def detect_syllabus_topics(text: str) -> list[str]:
+    """
+    Extracts distinct units/modules/chapters/topics from syllabus text.
+    Returns a deduplicated list of clean topic strings.
+    """
+    import re
+    if not text:
+        return []
+
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    detected = []
+
+    # Regex patterns for syllabus headings: Unit 1, Module A, Chapter 2, etc.
+    heading_pattern = re.compile(
+        r'^(?:unit|module|chapter|topic|section|part)\s*[-:\dIVXLCDM]+[\s\.\:\-–—]+(.+)',
+        re.IGNORECASE
+    )
+    numbered_pattern = re.compile(r'^\d+[\.\:\)]\s+([A-Z][A-Za-z0-9\s,\-–—/&]{4,80})$')
+
+    for line in lines:
+        # Match explicit Unit/Module/Chapter prefixes
+        m = heading_pattern.match(line)
+        if m:
+            clean = m.group(1).strip(' -:–—.')
+            if len(clean) >= 4 and clean.lower() not in [t.lower() for t in detected]:
+                # Keep prefix if informative, e.g. "Unit 1: Data Structures"
+                detected.append(line[:100].strip())
+            continue
+
+        # Match numbered syllabus items e.g. "1. Computer Networks and Architecture"
+        nm = numbered_pattern.match(line)
+        if nm:
+            clean = nm.group(1).strip(' -:–—.')
+            if len(clean) >= 4 and clean.lower() not in [t.lower() for t in detected]:
+                detected.append(clean[:100].strip())
+
+    # If heuristic found fewer than 2 units/topics, search for short uppercase or title-case lines
+    if len(detected) < 2:
+        for line in lines:
+            if 6 <= len(line) <= 60 and not line.endswith(('.', '?', '!', ';')):
+                words = line.split()
+                if 2 <= len(words) <= 8 and (line.isupper() or line.istitle()):
+                    if line.lower() not in [t.lower() for t in detected] and not any(kw in line.lower() for kw in ['syllabus', 'course', 'credit', 'exam', 'hours', 'department']):
+                        detected.append(line)
+                        if len(detected) >= 8:
+                            break
+
+    # If still none found, create 3-5 semantic sections by chunking
+    if not detected:
+        paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
+        for p in paragraphs[:5]:
+            first_line = p.split('\n')[0].strip(' -:–—.')
+            if 5 <= len(first_line) <= 80:
+                detected.append(first_line)
+
+    return detected[:10]
+

@@ -21,8 +21,9 @@ from .faculty_evaluation import (
     FacultyManualGradeAnswerView,
     FacultyReevaluateAnswerView,
     FacultyReevaluateAttemptView,
+    FacultySuggestGradeView,
 )
-from .generate_paper import GeneratePaperView
+from .generate_paper import GeneratePaperView, ParseSyllabusView
 from .notifications_views import (
     NotificationListView,
     NotificationMarkAllReadView,
@@ -71,6 +72,7 @@ urlpatterns = [
     path('admin/exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='api-admin-exam-live-roster'),
     path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
+    path('faculty/syllabus/parse/', ParseSyllabusView.as_view(), name='faculty-syllabus-parse'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
     path('papers/generations/active/', PaperGenerationJobActiveView.as_view(), name='paper-generation-active'),
     path('papers/generations/<int:job_id>/cancel/', PaperGenerationJobCancelView.as_view(), name='paper-generation-cancel'),
@@ -92,6 +94,7 @@ urlpatterns = [
     path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
     path('faculty/attempts/<int:attempt_id>/', FacultyAttemptDetailView.as_view(), name='faculty-attempt-detail'),
     path('faculty/answers/<int:answer_id>/re-evaluate/', FacultyReevaluateAnswerView.as_view(), name='faculty-answer-reevaluate'),
+    path('faculty/answers/<int:answer_id>/suggest-grade/', FacultySuggestGradeView.as_view(), name='faculty-answer-suggest-grade'),
     path('faculty/answers/<int:answer_id>/manual-grade/', FacultyManualGradeAnswerView.as_view(), name='faculty-answer-manual-grade'),
     path('faculty/dashboard', FacultyDashboardView.as_view(), name='faculty-dashboard-no-slash'),
     path('faculty/dashboard/', FacultyDashboardView.as_view(), name='faculty-dashboard'),

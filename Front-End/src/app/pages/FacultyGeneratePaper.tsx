@@ -12,11 +12,17 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  CheckSquare,
   Clock,
   Download,
+  FileCheck,
   FileText,
+  FileUp,
+  HelpCircle,
   History,
+  Layers,
   LayoutDashboard,
+  ListChecks,
   Lock,
   Plus,
   RefreshCw,
@@ -24,7 +30,9 @@ import {
   Settings,
   Shield,
   ShieldAlert,
+  Sliders,
   Sparkles,
+  Square,
   Trash2,
   Upload,
   X,
@@ -58,14 +66,63 @@ const aiModelLabels: Record<AiModel, string> = {
   "phi3-mini": "Phi-3 Mini (Local)",
 };
 
-const questionTypeLabels: Record<string, PaperQuestionType> = {
-  mcq: "MCQ",
-  subjective: "Subjective",
-  trueFalse: "True/False",
-  fillBlanks: "Fill in the Blanks",
+export interface BlueprintTypeConfig {
+  enabled: boolean;
+  count: number;
+  marks: number;
+}
+
+export type BlueprintState = {
+  mcq: BlueprintTypeConfig;
+  true_false: BlueprintTypeConfig;
+  fill_blank: BlueprintTypeConfig;
+  short_answer: BlueprintTypeConfig;
+  long_answer: BlueprintTypeConfig;
 };
-const difficultyKeys = ["Easy", "Medium", "Hard"] as const;
-type DifficultyKey = (typeof difficultyKeys)[number];
+
+const DEFAULT_BLUEPRINT: BlueprintState = {
+  mcq: { enabled: true, count: 5, marks: 2 },
+  true_false: { enabled: true, count: 5, marks: 2 },
+  fill_blank: { enabled: true, count: 5, marks: 2 },
+  short_answer: { enabled: true, count: 4, marks: 5 },
+  long_answer: { enabled: true, count: 5, marks: 10 },
+};
+
+const questionTypeDetails: Record<
+  keyof BlueprintState,
+  { label: string; short: string; description: string; defaultMarks: number }
+> = {
+  mcq: {
+    label: "Multiple Choice (MCQ)",
+    short: "MCQ",
+    description: "Single correct option among 4 choices (A, B, C, D).",
+    defaultMarks: 2,
+  },
+  true_false: {
+    label: "True / False",
+    short: "T/F",
+    description: "Binary statements testing factual and conceptual precision.",
+    defaultMarks: 2,
+  },
+  fill_blank: {
+    label: "Fill in the Blanks",
+    short: "Fill Blanks",
+    description: "Sentence prompts with ____ blanks; supports accepted synonyms.",
+    defaultMarks: 2,
+  },
+  short_answer: {
+    label: "Short Answer",
+    short: "Short",
+    description: "Concise definitions (2-3 sentences) evaluated with rubrics.",
+    defaultMarks: 5,
+  },
+  long_answer: {
+    label: "Long Answer / Essay",
+    short: "Long / Essay",
+    description: "Comprehensive multi-step explanations or problem solving.",
+    defaultMarks: 10,
+  },
+};
 
 function extractApiErrorMessage(error: unknown, fallback: string) {
   if (!axios.isAxiosError(error)) return fallback;
@@ -99,31 +156,66 @@ export function FacultyGeneratePaper() {
   const [endsAt, setEndsAt] = useState("");
   const [topics, setTopics] = useState<string[]>([""]);
 
-  // Step 2: Questions & Content
+  // Step 2: Question Blueprint Studio & Syllabus
   const [examId, setExamId] = useState<number | null>(null);
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
-  const [difficultyMix, setDifficultyMix] = useState({ Easy: 30, Medium: 50, Hard: 20 });
-  const [questionTypes, setQuestionTypes] = useState({
-    mcq: true,
-    subjective: true,
-    trueFalse: false,
-    fillBlanks: false,
+  const [blueprint, setBlueprint] = useState<BlueprintState>(() => {
+    try {
+      const saved = localStorage.getItem("examai_faculty_blueprint");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.blueprint) return parsed.blueprint;
+      }
+    } catch {}
+    return DEFAULT_BLUEPRINT;
+  });
+  const [difficultyMode, setDifficultyMode] = useState<"mixed" | "easy" | "medium" | "hard">(() => {
+    try {
+      const saved = localStorage.getItem("examai_faculty_blueprint");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.difficultyMode) return parsed.difficultyMode;
+      }
+    } catch {}
+    return "mixed";
+  });
+  const [difficultyMix, setDifficultyMix] = useState<{ easy: number; medium: number; hard: number }>(() => {
+    try {
+      const saved = localStorage.getItem("examai_faculty_blueprint");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.difficultyMix) return parsed.difficultyMix;
+      }
+    } catch {}
+    return { easy: 30, medium: 50, hard: 20 };
   });
   const [aiModel, setAiModel] = useState<AiModel>("qwen2.5-3b");
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
+  const [parsedSyllabus, setParsedSyllabus] = useState<{
+    filename: string;
+    char_count: number;
+    topics: string[];
+    detected_topics_count: number;
+    preview: string;
+  } | null>(null);
+  const [isParsingSyllabus, setIsParsingSyllabus] = useState(false);
   const [avoidRepeats, setAvoidRepeats] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
 
   // Manual Question Modal
   const [showManualModal, setShowManualModal] = useState(false);
-  const [manualQType, setManualQType] = useState<"mcq" | "truefalse" | "fillblank" | "subjective">("mcq");
+  const [manualQType, setManualQType] = useState<keyof BlueprintState>("mcq");
   const [manualQText, setManualQText] = useState("");
   const [manualQMarks, setManualQMarks] = useState("5");
   const [manualQDiff, setManualQDiff] = useState<"easy" | "medium" | "hard">("medium");
   const [manualQTopic, setManualQTopic] = useState("");
   const [manualQOptions, setManualQOptions] = useState<string[]>(["", "", "", ""]);
   const [manualQAnswer, setManualQAnswer] = useState("");
+  const [manualQModelAnswer, setManualQModelAnswer] = useState("");
+  const [manualQRubric, setManualQRubric] = useState("");
+  const [manualQWordLimit, setManualQWordLimit] = useState("");
+  const [manualQAcceptedAnswers, setManualQAcceptedAnswers] = useState("");
 
   // Step 3: Security & Proctoring Settings
   const [shuffleQuestions, setShuffleQuestions] = useState(true);
@@ -172,20 +264,158 @@ export function FacultyGeneratePaper() {
       });
   }, []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "examai_faculty_blueprint",
+        JSON.stringify({ blueprint, difficultyMix, difficultyMode })
+      );
+    } catch {}
+  }, [blueprint, difficultyMix, difficultyMode]);
+
   const cleanTopics = useMemo(() => topics.map((t) => t.trim()).filter(Boolean), [topics]);
   const currentTotalMarks = useMemo(
     () => questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0),
     [questions]
   );
 
-  const selectedQuestionTypeValues = useMemo(
-    () =>
-      Object.entries(questionTypes)
-        .filter(([, selected]) => selected)
-        .map(([key]) => ({ mcq: "mcq", subjective: "subjective", trueFalse: "truefalse", fillBlanks: "fillblank" }[key]))
-        .filter((v): v is string => Boolean(v)),
-    [questionTypes]
-  );
+  const blueprintSummary = useMemo(() => {
+    let totalQuestions = 0;
+    let blueprintMarks = 0;
+    const typeEntries = Object.entries(blueprint) as [keyof BlueprintState, BlueprintTypeConfig][];
+    for (const [, cfg] of typeEntries) {
+      if (cfg.enabled && cfg.count > 0) {
+        totalQuestions += cfg.count;
+        blueprintMarks += cfg.count * cfg.marks;
+      }
+    }
+    return { totalQuestions, blueprintMarks };
+  }, [blueprint]);
+
+  const projectedDifficultyCounts = useMemo(() => {
+    const totalQ = blueprintSummary.totalQuestions;
+    if (totalQ === 0) return { easy: 0, medium: 0, hard: 0 };
+    if (difficultyMode === "easy") return { easy: totalQ, medium: 0, hard: 0 };
+    if (difficultyMode === "medium") return { easy: 0, medium: totalQ, hard: 0 };
+    if (difficultyMode === "hard") return { easy: 0, medium: 0, hard: totalQ };
+    const e = Math.round((totalQ * difficultyMix.easy) / 100);
+    const m = Math.round((totalQ * difficultyMix.medium) / 100);
+    const h = Math.max(0, totalQ - e - m);
+    return { easy: e, medium: m, hard: h };
+  }, [blueprintSummary.totalQuestions, difficultyMode, difficultyMix]);
+
+  const handleDifficultySliderChange = (changed: "easy" | "medium" | "hard", val: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(val)));
+    const remaining = 100 - clamped;
+    const others = (["easy", "medium", "hard"] as const).filter((k) => k !== changed);
+    const sumOthers = difficultyMix[others[0]] + difficultyMix[others[1]];
+    if (sumOthers === 0) {
+      const half = Math.floor(remaining / 2);
+      setDifficultyMix({ ...difficultyMix, [changed]: clamped, [others[0]]: half, [others[1]]: remaining - half });
+    } else {
+      const share0 = Math.round((difficultyMix[others[0]] / sumOthers) * remaining);
+      const share1 = remaining - share0;
+      setDifficultyMix({ ...difficultyMix, [changed]: clamped, [others[0]]: share0, [others[1]]: share1 });
+    }
+  };
+
+  const applyPreset = (preset: "objective" | "mixed" | "subjective") => {
+    if (preset === "objective") {
+      setBlueprint({
+        mcq: { enabled: true, count: 20, marks: 2 },
+        true_false: { enabled: true, count: 15, marks: 2 },
+        fill_blank: { enabled: true, count: 15, marks: 2 },
+        short_answer: { enabled: false, count: 0, marks: 5 },
+        long_answer: { enabled: false, count: 0, marks: 10 },
+      });
+      toast.success("Applied Objective Only blueprint preset.");
+    } else if (preset === "mixed") {
+      setBlueprint({
+        mcq: { enabled: true, count: 5, marks: 2 },
+        true_false: { enabled: true, count: 5, marks: 2 },
+        fill_blank: { enabled: true, count: 5, marks: 2 },
+        short_answer: { enabled: true, count: 4, marks: 5 },
+        long_answer: { enabled: true, count: 5, marks: 10 },
+      });
+      toast.success("Applied Balanced Mix blueprint preset.");
+    } else if (preset === "subjective") {
+      setBlueprint({
+        mcq: { enabled: false, count: 0, marks: 2 },
+        true_false: { enabled: false, count: 0, marks: 2 },
+        fill_blank: { enabled: false, count: 0, marks: 2 },
+        short_answer: { enabled: true, count: 8, marks: 5 },
+        long_answer: { enabled: true, count: 6, marks: 10 },
+      });
+      toast.success("Applied Subjective Focus blueprint preset.");
+    }
+  };
+
+  const handleAutoAlignMarks = () => {
+    const target = Number(totalMarks) || 100;
+    const current = blueprintSummary.blueprintMarks;
+    if (current === 0) {
+      toast.error("Please enable at least one question type before auto-aligning.");
+      return;
+    }
+    if (current === target) {
+      toast.info("Blueprint marks already match the target marks exactly!");
+      return;
+    }
+
+    const enabledTypes = (Object.keys(blueprint) as (keyof BlueprintState)[]).filter(
+      (k) => blueprint[k].enabled && blueprint[k].count > 0
+    );
+    if (!enabledTypes.length) return;
+
+    const scaleFactor = target / current;
+    const nextBp = { ...blueprint };
+    let accumulated = 0;
+    enabledTypes.forEach((k) => {
+      const newCount = Math.max(1, Math.round(nextBp[k].count * scaleFactor));
+      nextBp[k] = { ...nextBp[k], count: newCount };
+      accumulated += newCount * nextBp[k].marks;
+    });
+
+    const diff = target - accumulated;
+    if (diff !== 0) {
+      const primaryKey = enabledTypes[0];
+      const marksPerQ = nextBp[primaryKey].marks || 1;
+      const countAdjustment = Math.round(diff / marksPerQ);
+      nextBp[primaryKey] = {
+        ...nextBp[primaryKey],
+        count: Math.max(1, nextBp[primaryKey].count + countAdjustment),
+      };
+    }
+
+    setBlueprint(nextBp);
+    toast.success(`Blueprint auto-aligned to target marks (${target} marks)!`);
+  };
+
+  const handleSyllabusFileSelected = async (file: File) => {
+    setSyllabusFile(file);
+    setIsParsingSyllabus(true);
+    try {
+      const res = await facultyPaperApi.parseSyllabus(file);
+      setParsedSyllabus(res);
+      if (res.topics && res.topics.length > 0) {
+        const existing = new Set(cleanTopics.map((t) => t.toLowerCase()));
+        const toAdd = res.topics.filter((t) => !existing.has(t.toLowerCase()));
+        if (toAdd.length > 0) {
+          setTopics((prev) => {
+            const base = prev.filter((t) => t.trim().length > 0);
+            return [...base, ...toAdd];
+          });
+        }
+      }
+      toast.success(
+        `Syllabus analyzed: ${res.char_count.toLocaleString()} characters extracted, ${res.detected_topics_count} units detected!`
+      );
+    } catch (err: any) {
+      toast.error(extractApiErrorMessage(err, "Failed to extract syllabus content."));
+    } finally {
+      setIsParsingSyllabus(false);
+    }
+  };
 
   const handleAddTopic = () => setTopics([...topics, ""]);
   const handleRemoveTopic = (idx: number) => setTopics(topics.filter((_, i) => i !== idx));
@@ -223,6 +453,33 @@ export function FacultyGeneratePaper() {
       toast.error("Please enter an exam title in Step 1.");
       return;
     }
+
+    const activeBlueprint: Record<string, { count: number; marks: number }> = {};
+    const activeTypes: string[] = [];
+    (Object.keys(blueprint) as (keyof BlueprintState)[]).forEach((typeKey) => {
+      if (blueprint[typeKey].enabled && blueprint[typeKey].count > 0) {
+        activeBlueprint[typeKey] = {
+          count: blueprint[typeKey].count,
+          marks: blueprint[typeKey].marks,
+        };
+        activeTypes.push(typeKey);
+      }
+    });
+
+    if (activeTypes.length === 0) {
+      toast.error("Please enable and configure at least one question type in the blueprint.");
+      return;
+    }
+
+    const diffDistribution =
+      difficultyMode === "mixed"
+        ? difficultyMix
+        : {
+            easy: difficultyMode === "easy" ? 100 : 0,
+            medium: difficultyMode === "medium" ? 100 : 0,
+            hard: difficultyMode === "hard" ? 100 : 0,
+          };
+
     setIsGenerating(true);
     setGenerationProgress(25);
 
@@ -232,13 +489,10 @@ export function FacultyGeneratePaper() {
         title: examTitle.trim(),
         durationMinutes: Number(duration),
         totalMarks: Number(totalMarks),
-        topics: cleanTopics.length ? cleanTopics : ["Core Syllabus"],
-        questionTypes: selectedQuestionTypeValues.length ? selectedQuestionTypeValues : ["mcq", "subjective"],
-        difficultyDistribution: {
-          easy: difficultyMix.Easy,
-          medium: difficultyMix.Medium,
-          hard: difficultyMix.Hard,
-        },
+        topics: cleanTopics.length ? cleanTopics : (parsedSyllabus?.topics?.length ? parsedSyllabus.topics : ["Core Syllabus"]),
+        questionTypes: activeTypes,
+        difficultyDistribution: diffDistribution,
+        blueprint: activeBlueprint,
         aiModel,
         syllabus: syllabusFile,
         avoidRepeats,
@@ -251,7 +505,6 @@ export function FacultyGeneratePaper() {
         setActiveJobId(res.job_id);
         setShowProgressModal(true);
       } else if (res.exam_id) {
-        // Fast generation from question bank pool
         const fullExam = await facultyExamApi.getExam(res.exam_id);
         if (fullExam.questions && fullExam.questions.length > 0) {
           setQuestions(fullExam.questions);
@@ -295,7 +548,6 @@ export function FacultyGeneratePaper() {
     const marksNum = Number(manualQMarks) || 1;
 
     let targetExamId = examId;
-    // If exam not yet created on backend, initialize it
     if (!targetExamId) {
       try {
         const initRes = await facultyPaperApi.generateExam({
@@ -315,6 +567,13 @@ export function FacultyGeneratePaper() {
     }
 
     try {
+      let accepted: any = undefined;
+      if (manualQType === "fill_blank") {
+        if (manualQAcceptedAnswers.trim()) {
+          accepted = manualQAcceptedAnswers.split(",").map((s) => s.trim()).filter(Boolean);
+        }
+      }
+
       const createdQ = await facultyExamApi.addQuestion(targetExamId, {
         text: manualQText.trim(),
         question_type: manualQType,
@@ -322,7 +581,11 @@ export function FacultyGeneratePaper() {
         difficulty: manualQDiff,
         topic: manualQTopic.trim() || cleanTopics[0] || "General",
         options: manualQType === "mcq" ? manualQOptions.filter((opt) => opt.trim()) : [],
-        correct_answer: manualQAnswer.trim(),
+        correct_answer: manualQType === "true_false" ? manualQAnswer || "True" : manualQAnswer.trim(),
+        model_answer: manualQModelAnswer.trim() || undefined,
+        rubric: manualQRubric.trim() || undefined,
+        word_limit: manualQWordLimit ? Number(manualQWordLimit) : undefined,
+        accepted_answers: accepted,
       });
 
       setQuestions((prev) => [...prev, createdQ]);
@@ -332,6 +595,10 @@ export function FacultyGeneratePaper() {
       setManualQText("");
       setManualQOptions(["", "", "", ""]);
       setManualQAnswer("");
+      setManualQModelAnswer("");
+      setManualQRubric("");
+      setManualQWordLimit("");
+      setManualQAcceptedAnswers("");
     } catch (err) {
       toast.error(extractApiErrorMessage(err, "Failed to save question."));
     }
@@ -681,12 +948,9 @@ export function FacultyGeneratePaper() {
             {/* Top Bar for Questions */}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Step 2: Questions & Content</h2>
+                <h2 className="text-lg font-bold text-slate-900">Step 2: Question Blueprint & Content Studio</h2>
                 <p className="text-xs text-slate-500">
-                  {questions.length} Questions · Current Marks:{" "}
-                  <span className={`font-bold ${currentTotalMarks === Number(totalMarks) ? "text-emerald-600" : "text-amber-600"}`}>
-                    {currentTotalMarks} / {totalMarks}
-                  </span>
+                  Configure question types, difficulty split, and upload syllabus source of truth
                 </p>
               </div>
 
@@ -702,42 +966,477 @@ export function FacultyGeneratePaper() {
                   type="button"
                   disabled={isGenerating}
                   onClick={handleAiGenerate}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50"
                 >
-                  <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating..." : "Generate with AI"}
+                  <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating Paper..." : "Generate with AI"}
                 </button>
               </div>
             </div>
 
-            {/* Questions List */}
-            {questions.length === 0 ? (
-              <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-white p-12 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 mb-4">
-                  <FileText className="h-7 w-7" />
+            {/* 1. Syllabus Source-of-Truth Box */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-blue-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Syllabus Context (Source of Truth)</h3>
                 </div>
-                <h3 className="text-base font-bold text-slate-900">No Questions Added Yet</h3>
-                <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                  Click "Generate with AI" to automatically synthesize balanced questions from your syllabus, or "Add Manually" to author custom questions.
-                </p>
-                <div className="mt-6 flex justify-center gap-3">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                  <Shield className="h-3 w-3" /> Questions synthesized strictly from syllabus
+                </span>
+              </div>
+
+              {parsedSyllabus ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <FileCheck className="h-4 w-4 text-emerald-600" />
+                        <span className="text-sm font-bold text-slate-800">{parsedSyllabus.filename}</span>
+                        <span className="text-xs text-slate-500">
+                          ({parsedSyllabus.char_count.toLocaleString()} characters)
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        {parsedSyllabus.detected_topics_count} syllabus units/topics automatically identified.
+                      </p>
+                    </div>
+                    <label className="cursor-pointer text-xs font-semibold text-blue-600 hover:underline">
+                      Replace File
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc,.txt"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleSyllabusFileSelected(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  {parsedSyllabus.topics && parsedSyllabus.topics.length > 0 && (
+                    <div className="pt-2 border-t border-emerald-200/60">
+                      <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-2">
+                        Detected Units / Topics (Click to include/exclude)
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {parsedSyllabus.topics.map((t, tIdx) => {
+                          const isIncluded = cleanTopics.some((ct) => ct.toLowerCase() === t.toLowerCase());
+                          return (
+                            <button
+                              key={tIdx}
+                              type="button"
+                              onClick={() => {
+                                if (isIncluded) {
+                                  setTopics((prev) => prev.filter((item) => item.toLowerCase() !== t.toLowerCase()));
+                                } else {
+                                  setTopics((prev) => [...prev.filter(Boolean), t]);
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium border transition-all ${
+                                isIncluded
+                                  ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                                  : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                              }`}
+                            >
+                              {isIncluded ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                              <span>{t}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border-2 border-dashed border-slate-200 p-6 text-center hover:border-blue-400 transition-colors">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 mb-2">
+                    {isParsingSyllabus ? <RefreshCw className="h-5 w-5 animate-spin" /> : <FileUp className="h-5 w-5" />}
+                  </div>
+                  <h4 className="text-sm font-semibold text-slate-800">
+                    {isParsingSyllabus ? "Extracting and analyzing syllabus topics..." : "Upload Syllabus Document"}
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                    Drag and drop your syllabus PDF, DOCX, or text file. The AI model extracts core units and guarantees questions strictly align with the syllabus.
+                  </p>
+                  <label className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs">
+                    <Upload className="h-3.5 w-3.5" /> Browse File
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.doc,.txt"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleSyllabusFileSelected(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Question Types Blueprint Studio */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-blue-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Question Types & Counts Blueprint</h3>
+                </div>
+
+                {/* Presets */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-semibold text-slate-500 mr-1">Presets:</span>
                   <button
                     type="button"
-                    onClick={() => setShowManualModal(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    onClick={() => applyPreset("objective")}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   >
-                    <Plus className="h-4 w-4" /> Add Manually
+                    Objective Only
                   </button>
                   <button
                     type="button"
-                    onClick={handleAiGenerate}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
+                    onClick={() => applyPreset("mixed")}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
                   >
-                    <Sparkles className="h-4 w-4" /> Generate with AI
+                    Balanced Mix
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset("subjective")}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    Subjective Focus
                   </button>
                 </div>
               </div>
-            ) : (
+
+              {/* 5 Canonical Question Types Grid / Rows */}
               <div className="space-y-3">
+                {(Object.keys(blueprint) as (keyof BlueprintState)[]).map((typeKey) => {
+                  const cfg = blueprint[typeKey];
+                  const info = questionTypeDetails[typeKey];
+                  const subtotal = (cfg.enabled ? cfg.count : 0) * cfg.marks;
+
+                  return (
+                    <div
+                      key={typeKey}
+                      className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border p-4 transition-all ${
+                        cfg.enabled
+                          ? "border-slate-300 bg-slate-50/50 shadow-2xs"
+                          : "border-slate-200 bg-white opacity-60"
+                      }`}
+                    >
+                      {/* Left: Toggle & Info */}
+                      <div className="flex items-start gap-3 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={cfg.enabled}
+                          onChange={(e) =>
+                            setBlueprint({
+                              ...blueprint,
+                              [typeKey]: { ...cfg, enabled: e.target.checked },
+                            })
+                          }
+                          className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-slate-900">{info.label}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 uppercase">
+                              {info.short}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">{info.description}</p>
+                        </div>
+                      </div>
+
+                      {/* Right: Steppers & Subtotal */}
+                      <div className="flex items-center gap-4 shrink-0 justify-between sm:justify-end">
+                        {/* Count Stepper */}
+                        <div className="flex flex-col items-center">
+                          <span className="text-[10px] font-semibold text-slate-400 uppercase mb-1">Questions</span>
+                          <div className="flex items-center border border-slate-200 rounded-lg bg-white overflow-hidden shadow-2xs">
+                            <button
+                              type="button"
+                              disabled={!cfg.enabled || cfg.count <= 0}
+                              onClick={() =>
+                                setBlueprint({
+                                  ...blueprint,
+                                  [typeKey]: { ...cfg, count: Math.max(0, cfg.count - 1) },
+                                })
+                              }
+                              className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              min="0"
+                              disabled={!cfg.enabled}
+                              value={cfg.count}
+                              onChange={(e) =>
+                                setBlueprint({
+                                  ...blueprint,
+                                  [typeKey]: { ...cfg, count: Math.max(0, Number(e.target.value) || 0) },
+                                })
+                              }
+                              className="w-12 text-center text-xs font-bold text-slate-800 border-x border-slate-100 py-1 focus:outline-hidden"
+                            />
+                            <button
+                              type="button"
+                              disabled={!cfg.enabled}
+                              onClick={() =>
+                                setBlueprint({
+                                  ...blueprint,
+                                  [typeKey]: { ...cfg, count: cfg.count + 1 },
+                                })
+                              }
+                              className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Marks Per Question Stepper */}
+                        <div className="flex flex-col items-center">
+                          <span className="text-[10px] font-semibold text-slate-400 uppercase mb-1">Marks / Q</span>
+                          <div className="flex items-center border border-slate-200 rounded-lg bg-white overflow-hidden shadow-2xs">
+                            <button
+                              type="button"
+                              disabled={!cfg.enabled || cfg.marks <= 1}
+                              onClick={() =>
+                                setBlueprint({
+                                  ...blueprint,
+                                  [typeKey]: { ...cfg, marks: Math.max(1, cfg.marks - 1) },
+                                })
+                              }
+                              className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
+                            >
+                              -
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              disabled={!cfg.enabled}
+                              value={cfg.marks}
+                              onChange={(e) =>
+                                setBlueprint({
+                                  ...blueprint,
+                                  [typeKey]: { ...cfg, marks: Math.max(1, Number(e.target.value) || 1) },
+                                })
+                              }
+                              className="w-12 text-center text-xs font-bold text-slate-800 border-x border-slate-100 py-1 focus:outline-hidden"
+                            />
+                            <button
+                              type="button"
+                              disabled={!cfg.enabled}
+                              onClick={() =>
+                                setBlueprint({
+                                  ...blueprint,
+                                  [typeKey]: { ...cfg, marks: cfg.marks + 1 },
+                                })
+                              }
+                              className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Subtotal */}
+                        <div className="w-20 text-right">
+                          <span className="text-[10px] font-semibold text-slate-400 uppercase block mb-1">Subtotal</span>
+                          <span className={`text-xs font-bold ${cfg.enabled ? "text-blue-700" : "text-slate-400"}`}>
+                            {subtotal} {subtotal === 1 ? "Mark" : "Marks"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 3. Difficulty Level Controls */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Sliders className="h-4 w-4 text-blue-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Difficulty Level Distribution</h3>
+                </div>
+
+                {/* Difficulty Mode Tabs */}
+                <div className="flex items-center rounded-xl bg-slate-100 p-1">
+                  {(["easy", "medium", "hard", "mixed"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setDifficultyMode(mode)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all ${
+                        difficultyMode === mode
+                          ? "bg-white text-blue-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {difficultyMode === "mixed" ? (
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    {/* Easy Slider */}
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/30 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold">
+                        <span className="text-emerald-800">Easy ({difficultyMix.easy}%)</span>
+                        <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                          ~{projectedDifficultyCounts.easy} Qs
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={difficultyMix.easy}
+                        onChange={(e) => handleDifficultySliderChange("easy", Number(e.target.value))}
+                        className="w-full accent-emerald-600 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Medium Slider */}
+                    <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold">
+                        <span className="text-blue-800">Medium ({difficultyMix.medium}%)</span>
+                        <span className="rounded-md bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800">
+                          ~{projectedDifficultyCounts.medium} Qs
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={difficultyMix.medium}
+                        onChange={(e) => handleDifficultySliderChange("medium", Number(e.target.value))}
+                        className="w-full accent-blue-600 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Hard Slider */}
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/30 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold">
+                        <span className="text-rose-800">Hard ({difficultyMix.hard}%)</span>
+                        <span className="rounded-md bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800">
+                          ~{projectedDifficultyCounts.hard} Qs
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={difficultyMix.hard}
+                        onChange={(e) => handleDifficultySliderChange("hard", Number(e.target.value))}
+                        className="w-full accent-rose-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Sliders auto-balance to 100%. Total questions will be partitioned according to these target percentages.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs font-medium text-slate-700 flex items-center justify-between">
+                  <span>
+                    <strong>100%</strong> of generated questions will be created at{" "}
+                    <strong className="uppercase text-blue-700">{difficultyMode}</strong> difficulty level.
+                  </span>
+                  <span className="rounded-md bg-white border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-800">
+                    {blueprintSummary.totalQuestions} Questions Total
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Target Marks Alignment & Model Panel */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+              <div className="grid gap-4 sm:grid-cols-4 items-center">
+                {/* Total Questions */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <span className="text-[11px] text-slate-500 font-medium block">Total Questions</span>
+                  <strong className="text-base text-slate-900 font-bold">{blueprintSummary.totalQuestions} Questions</strong>
+                </div>
+
+                {/* Target Marks vs Blueprint Marks */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-500 font-medium">Marks Status</span>
+                    {blueprintSummary.blueprintMarks === Number(totalMarks) ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Perfect Match
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700">
+                        <AlertCircle className="h-3.5 w-3.5" /> Mismatch
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-2 mt-0.5">
+                    <strong className={`text-base font-bold ${blueprintSummary.blueprintMarks === Number(totalMarks) ? "text-emerald-700" : "text-amber-700"}`}>
+                      {blueprintSummary.blueprintMarks}
+                    </strong>
+                    <span className="text-xs text-slate-500">/ {totalMarks} Target Marks</span>
+                  </div>
+                </div>
+
+                {/* Local AI Model Dropdown */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <span className="text-[11px] text-slate-500 font-medium block mb-1">Local AI Engine</span>
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value as AiModel)}
+                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-hidden"
+                  >
+                    {aiModels.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Mismatch Warning Alert + Auto Align Button */}
+              {blueprintSummary.blueprintMarks !== Number(totalMarks) && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-900">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span>
+                      Blueprint total marks (<strong>{blueprintSummary.blueprintMarks}</strong>) does not equal target total marks (<strong>{totalMarks}</strong>).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAutoAlignMarks}
+                    className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-amber-700 shrink-0 self-start sm:self-auto"
+                  >
+                    <RefreshCw className="h-3 w-3" /> Auto-Align to {totalMarks} Marks
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 5. Generated Questions List (if any exist) */}
+            {questions.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-slate-900">
+                    Active Questions ({questions.length}) · Total Marks: {currentTotalMarks}
+                  </h3>
+                  <span className="text-xs text-slate-500">Review, reorder or modify generated questions below</span>
+                </div>
+
                 {questions.map((q, idx) => (
                   <div
                     key={q.id || idx}
@@ -1118,23 +1817,26 @@ export function FacultyGeneratePaper() {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Question Type</label>
                   <select
                     value={manualQType}
-                    onChange={(e) => setManualQType(e.target.value as any)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                    onChange={(e) => setManualQType(e.target.value as keyof BlueprintState)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium"
                   >
-                    <option value="mcq">Multiple Choice (Single)</option>
-                    <option value="truefalse">True / False</option>
-                    <option value="fillblank">Fill in the Blank</option>
-                    <option value="subjective">Subjective / Long Answer</option>
+                    <option value="mcq">Multiple Choice (Single Option)</option>
+                    <option value="true_false">True / False</option>
+                    <option value="fill_blank">Fill in the Blank</option>
+                    <option value="short_answer">Short Answer (2-3 sentences)</option>
+                    <option value="long_answer">Long Answer / Essay</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Question Text *</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Question Text * {manualQType === "fill_blank" && <span className="text-blue-600 font-normal">(use ____ with 4 underscores for blanks)</span>}
+                  </label>
                   <textarea
                     rows={3}
                     value={manualQText}
                     onChange={(e) => setManualQText(e.target.value)}
-                    placeholder="Enter the question text..."
+                    placeholder={manualQType === "fill_blank" ? "e.g., Photosynthesis converts light energy into ____ energy." : "Enter the question prompt..."}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm focus:bg-white"
                   />
                 </div>
@@ -1184,19 +1886,92 @@ export function FacultyGeneratePaper() {
                         />
                       </div>
                     ))}
+                    <div className="pt-2">
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Correct Option (Letter or Exact Text)</label>
+                      <input
+                        type="text"
+                        value={manualQAnswer}
+                        onChange={(e) => setManualQAnswer(e.target.value)}
+                        placeholder="e.g., A"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                      />
+                    </div>
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Correct Answer / Model Answer</label>
-                  <input
-                    type="text"
-                    value={manualQAnswer}
-                    onChange={(e) => setManualQAnswer(e.target.value)}
-                    placeholder={manualQType === "mcq" ? "e.g., A or the option text" : "e.g., Expected key terms"}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
-                  />
-                </div>
+                {manualQType === "true_false" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-2">Correct Answer</label>
+                    <div className="flex gap-4">
+                      {["True", "False"].map((opt) => (
+                        <label key={opt} className={`flex items-center gap-2 px-4 py-2 rounded-xl border cursor-pointer ${manualQAnswer === opt || (!manualQAnswer && opt === "True") ? "border-blue-600 bg-blue-50 text-blue-800 font-bold" : "border-slate-200 text-slate-700"}`}>
+                          <input
+                            type="radio"
+                            name="tfAnswer"
+                            value={opt}
+                            checked={manualQAnswer === opt || (!manualQAnswer && opt === "True")}
+                            onChange={() => setManualQAnswer(opt)}
+                            className="sr-only"
+                          />
+                          <span>{opt}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {manualQType === "fill_blank" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Accepted Answers (Synonyms comma-separated)</label>
+                    <input
+                      type="text"
+                      value={manualQAcceptedAnswers}
+                      onChange={(e) => {
+                        setManualQAcceptedAnswers(e.target.value);
+                        setManualQAnswer(e.target.value);
+                      }}
+                      placeholder="e.g., chemical, chemical energy"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                    />
+                    <p className="text-[11px] text-slate-400 mt-1">Student entries will be trimmed and evaluated case-insensitively.</p>
+                  </div>
+                )}
+
+                {(manualQType === "short_answer" || manualQType === "long_answer") && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Expected Model Answer *</label>
+                      <textarea
+                        rows={3}
+                        value={manualQModelAnswer}
+                        onChange={(e) => setManualQModelAnswer(e.target.value)}
+                        placeholder="Core concepts, key formulas, or expected explanations..."
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm focus:bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Grading Rubric / Criteria</label>
+                      <textarea
+                        rows={2}
+                        value={manualQRubric}
+                        onChange={(e) => setManualQRubric(e.target.value)}
+                        placeholder="e.g. 2 marks for naming mechanism, 3 marks for diagram/steps"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm focus:bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Word Limit (Optional)</label>
+                      <input
+                        type="number"
+                        min="10"
+                        value={manualQWordLimit}
+                        onChange={(e) => setManualQWordLimit(e.target.value)}
+                        placeholder={manualQType === "short_answer" ? "e.g., 50 words" : "e.g., 250 words"}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">

@@ -15,7 +15,70 @@ def normalize_text(value):
 
 
 def is_objective_question(question):
-    return question.question_type in {"mcq", "truefalse", "fillblank"}
+    return question.question_type in {"mcq", "true_false", "truefalse", "fill_blank", "fillblank"}
+
+
+def evaluate_fill_blank(question, student_answer_obj):
+    """
+    Evaluates fill_blank question against accepted_answers or correct_answer.
+    Returns (score_awarded, is_correct, feedback_str).
+    Partial marks awarded proportionally: (correct_count / total_blanks) * marks.
+    No negative marks.
+    """
+    import re
+    q_marks = float(question.marks or 1.0)
+
+    # 1. Parse student blanks
+    student_blanks = []
+    if student_answer_obj.blank_answers and isinstance(student_answer_obj.blank_answers, list):
+        student_blanks = [normalize_text(b) for b in student_answer_obj.blank_answers]
+    elif student_answer_obj.answer_text:
+        parts = re.split(r'[,|;]', str(student_answer_obj.answer_text))
+        student_blanks = [normalize_text(p) for p in parts if p.strip()]
+
+    # 2. Parse accepted answers from question
+    expected_groups = []
+    raw_acc = question.accepted_answers
+    if raw_acc and isinstance(raw_acc, list):
+        for item in raw_acc:
+            if isinstance(item, list):
+                expected_groups.append([normalize_text(alt) for alt in item if str(alt).strip()])
+            elif item is not None:
+                expected_groups.append([normalize_text(item)])
+
+    if not expected_groups:
+        raw_corr = question.correct_answer
+        if isinstance(raw_corr, list):
+            expected_groups = [[normalize_text(x)] for x in raw_corr]
+        elif raw_corr:
+            parts = re.split(r'[,|;]', str(raw_corr))
+            expected_groups = [[normalize_text(p)] for p in parts if p.strip()]
+
+    if not expected_groups:
+        expected_groups = [[]]
+
+    total_blanks = max(1, len(expected_groups))
+    correct_count = 0
+    feedback_parts = []
+
+    for i, group in enumerate(expected_groups):
+        stud_val = student_blanks[i] if i < len(student_blanks) else ""
+        matched = False
+        if stud_val:
+            for alt in group:
+                if stud_val == alt:
+                    matched = True
+                    break
+        if matched:
+            correct_count += 1
+            feedback_parts.append(f"Blank {i+1}: Correct")
+        else:
+            feedback_parts.append(f"Blank {i+1}: Incorrect")
+
+    score = round((correct_count / total_blanks) * q_marks, 2)
+    is_correct = (correct_count == total_blanks and total_blanks > 0)
+    feedback = f"{correct_count}/{total_blanks} blanks correct. " + ", ".join(feedback_parts)
+    return score, is_correct, feedback
 
 
 def is_objective_answer_correct(question, answer_text):
@@ -32,15 +95,15 @@ def is_objective_answer_correct(question, answer_text):
         return True
 
     # 2. True/False question handling
-    if question.question_type == "truefalse":
+    if question.question_type in {"true_false", "truefalse"}:
         if isinstance(raw_correct, bool):
             expected = "true" if raw_correct else "false"
             return submitted == expected
         norm_correct = normalize_text(clean_option_text(raw_correct))
-        if norm_correct in {"a", "true"}:
-            return submitted == "true"
-        if norm_correct in {"b", "false"}:
-            return submitted == "false"
+        if norm_correct in {"a", "true", "t", "1"}:
+            return submitted in {"true", "t", "a"}
+        if norm_correct in {"b", "false", "f", "0"}:
+            return submitted in {"false", "f", "b"}
 
     # 3. Letter choice ('A', 'B', 'C', 'D')
     letter_map = {"A": 0, "B": 1, "C": 2, "D": 3}
@@ -155,13 +218,20 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
             if not answer:
                 continue
 
-            if is_objective_question(q):
+            q_type = q.question_type
+            if q_type in {"fill_blank", "fillblank"}:
+                score, is_corr, fb = evaluate_fill_blank(q, answer)
+                answer.score_awarded = score
+                answer.is_correct = is_corr
+                answer.ai_feedback = fb
+                answers_to_update.append(answer)
+            elif is_objective_question(q):
                 correct = is_objective_answer_correct(q, answer.answer_text)
                 answer.is_correct = correct
                 answer.score_awarded = q.marks if correct else 0
                 answers_to_update.append(answer)
             else:
-                # Subjective question
+                # Subjective question (short_answer, long_answer, subjective)
                 if not (answer.answer_text and answer.answer_text.strip()):
                     answer.is_correct = False
                     answer.score_awarded = 0

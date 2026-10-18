@@ -87,11 +87,17 @@ class FacultyAttemptDetailView(FacultyEvaluationBaseView):
                 'question_type': ans.question.question_type,
                 'marks': float(ans.question.marks or 1.0),
                 'model_answer': getattr(ans.question, 'model_answer', ''),
+                'rubric': getattr(ans.question, 'rubric', ''),
+                'accepted_answers': getattr(ans.question, 'accepted_answers', []),
                 'correct_answer': ans.question.correct_answer,
                 'student_answer': ans.answer_text,
+                'blank_answers': getattr(ans, 'blank_answers', []),
                 'is_correct': ans.is_correct,
                 'score_awarded': ans.score_awarded,
                 'ai_feedback': ans.ai_feedback,
+                'teacher_feedback': getattr(ans, 'teacher_feedback', ''),
+                'ai_suggested_score': getattr(ans, 'ai_suggested_score', None),
+                'ai_suggested_feedback': getattr(ans, 'ai_suggested_feedback', ''),
                 'evaluation_status': ans.evaluation_status,
                 'evaluation_provider': ans.evaluation_provider,
                 'evaluation_model': ans.evaluation_model,
@@ -155,8 +161,8 @@ class FacultyReevaluateAnswerView(FacultyEvaluationBaseView):
         if not answer:
             return Response({'detail': 'Answer not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if answer.question.question_type != 'subjective':
-            return Response({'detail': 'Only subjective answers can be re-evaluated with AI.'}, status=status.HTTP_400_BAD_REQUEST)
+        if answer.question.question_type not in ['subjective', 'short_answer', 'long_answer']:
+            return Response({'detail': 'Only subjective questions can be re-evaluated with AI.'}, status=status.HTTP_400_BAD_REQUEST)
 
         force = bool(request.data.get('force', False))
         res = evaluate_subjective_chain(answer, force=force)
@@ -172,7 +178,7 @@ class FacultyReevaluateAnswerView(FacultyEvaluationBaseView):
                     StudentAnswer.EvaluationStatus.FAILED,
                 ]
                 for a in all_ans
-                if a.question.question_type == 'subjective'
+                if a.question.question_type in ['subjective', 'short_answer', 'long_answer']
             )
             att.status = StudentAttempt.Status.SUBMITTED if has_pending else StudentAttempt.Status.EVALUATED
             att.save(update_fields=['total_score', 'status'])
@@ -182,12 +188,48 @@ class FacultyReevaluateAnswerView(FacultyEvaluationBaseView):
             'answer_id': answer.id,
             'score_awarded': answer.score_awarded,
             'ai_feedback': answer.ai_feedback,
+            'ai_suggested_score': answer.ai_suggested_score,
+            'ai_suggested_feedback': answer.ai_suggested_feedback,
             'evaluation_status': answer.evaluation_status,
             'evaluation_provider': answer.evaluation_provider,
             'evaluation_model': answer.evaluation_model,
             'technical_error': answer.technical_error,
             'attempt_total_score': att.total_score,
             'attempt_status': att.status,
+        })
+
+
+class FacultySuggestGradeView(FacultyEvaluationBaseView):
+    """
+    Generates an optional AI grading suggestion for a subjective answer without finalizing it.
+    Saves to ai_suggested_score and ai_suggested_feedback on StudentAnswer.
+    """
+    def post(self, request, answer_id):
+        tenant = self.get_tenant(request)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        answer = StudentAnswer.objects.filter(
+            id=answer_id,
+            institution=tenant,
+        ).select_related('attempt', 'question').first()
+
+        if not answer:
+            return Response({'detail': 'Answer not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if answer.question.question_type not in ['subjective', 'short_answer', 'long_answer']:
+            return Response({'detail': 'Only subjective answers can receive AI grading suggestions.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Call AI evaluation chain to obtain suggestion
+        from .utils.evaluation_service import evaluate_subjective_chain
+        res = evaluate_subjective_chain(answer, force=True)
+
+        return Response({
+            'detail': 'AI suggestion generated.',
+            'answer_id': answer.id,
+            'ai_suggested_score': answer.ai_suggested_score,
+            'ai_suggested_feedback': answer.ai_suggested_feedback,
+            'evaluation_status': answer.evaluation_status,
         })
 
 
@@ -233,15 +275,17 @@ class FacultyManualGradeAnswerView(FacultyEvaluationBaseView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
+            clean_fb = str(feedback).strip()
             answer.score_awarded = round(score, 2)
-            answer.ai_feedback = str(feedback).strip()
+            answer.ai_feedback = clean_fb
+            answer.teacher_feedback = clean_fb
             answer.is_correct = (score >= (0.4 * max_marks))
             answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
             answer.evaluation_provider = "manual"
             answer.evaluation_model = "teacher"
             answer.technical_error = ""
             answer.save(update_fields=[
-                'score_awarded', 'ai_feedback', 'is_correct',
+                'score_awarded', 'ai_feedback', 'teacher_feedback', 'is_correct',
                 'evaluation_status', 'evaluation_provider', 'evaluation_model', 'technical_error'
             ])
 
@@ -255,7 +299,7 @@ class FacultyManualGradeAnswerView(FacultyEvaluationBaseView):
                     StudentAnswer.EvaluationStatus.FAILED,
                 ]
                 for a in all_ans
-                if a.question.question_type == 'subjective'
+                if a.question.question_type in ['subjective', 'short_answer', 'long_answer']
             )
             att.status = StudentAttempt.Status.SUBMITTED if has_pending else StudentAttempt.Status.EVALUATED
             att.save(update_fields=['total_score', 'status'])
@@ -265,6 +309,7 @@ class FacultyManualGradeAnswerView(FacultyEvaluationBaseView):
             'answer_id': answer.id,
             'score_awarded': answer.score_awarded,
             'ai_feedback': answer.ai_feedback,
+            'teacher_feedback': answer.teacher_feedback,
             'evaluation_status': answer.evaluation_status,
             'attempt_total_score': att.total_score,
             'attempt_status': att.status,

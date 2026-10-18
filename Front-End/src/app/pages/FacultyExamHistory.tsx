@@ -89,6 +89,7 @@ export function FacultyExamHistory() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [reevaluatingAttempt, setReevaluatingAttempt] = useState(false);
   const [reevaluatingAnswerId, setReevaluatingAnswerId] = useState<number | null>(null);
+  const [suggestingAnswerId, setSuggestingAnswerId] = useState<number | null>(null);
 
   // Manual Edit State
   const [editingAnswerId, setEditingAnswerId] = useState<number | null>(null);
@@ -274,6 +275,21 @@ export function FacultyExamHistory() {
       toast.error(err?.response?.data?.detail || "Failed to save manual grade.");
     } finally {
       setSavingGrade(false);
+    }
+  };
+
+  const handleSuggestGrade = async (answerId: number) => {
+    setSuggestingAnswerId(answerId);
+    try {
+      const res = await facultyExamApi.suggestGrade(answerId);
+      toast.success("AI suggestion generated!");
+      if (selectedAttemptId) {
+        await handleOpenAttemptDetail(selectedAttemptId);
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to generate AI suggestion.");
+    } finally {
+      setSuggestingAnswerId(null);
     }
   };
 
@@ -824,9 +840,77 @@ export function FacultyExamHistory() {
                               <p className="text-foreground whitespace-pre-wrap">{ans.student_answer || "(No answer was submitted)"}</p>
                             </div>
 
-                            {ans.question_type === "subjective" && (
-                              <div className="space-y-2">
-                                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border">
+                            {/* Fill in the Blank details */}
+                            {(ans.question_type === "fill_blank" || ans.question_type === "fillblank") && (
+                              <div className="space-y-2 pt-2 border-t border-border">
+                                {ans.blank_answers && ans.blank_answers.length > 0 && (
+                                  <div className="rounded-lg bg-purple-50/60 border border-purple-200 p-3 text-xs text-purple-950">
+                                    <span className="font-bold block mb-1.5 text-purple-900">Student Blanks Submitted:</span>
+                                    <div className="flex flex-wrap gap-2">
+                                      {ans.blank_answers.map((b: string, bIdx: number) => (
+                                        <span key={bIdx} className="px-2.5 py-1 rounded-md bg-white border border-purple-300 font-mono text-xs shadow-2xs">
+                                          Blank #{bIdx + 1}: <strong className="text-purple-800">{b || "(empty)"}</strong>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {ans.accepted_answers && (
+                                  <div className="text-xs text-muted-foreground bg-muted/20 p-2.5 rounded-lg border border-border/60">
+                                    <strong className="text-foreground">Accepted Key:</strong>{" "}
+                                    <span className="font-mono">
+                                      {typeof ans.accepted_answers === "object"
+                                        ? JSON.stringify(ans.accepted_answers)
+                                        : String(ans.accepted_answers)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Subjective, Short Answer, Long Answer */}
+                            {(ans.question_type === "subjective" || ans.question_type === "short_answer" || ans.question_type === "long_answer") && (
+                              <div className="space-y-3 pt-2 border-t border-border">
+                                {ans.model_answer && (
+                                  <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-700">
+                                    <strong className="text-slate-900 block mb-0.5">Model Answer / Key Points:</strong>
+                                    <p className="whitespace-pre-wrap">{ans.model_answer}</p>
+                                  </div>
+                                )}
+                                {ans.rubric && (
+                                  <div className="text-xs text-slate-600 bg-slate-50/50 p-2 rounded-lg border border-slate-200/60">
+                                    <strong className="text-slate-800">Grading Rubric:</strong>{" "}
+                                    {typeof ans.rubric === "string" ? ans.rubric : JSON.stringify(ans.rubric)}
+                                  </div>
+                                )}
+
+                                {/* AI Suggestion Banner if Available */}
+                                {ans.ai_suggested_score !== null && ans.ai_suggested_score !== undefined && (
+                                  <div className="rounded-xl bg-indigo-50/70 border border-indigo-200 p-3 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
+                                    <div className="space-y-0.5">
+                                      <span className="font-bold flex items-center gap-1.5 text-indigo-900">
+                                        <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
+                                        AI Suggested Grade: {ans.ai_suggested_score} / {ans.marks} Marks
+                                      </span>
+                                      {ans.ai_suggested_feedback && (
+                                        <p className="text-indigo-800 leading-relaxed">{ans.ai_suggested_feedback}</p>
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        startManualGrade(ans);
+                                        setManualScore(String(ans.ai_suggested_score));
+                                        setManualFeedback(ans.ai_suggested_feedback || "");
+                                      }}
+                                      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 shrink-0 transition-colors"
+                                    >
+                                      <Check className="h-3.5 w-3.5" /> Accept Suggestion
+                                    </button>
+                                  </div>
+                                )}
+
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs font-semibold text-muted-foreground">Score:</span>
                                     <strong className="text-sm font-bold text-primary">{ans.score_awarded ?? 0} / {ans.marks}</strong>
@@ -836,6 +920,20 @@ export function FacultyExamHistory() {
                                   </div>
 
                                   <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={suggestingAnswerId === ans.id}
+                                      onClick={() => void handleSuggestGrade(ans.id)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-1 text-xs font-semibold disabled:opacity-50 transition-colors"
+                                      title="Generate an AI score and feedback suggestion"
+                                    >
+                                      {suggestingAnswerId === ans.id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Sparkles className="h-3.5 w-3.5" />
+                                      )}
+                                      AI Suggest
+                                    </button>
                                     <button
                                       type="button"
                                       disabled={reevaluatingAnswerId === ans.id}

@@ -15,7 +15,7 @@ def evaluate_attempt_subjectives(attempt_id, force=False):
         attempt = StudentAttempt.objects.select_related('exam').get(id=attempt_id)
         answers = list(
             StudentAnswer.objects.select_related('question')
-            .filter(attempt=attempt, question__question_type='subjective')
+            .filter(attempt=attempt, question__question_type__in=['subjective', 'short_answer', 'long_answer'])
         )
         for answer in answers:
             try:
@@ -45,7 +45,7 @@ def evaluate_attempt_subjectives(attempt_id, force=False):
                             StudentAnswer.EvaluationStatus.FAILED,
                         ]
                         for ans in all_answers
-                        if ans.question.question_type == 'subjective'
+                        if ans.question.question_type in ['subjective', 'short_answer', 'long_answer']
                     )
                     if has_pending:
                         attempt.status = StudentAttempt.Status.SUBMITTED

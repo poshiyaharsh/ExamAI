@@ -217,9 +217,32 @@ class ExamQuestionCreateView(FacultyExamViewMixin, APIView):
                 text=q_text,
                 options=q_opts,
                 correct_answer=q_ans,
+                model_answer=str(request.data.get('model_answer', '')),
+                accepted_answers=request.data.get('accepted_answers') or [],
+                rubric=request.data.get('rubric') or [],
+                word_limit=request.data.get('word_limit'),
+                source='manual',
                 marks=q_marks,
                 created_by=request.user,
             )
+
+            if q_opts and isinstance(q_opts, list) and q_type in {'mcq', 'true_false', 'truefalse'}:
+                from api.models import Option
+                opts_to_create = []
+                correct_str = str(q_ans).strip().lower() if q_ans is not None else ''
+                for opt_idx, opt_txt in enumerate(q_opts, start=1):
+                    clean_opt_str = str(opt_txt).strip().lower()
+                    is_corr = (clean_opt_str == correct_str) or (str(opt_idx - 1) == correct_str) or (
+                        correct_str in {'a': 0, 'b': 1, 'c': 2, 'd': 3} and opt_idx - 1 == {'a': 0, 'b': 1, 'c': 2, 'd': 3}[correct_str]
+                    ) or (clean_opt_str == 'true' and correct_str in {'true', 't', '1'}) or (clean_opt_str == 'false' and correct_str in {'false', 'f', '0'})
+                    opts_to_create.append(Option(
+                        question=new_q,
+                        text=str(opt_txt),
+                        is_correct=is_corr,
+                        order=opt_idx,
+                    ))
+                if opts_to_create:
+                    Option.objects.bulk_create(opts_to_create)
 
         from api.paper_engine.cache import PaperCacheService
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)

@@ -24,9 +24,14 @@ MODEL_MAP = {
     'llama3.2-3b': 'llama3.2:3b',
     'phi3-mini': 'phi3:mini',
 }
-MAX_BATCH_SIZE = 15
+MAX_BATCH_SIZE = 8
 MARKS_PER_TYPE = {
     'mcq': 1,
+    'true_false': 1,
+    'fill_blank': 1,
+    'short_answer': 5,
+    'long_answer': 10,
+    # legacy
     'truefalse': 1,
     'fillblank': 1,
     'subjective': 10,
@@ -105,23 +110,25 @@ def _as_dict(value):
     raise ValueError('difficulty_distribution must be a JSON object.')
 
 
-def _validated_type_questions(data, question_type):
+def _validated_type_questions(data, question_type, default_marks=1):
+    from .utils.validate_paper import canonicalize_type
+    canon = canonicalize_type(question_type)
     questions = [
         question for question in data.get('questions', [])
-        if isinstance(question, dict) and str(question.get('type', '')).strip().lower() == question_type
+        if isinstance(question, dict) and canonicalize_type(question.get('type', '')) == canon
     ]
     if not questions:
         raise ValueError(f'Model returned zero valid {question_type} questions.')
-    fixed_data, _ = validate_and_fix_paper({'questions': questions})
-    return [question for question in fixed_data['questions'] if question['type'] == question_type]
+    fixed_data, _ = validate_and_fix_paper({'questions': questions}, default_marks=default_marks)
+    return [question for question in fixed_data['questions'] if question['type'] == canon]
 
 
-def _call_type_batch(question_type, count, model_key, topics, difficulty_distribution, syllabus_text):
+def _call_type_batch(question_type, count, marks_per_q, model_key, topics, difficulty_distribution, syllabus_text):
     model_tag = MODEL_MAP[model_key]
     prompt = build_type_generation_prompt(
         question_type,
         count,
-        MARKS_PER_TYPE[question_type],
+        marks_per_q,
         topics,
         difficulty_distribution,
         syllabus_text,
@@ -129,10 +136,10 @@ def _call_type_batch(question_type, count, model_key, topics, difficulty_distrib
     last_error = None
     for temperature in (0.4, 0.2):
         try:
-            logger.info('Calling Ollama model key=%s tag=%s', model_key, model_tag)
+            logger.info('Calling Ollama model key=%s tag=%s type=%s count=%s', model_key, model_tag, question_type, count)
             raw_response = call_ollama(model_tag, prompt, temperature=temperature, num_predict=2048)
             generated_data = parse_json_safely(raw_response)
-            questions = _validated_type_questions(generated_data, question_type)
+            questions = _validated_type_questions(generated_data, question_type, default_marks=marks_per_q)
             logger.warning(
                 'Paper generation batch type=%s requested=%s returned=%s temperature=%s',
                 question_type,
@@ -148,13 +155,14 @@ def _call_type_batch(question_type, count, model_key, topics, difficulty_distrib
     return []
 
 
-def _generate_type_questions(question_type, count, model_name, topics, difficulty_distribution, syllabus_text):
+def _generate_type_questions(question_type, count, marks_per_q, model_name, topics, difficulty_distribution, syllabus_text):
     questions = []
     for start in range(0, count, MAX_BATCH_SIZE):
         requested_batch_count = min(MAX_BATCH_SIZE, count - start)
         batch_questions = _call_type_batch(
             question_type,
             requested_batch_count,
+            marks_per_q,
             model_name,
             topics,
             difficulty_distribution,
@@ -173,6 +181,7 @@ def _generate_type_questions(question_type, count, model_name, topics, difficult
             retry_questions = _call_type_batch(
                 question_type,
                 shortfall,
+                marks_per_q,
                 model_name,
                 topics,
                 difficulty_distribution,
@@ -189,7 +198,7 @@ def _generate_type_questions(question_type, count, model_name, topics, difficult
     return questions
 
 
-def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text):
+def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text, blueprint=None):
     from django.utils import timezone
     job = PaperGenerationJob.objects.filter(id=job_id).first()
     if not job or job.is_cancelled:
@@ -202,7 +211,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
     job.save(update_fields=['status', 'started_at', 'current_step', 'progress'])
 
     try:
-        counts, planned_total_marks = compute_question_counts(question_types, total_marks)
+        counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
         total_requested = max(sum(counts.values()), 1)
         logger.debug(
             'Paper generation counts exam_id=%s counts=%s planned_total_marks=%s requested_total_marks=%s',
@@ -218,23 +227,33 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         job.save(update_fields=['current_step', 'progress'])
 
         generated_questions = []
-        for question_type in ('mcq', 'truefalse', 'fillblank', 'subjective'):
-            requested_count = counts.get(question_type, 0)
-            if requested_count:
+        for question_type, requested_count in counts.items():
+            if requested_count > 0:
                 job.refresh_from_db()
                 if job.is_cancelled:
                     return
 
                 q_done = len(generated_questions)
                 pct = 25 + int(50 * (q_done / total_requested))
-                job.current_step = f'Generating {question_type.upper()} questions ({q_done} of {total_requested})'
+                formatted_type = question_type.replace('_', ' ').upper()
+                job.current_step = f'Generating {formatted_type} questions ({q_done} of {total_requested})'
                 job.progress = min(pct, 75)
                 job.question_count_generated = q_done
                 job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
 
+                marks_per_q = MARKS_PER_TYPE.get(question_type, 1)
+                if blueprint and isinstance(blueprint, dict):
+                    cfg = blueprint.get(question_type) or {}
+                    if isinstance(cfg, dict) and cfg.get('marksPerQuestion'):
+                        try:
+                            marks_per_q = float(cfg['marksPerQuestion'])
+                        except (ValueError, TypeError):
+                            pass
+
                 batch_res = _generate_type_questions(
                     question_type,
                     requested_count,
+                    marks_per_q,
                     model_name,
                     topics,
                     difficulty_distribution,
@@ -260,7 +279,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
             warnings.append(f'Generated {len(generated_questions)} of {total_requested} requested questions.')
 
         for idx, q in enumerate(generated_questions, 1):
-            if q.get('type') in {'mcq', 'fillblank'}:
+            if q.get('type') == 'mcq':
                 opts = q.get('options') or []
                 ans = str(q.get('correct_answer', '')).strip().lower()
                 clean_opts = [str(o).strip().lower() for o in opts]
@@ -294,7 +313,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                         clean_opts = clean_options_list(raw_options) if (raw_options and isinstance(raw_options, list)) else None
 
                         model_ans = generated_question.get('model_answer') or ''
-                        if q_type == 'subjective' and len(model_ans.split()) < 40:
+                        if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 40:
                             model_ans = _ensure_subjective_model_answer(
                                 generated_question['text'],
                                 generated_question.get('topic') or '',
@@ -316,10 +335,14 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                             options=clean_opts,
                             correct_answer=correct_ans,
                             model_answer=model_ans,
+                            accepted_answers=generated_question.get('accepted_answers') or [],
+                            rubric=generated_question.get('rubric') or [],
+                            word_limit=generated_question.get('word_limit'),
+                            source='ai_generated',
                             marks=generated_question['marks'],
                             topic_text=generated_question.get('topic') or '',
                         )
-                        if clean_opts and isinstance(clean_opts, list):
+                        if clean_opts and isinstance(clean_opts, list) and q_type in {'mcq', 'true_false', 'truefalse'}:
                             opts_to_create = []
                             correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
                             for opt_idx, opt_txt in enumerate(clean_opts, start=1):
@@ -331,7 +354,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                                     else:
                                         is_corr = (clean_opt_str == correct_str) or (str(opt_idx - 1) == correct_str) or (
                                             correct_str in {'a': 0, 'b': 1, 'c': 2, 'd': 3} and opt_idx - 1 == {'a': 0, 'b': 1, 'c': 2, 'd': 3}[correct_str]
-                                        )
+                                        ) or (clean_opt_str == 'true' and correct_str in {'true', 't', '1'}) or (clean_opt_str == 'false' and correct_str in {'false', 'f', '0'})
                                 opts_to_create.append(Option(
                                     question=q_obj,
                                     text=str(opt_txt),
@@ -565,9 +588,16 @@ class GeneratePaperView(APIView):
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
 
-        # AI Fallback: initialize Exam and start threaded AI generation
+        raw_bp = request.data.get('blueprint')
+        blueprint = None
+        if raw_bp:
+            try:
+                blueprint = json.loads(raw_bp) if isinstance(raw_bp, str) else raw_bp
+            except Exception:
+                blueprint = None
+
         try:
-            counts, planned_total_marks = compute_question_counts(question_types, total_marks)
+            counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
             expected_question_count = sum(counts.values())
 
             exam = Exam.objects.create(
@@ -609,7 +639,7 @@ class GeneratePaperView(APIView):
 
         threading.Thread(
             target=_run_generation,
-            args=(job.id, exam.id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text),
+            args=(job.id, exam.id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text, blueprint),
             daemon=True,
         ).start()
 
@@ -628,3 +658,31 @@ class GeneratePaperView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class ParseSyllabusView(APIView):
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        syllabus_file = request.FILES.get('syllabus')
+        if not syllabus_file:
+            return Response({'detail': 'No syllabus file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from .utils.extract_text import detect_syllabus_topics, extract_syllabus_text
+            text = extract_syllabus_text(syllabus_file)
+            topics = detect_syllabus_topics(text)
+            return Response({
+                'filename': getattr(syllabus_file, 'name', 'syllabus'),
+                'char_count': len(text),
+                'topics': topics,
+                'detected_topics_count': len(topics),
+                'preview': text[:600] + ('...' if len(text) > 600 else ''),
+            })
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception('Syllabus parsing failed')
+            return Response({'detail': f'Failed to process syllabus: {str(exc)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
