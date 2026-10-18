@@ -2,13 +2,41 @@ import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
-import { LayoutDashboard, FileText, History, Settings, Upload, Plus, Trash2, Sparkles, Download } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  BookOpen,
+  Calendar,
+  Check,
+  CheckCircle2,
+  Clock,
+  Download,
+  FileText,
+  History,
+  LayoutDashboard,
+  Lock,
+  Plus,
+  RefreshCw,
+  Send,
+  Settings,
+  Shield,
+  ShieldAlert,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   facultyExamApi,
   facultyPaperApi,
+  facultyProfileApi,
   type AiModel,
-  type GeneratedPaper,
+  type ExamQuestion,
+  type FacultyExam,
   type PaperQuestionType,
   type SyllabusUploadData,
 } from "../../services/api";
@@ -17,7 +45,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },
   { icon: FileText, label: "Generate Paper", path: "/faculty/generate" },
   { icon: History, label: "Exam History", path: "/faculty/history" },
-  { icon: Settings, label: "Settings", path: "/faculty/settings" }
+  { icon: Settings, label: "Settings", path: "/faculty/settings" },
 ];
 
 const aiModels: AiModel[] = ["qwen2.5-3b", "llama3.2-3b", "phi3-mini"];
@@ -26,7 +54,6 @@ const aiModelLabels: Record<AiModel, string> = {
   "llama3.2-3b": "Llama 3.2 3B (Local)",
   "phi3-mini": "Phi-3 Mini (Local)",
 };
-const draftKey = "faculty-paper-duplicate-draft";
 
 const questionTypeLabels: Record<string, PaperQuestionType> = {
   mcq: "MCQ",
@@ -35,234 +62,155 @@ const questionTypeLabels: Record<string, PaperQuestionType> = {
   fillBlanks: "Fill in the Blanks",
 };
 const difficultyKeys = ["Easy", "Medium", "Hard"] as const;
-type DifficultyKey = typeof difficultyKeys[number];
+type DifficultyKey = (typeof difficultyKeys)[number];
 
 function extractApiErrorMessage(error: unknown, fallback: string) {
   if (!axios.isAxiosError(error)) return fallback;
   const data = error.response?.data;
   if (data instanceof Blob) return fallback;
+  if (data && typeof data === "object" && "detail" in data && typeof data.detail === "string") {
+    return data.detail;
+  }
   if (data && typeof data === "object" && "message" in data && typeof data.message === "string") {
-    if ("failures" in data && Array.isArray(data.failures)) {
-      const details = data.failures
-        .filter((failure: any): failure is { provider: string; reason: string } => (
-          Boolean(failure) && typeof failure === "object" && "provider" in failure && "reason" in failure
-        ))
-        .map((failure: { provider: string; reason: string }) => `${failure.provider}: ${failure.reason}`)
-        .join(". ");
-      return details ? `${data.message} ${details}` : data.message;
-    }
     return data.message;
   }
   return fallback;
 }
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
 export function FacultyGeneratePaper() {
   const navigate = useNavigate();
+
+  // Wizard Step (1: Details, 2: Questions, 3: Settings, 4: Preview & Publish)
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // Profile
+  const [facultyDept, setFacultyDept] = useState("");
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  // Step 1: Details
   const [examTitle, setExamTitle] = useState("");
+  const [subjectName, setSubjectName] = useState("");
   const [duration, setDuration] = useState("60");
   const [totalMarks, setTotalMarks] = useState("100");
-  const [difficultyMix, setDifficultyMix] = useState({ Easy: 30, Medium: 50, Hard: 20 });
+  const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
   const [topics, setTopics] = useState<string[]>([""]);
+
+  // Step 2: Questions & Content
+  const [examId, setExamId] = useState<number | null>(null);
+  const [questions, setQuestions] = useState<ExamQuestion[]>([]);
+  const [difficultyMix, setDifficultyMix] = useState({ Easy: 30, Medium: 50, Hard: 20 });
   const [questionTypes, setQuestionTypes] = useState({
     mcq: true,
     subjective: true,
     trueFalse: false,
-    fillBlanks: false
+    fillBlanks: false,
   });
   const [aiModel, setAiModel] = useState<AiModel>("qwen2.5-3b");
-  const [ollamaStatus, setOllamaStatus] = useState<"loading" | "connected" | "not-running" | "model-missing">("loading");
-  const [ollamaStatusMessage, setOllamaStatusMessage] = useState("Checking Ollama...");
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
-  const [uploadedSyllabus, setUploadedSyllabus] = useState<SyllabusUploadData | null>(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState("");
-  const [previewPaper, setPreviewPaper] = useState<GeneratedPaper | null>(null);
-  const [generationSource, setGenerationSource] = useState<{ provider: string; model: string } | null>(null);
   const [avoidRepeats, setAvoidRepeats] = useState(true);
-  const [forceRegenerate, setForceRegenerate] = useState(false);
-  const activeRequestRef = useRef(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
 
+  // Manual Question Modal
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [manualQType, setManualQType] = useState<"mcq" | "truefalse" | "fillblank" | "subjective">("mcq");
+  const [manualQText, setManualQText] = useState("");
+  const [manualQMarks, setManualQMarks] = useState("5");
+  const [manualQDiff, setManualQDiff] = useState<"easy" | "medium" | "hard">("medium");
+  const [manualQTopic, setManualQTopic] = useState("");
+  const [manualQOptions, setManualQOptions] = useState<string[]>(["", "", "", ""]);
+  const [manualQAnswer, setManualQAnswer] = useState("");
+
+  // Step 3: Security & Proctoring Settings
+  const [shuffleQuestions, setShuffleQuestions] = useState(true);
+  const [shuffleOptions, setShuffleOptions] = useState(true);
+  const [randomSubsetSize, setRandomSubsetSize] = useState<string>("");
+  const [maxWarnings, setMaxWarnings] = useState("3");
+  const [allowRetakes, setAllowRetakes] = useState(false);
+  const [showResultImmediately, setShowResultImmediately] = useState(true);
+
+  // Step 4: Publish state
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+
+  // Fetch Faculty Profile to Lock Department
   useEffect(() => {
-    const rawDraft = localStorage.getItem(draftKey);
-    if (!rawDraft) return;
-    try {
-      const draft = JSON.parse(rawDraft) as Partial<GeneratedPaper>;
-      setExamTitle(draft.title || "");
-      setDuration(String(draft.duration || 60));
-      setTotalMarks(String(draft.total_marks || 100));
-      setAiModel(aiModels.includes(draft.model as AiModel) ? draft.model as AiModel : "qwen2.5-3b");
-      setTopics(draft.topics?.length ? draft.topics : [""]);
-      if (draft.difficulty_distribution) {
-        setDifficultyMix({
-          Easy: draft.difficulty_distribution.Easy || 0,
-          Medium: draft.difficulty_distribution.Medium || 0,
-          Hard: draft.difficulty_distribution.Hard || 0,
-        });
-      }
-      const selectedTypes = new Set(draft.question_types || []);
-      setQuestionTypes({
-        mcq: selectedTypes.has("MCQ"),
-        subjective: selectedTypes.has("Subjective"),
-        trueFalse: selectedTypes.has("True/False"),
-        fillBlanks: selectedTypes.has("Fill in the Blanks"),
+    facultyProfileApi
+      .getProfile()
+      .then((res) => {
+        setFacultyDept(res.data.department || "General");
+      })
+      .catch(() => {
+        setFacultyDept("General");
+      })
+      .finally(() => {
+        setLoadingProfile(false);
       });
-    } catch {
-      // Ignore malformed duplicate drafts.
-    } finally {
-      localStorage.removeItem(draftKey);
-    }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadOllamaStatus = async () => {
-      try {
-        const response = await facultyPaperApi.getOllamaStatus();
-        if (!cancelled) {
-          if (!response.connected) {
-            setOllamaStatus("not-running");
-          } else if (!response.model_installed) {
-            setOllamaStatus("model-missing");
-          } else {
-            setOllamaStatus("connected");
-          }
-          setOllamaStatusMessage(response.message);
-        }
-      } catch {
-        if (!cancelled) {
-          setOllamaStatus("not-running");
-          setOllamaStatusMessage("Ollama: Not Running");
-        }
-      }
-    };
-    void loadOllamaStatus();
-    return () => {
-      cancelled = true;
-    };
-  }, [aiModel]);
-
-  const selectedQuestionTypes = useMemo(
-    () => Object.entries(questionTypes)
-      .filter(([, selected]) => selected)
-      .map(([key]) => questionTypeLabels[key]),
-    [questionTypes]
+  const cleanTopics = useMemo(() => topics.map((t) => t.trim()).filter(Boolean), [topics]);
+  const currentTotalMarks = useMemo(
+    () => questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0),
+    [questions]
   );
 
   const selectedQuestionTypeValues = useMemo(
-    () => Object.entries(questionTypes)
-      .filter(([, selected]) => selected)
-      .map(([key]) => ({ mcq: "mcq", subjective: "subjective", trueFalse: "truefalse", fillBlanks: "fillblank" }[key]))
-      .filter((v): v is string => Boolean(v)),
+    () =>
+      Object.entries(questionTypes)
+        .filter(([, selected]) => selected)
+        .map(([key]) => ({ mcq: "mcq", subjective: "subjective", trueFalse: "truefalse", fillBlanks: "fillblank" }[key]))
+        .filter((v): v is string => Boolean(v)),
     [questionTypes]
   );
 
-  const cleanTopics = useMemo(() => topics.map((topic) => topic.trim()).filter(Boolean), [topics]);
-
-  const handleAddTopic = () => {
-    setTopics([...topics, ""]);
+  const handleAddTopic = () => setTopics([...topics, ""]);
+  const handleRemoveTopic = (idx: number) => setTopics(topics.filter((_, i) => i !== idx));
+  const handleTopicChange = (idx: number, val: string) => {
+    const next = [...topics];
+    next[idx] = val;
+    setTopics(next);
   };
 
-  const handleRemoveTopic = (index: number) => {
-    setTopics(topics.filter((_, i) => i !== index));
-  };
-
-  const handleTopicChange = (index: number, value: string) => {
-    const newTopics = [...topics];
-    newTopics[index] = value;
-    setTopics(newTopics);
-  };
-
-  const handleDifficultyChange = (level: DifficultyKey, rawValue: string) => {
-    const value = Math.max(0, Math.min(100, Number.parseInt(rawValue, 10) || 0));
-    const otherLevels = difficultyKeys.filter((difficulty) => difficulty !== level);
-    const otherTotal = otherLevels.reduce((sum, difficulty) => sum + difficultyMix[difficulty], 0);
-    const remaining = 100 - value;
-    const nextMix = { ...difficultyMix, [level]: value };
-
-    if (otherTotal === 0) {
-      nextMix[otherLevels[0]] = Math.floor(remaining / 2);
-      nextMix[otherLevels[1]] = remaining - nextMix[otherLevels[0]];
-    } else {
-      nextMix[otherLevels[0]] = Math.round(remaining * difficultyMix[otherLevels[0]] / otherTotal);
-      nextMix[otherLevels[1]] = remaining - nextMix[otherLevels[0]];
-    }
-    setDifficultyMix(nextMix);
-  };
-
-  const validateForm = () => {
+  // Step 1 Validation
+  const validateStep1 = () => {
     if (!examTitle.trim()) return "Exam Title is required.";
     if (Number(duration) <= 0) return "Duration must be greater than 0.";
     if (Number(totalMarks) <= 0) return "Total Marks must be greater than 0.";
     if (cleanTopics.length === 0) return "At least one topic is required.";
-    if (selectedQuestionTypes.length === 0) return "At least one question type is required.";
-    if (difficultyMix.Easy + difficultyMix.Medium + difficultyMix.Hard !== 100) {
-      return "Difficulty percentages must equal exactly 100%.";
-    }
-    if (syllabusFile) {
-      const lowerName = syllabusFile.name.toLowerCase();
-      if (!lowerName.endsWith(".pdf") && !lowerName.endsWith(".docx")) {
-        return "Only PDF and DOCX syllabus files are supported.";
-      }
+    if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt)) {
+      return "Exam schedule start date must precede end date.";
     }
     return "";
   };
 
-  const handleFileChange = (file: File | null) => {
-    setError("");
-    setUploadedSyllabus(null);
-    setUploadProgress(0);
-    if (!file) {
-      setSyllabusFile(null);
+  // Step 1 Next
+  const handleNextFromStep1 = () => {
+    const error = validateStep1();
+    if (error) {
+      toast.error(error);
       return;
     }
-    const lowerName = file.name.toLowerCase();
-    if (!lowerName.endsWith(".pdf") && !lowerName.endsWith(".docx")) {
-      setError("Only PDF and DOCX syllabus files are supported.");
-      setSyllabusFile(null);
-      return;
-    }
-    setSyllabusFile(file);
+    setCurrentStep(2);
   };
 
-  const handleGenerate = async () => {
-    console.log("[GeneratePaper] Button clicked");
-    if (activeRequestRef.current) return;
-    console.log("[GeneratePaper] Validation started");
-    const validationMessage = validateForm();
-    if (validationMessage) {
-      console.log("[GeneratePaper] Validation failed:", validationMessage);
-      setError(validationMessage);
-      toast.error(validationMessage);
+  // AI Generation in Step 2
+  const handleAiGenerate = async () => {
+    if (!examTitle.trim()) {
+      toast.error("Please enter an exam title in Step 1.");
       return;
     }
-    console.log("[GeneratePaper] Validation passed");
-
     setIsGenerating(true);
-    activeRequestRef.current = true;
-    setError("");
-    setGenerationProgress(15);
+    setGenerationProgress(25);
 
     try {
-      setGenerationProgress(45);
-      const response = await facultyPaperApi.generateExam({
+      setGenerationProgress(50);
+      const res = await facultyPaperApi.generateExam({
         title: examTitle.trim(),
         durationMinutes: Number(duration),
         totalMarks: Number(totalMarks),
-        topics: cleanTopics,
-        questionTypes: selectedQuestionTypeValues,
+        topics: cleanTopics.length ? cleanTopics : ["Core Syllabus"],
+        questionTypes: selectedQuestionTypeValues.length ? selectedQuestionTypeValues : ["mcq", "subjective"],
         difficultyDistribution: {
           easy: difficultyMix.Easy,
           medium: difficultyMix.Medium,
@@ -271,338 +219,958 @@ export function FacultyGeneratePaper() {
         aiModel,
         syllabus: syllabusFile,
         avoidRepeats,
-        forceRegenerate,
       });
 
       setGenerationProgress(100);
+      setExamId(res.exam_id);
 
-      if (response.status === "draft") {
-        if (response.loaded_from_cache) {
-          toast.success("Loaded paper instantly from cache (<200 ms)!");
-        } else {
-          toast.success(`Generated paper with ${response.question_count || "all"} unique questions!`);
-        }
-        navigate(`/faculty/exams/${response.exam_id}/edit`);
+      // Load generated exam details
+      const fullExam = await facultyExamApi.getExam(res.exam_id);
+      if (fullExam.questions && fullExam.questions.length > 0) {
+        setQuestions(fullExam.questions);
+        toast.success(`Generated ${fullExam.questions.length} questions!`);
       } else {
-        toast.info("Paper generation started in background...");
-        navigate(`/faculty/exams/${response.exam_id}/generating`);
+        toast.info("Exam initialized. You can now add questions or customize content.");
       }
-    } catch (requestError: any) {
-      const respData = requestError?.response?.data;
-      const detailMsg = respData?.detail || respData?.message;
-      const message = detailMsg || (requestError instanceof Error && !axios.isAxiosError(requestError)
-        ? requestError.message
-        : extractApiErrorMessage(requestError, "Unable to generate paper."));
-      setError(message);
-      toast.error(message);
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, "Failed to generate questions."));
     } finally {
-      activeRequestRef.current = false;
       setIsGenerating(false);
     }
   };
 
-  const handleExport = async (format: "pdf" | "docx") => {
-    if (!previewPaper) return;
-    try {
-      const blob = await facultyPaperApi.exportPaper(previewPaper.id, format);
-      downloadBlob(blob, `${previewPaper.title}.${format}`);
-    } catch (requestError) {
-      toast.error(extractApiErrorMessage(requestError, `Unable to download ${format.toUpperCase()}.`));
+  // Add Manual Question
+  const handleSaveManualQuestion = async () => {
+    if (!manualQText.trim()) {
+      toast.error("Question text is required.");
+      return;
     }
+    const marksNum = Number(manualQMarks) || 1;
+
+    let targetExamId = examId;
+    // If exam not yet created on backend, initialize it
+    if (!targetExamId) {
+      try {
+        const initRes = await facultyPaperApi.generateExam({
+          title: examTitle.trim() || "Untitled Exam",
+          durationMinutes: Number(duration) || 60,
+          totalMarks: Number(totalMarks) || 100,
+          topics: cleanTopics.length ? cleanTopics : ["General"],
+          questionTypes: ["mcq"],
+          difficultyDistribution: { easy: 30, medium: 50, hard: 20 },
+        });
+        targetExamId = initRes.exam_id;
+        setExamId(initRes.exam_id);
+      } catch (err) {
+        toast.error("Failed to initialize draft exam.");
+        return;
+      }
+    }
+
+    try {
+      const createdQ = await facultyExamApi.addQuestion(targetExamId, {
+        text: manualQText.trim(),
+        question_type: manualQType,
+        marks: marksNum,
+        difficulty: manualQDiff,
+        topic: manualQTopic.trim() || cleanTopics[0] || "General",
+        options: manualQType === "mcq" ? manualQOptions.filter((opt) => opt.trim()) : [],
+        correct_answer: manualQAnswer.trim(),
+      });
+
+      setQuestions((prev) => [...prev, createdQ]);
+      toast.success("Question added successfully!");
+      setShowManualModal(false);
+      // Reset form
+      setManualQText("");
+      setManualQOptions(["", "", "", ""]);
+      setManualQAnswer("");
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, "Failed to save question."));
+    }
+  };
+
+  // Reordering Questions
+  const handleMoveQuestion = async (index: number, direction: "up" | "down") => {
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= questions.length) return;
+
+    const nextList = [...questions];
+    const [moved] = nextList.splice(index, 1);
+    nextList.splice(targetIndex, 0, moved);
+    setQuestions(nextList);
+
+    if (examId) {
+      try {
+        await facultyExamApi.reorderQuestions(
+          examId,
+          nextList.map((q) => q.id)
+        );
+      } catch {
+        // Silently tolerate
+      }
+    }
+  };
+
+  // Delete Question
+  const handleDeleteQuestion = async (questionId: number) => {
+    if (!examId) {
+      setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+      return;
+    }
+    try {
+      await facultyExamApi.deleteQuestion(examId, questionId);
+      setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+      toast.success("Question removed.");
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, "Failed to delete question."));
+    }
+  };
+
+  // Step 2 Next
+  const handleNextFromStep2 = () => {
+    if (questions.length === 0) {
+      toast.warning("Please add or generate at least one question before proceeding.");
+      return;
+    }
+    setCurrentStep(3);
+  };
+
+  // Step 3 Next
+  const handleNextFromStep3 = async () => {
+    // If exam is already created, persist settings to it via PATCH
+    if (examId) {
+      try {
+        await facultyExamApi.updateExam(examId, {
+          shuffle_questions: shuffleQuestions,
+          shuffle_options: shuffleOptions,
+          random_subset_size: randomSubsetSize ? Number(randomSubsetSize) : null,
+          max_warnings: Number(maxWarnings) || 3,
+          allow_retakes: allowRetakes,
+          show_result_immediately: showResultImmediately,
+          starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+          ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+        });
+      } catch (err) {
+        toast.error("Failed to update exam settings.");
+        return;
+      }
+    }
+    setCurrentStep(4);
+  };
+
+  // Step 4 Validation Checks
+  const validationChecks = useMemo(() => {
+    const target = Number(totalMarks);
+    const subset = randomSubsetSize ? Number(randomSubsetSize) : null;
+    const marksValid = subset ? questions.length >= subset : currentTotalMarks === target;
+    const scheduleValid = !startsAt || !endsAt || new Date(startsAt) < new Date(endsAt);
+    const hasQuestions = questions.length > 0;
+    const hasDept = Boolean(facultyDept);
+
+    return {
+      marksValid,
+      scheduleValid,
+      hasQuestions,
+      hasDept,
+      canPublish: marksValid && scheduleValid && hasQuestions && hasDept,
+    };
+  }, [totalMarks, randomSubsetSize, questions.length, currentTotalMarks, startsAt, endsAt, facultyDept]);
+
+  // Publish Exam
+  const handlePublishExam = async () => {
+    if (!examId) {
+      toast.error("Please generate or save the draft exam first.");
+      return;
+    }
+    if (!validationChecks.canPublish) {
+      toast.error("Please resolve validation errors before publishing.");
+      return;
+    }
+
+    setIsPublishing(true);
+    try {
+      // First ensure all settings are up to date
+      await facultyExamApi.updateExam(examId, {
+        shuffle_questions: shuffleQuestions,
+        shuffle_options: shuffleOptions,
+        random_subset_size: randomSubsetSize ? Number(randomSubsetSize) : null,
+        max_warnings: Number(maxWarnings) || 3,
+        allow_retakes: allowRetakes,
+        show_result_immediately: showResultImmediately,
+        starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+        ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+      });
+
+      const published = await facultyExamApi.publishExam(examId);
+      toast.success(published.visibility?.status_summary || "Exam published successfully!");
+      navigate("/faculty/history");
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, "Failed to publish exam."));
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const handleSaveAsDraft = () => {
+    toast.success("Exam draft saved successfully!");
+    navigate("/faculty/history");
   };
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
-      <div className="space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6 pb-20">
+        {/* Title & Subtitle */}
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1">Generate Exam Paper</h1>
-          <p className="text-xs sm:text-sm text-muted-foreground">Create AI-powered exam papers with customized parameters</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Faculty Paper Generation Wizard</h1>
+          <p className="text-xs sm:text-sm text-slate-500">
+            Design, curate, proctor, and publish exams with intelligent assistance
+          </p>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-              <h3 className="font-semibold text-foreground mb-4">Basic Details</h3>
-              <div className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-medium text-foreground mb-1.5">Exam Title</label>
+        {/* 4-Step Progress Stepper Header */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
+          <div className="grid grid-cols-4 gap-2 sm:gap-4">
+            {[
+              { num: 1, label: "Details", desc: "Title, Dept & Schedule" },
+              { num: 2, label: "Questions", desc: "AI, Bank & Manual" },
+              { num: 3, label: "Settings", desc: "Shuffle & Proctoring" },
+              { num: 4, label: "Publish", desc: "Preview & Validation" },
+            ].map((step) => {
+              const isActive = currentStep === step.num;
+              const isPast = currentStep > step.num;
+
+              return (
+                <div
+                  key={step.num}
+                  onClick={() => isPast && setCurrentStep(step.num as any)}
+                  className={`flex flex-col sm:flex-row items-center gap-2 sm:gap-3 rounded-xl p-2 sm:p-3 transition-all ${
+                    isActive
+                      ? "bg-blue-50/80 border border-blue-200"
+                      : isPast
+                      ? "cursor-pointer hover:bg-slate-50"
+                      : "opacity-60"
+                  }`}
+                >
+                  <div
+                    className={`flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl text-xs sm:text-sm font-bold transition-all ${
+                      isActive
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : isPast
+                        ? "bg-emerald-500 text-white"
+                        : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {isPast ? <Check className="h-4 w-4" /> : step.num}
+                  </div>
+                  <div className="text-center sm:text-left min-w-0">
+                    <p className={`text-xs sm:text-sm font-bold truncate ${isActive ? "text-blue-900" : "text-slate-900"}`}>
+                      {step.label}
+                    </p>
+                    <p className="hidden md:block text-[11px] text-slate-400 truncate">{step.desc}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ================= STEP 1: DETAILS ================= */}
+        {currentStep === 1 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900">Step 1: Exam Details & Schedule</h2>
+              <p className="text-xs text-slate-500">Provide basic assessment parameters and scheduling window</p>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              {/* Exam Title */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Exam Title *</label>
+                <input
+                  type="text"
+                  value={examTitle}
+                  onChange={(e) => setExamTitle(e.target.value)}
+                  placeholder="e.g., Computer Networks Midterm Assessment"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                />
+              </div>
+
+              {/* Locked Department */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Department (Locked)</label>
+                <div className="relative">
                   <input
                     type="text"
-                    value={examTitle}
-                    onChange={(e) => setExamTitle(e.target.value)}
-                    placeholder="e.g., Data Structures Midterm"
-                    className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                    disabled
+                    value={facultyDept}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-100/70 px-4 py-2.5 text-sm font-medium text-slate-700 cursor-not-allowed pl-10"
+                  />
+                  <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Automatically assigned from your faculty profile. Only students in this department can access the exam.
+                </p>
+              </div>
+
+              {/* Subject */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Subject / Course Name</label>
+                <input
+                  type="text"
+                  value={subjectName}
+                  onChange={(e) => setSubjectName(e.target.value)}
+                  placeholder="e.g., CS-402 Network Protocols"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                />
+              </div>
+
+              {/* Duration */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Duration (Minutes) *</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all pl-10"
+                  />
+                  <Clock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                </div>
+              </div>
+
+              {/* Total Marks */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Target Total Marks *</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={totalMarks}
+                  onChange={(e) => setTotalMarks(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                />
+              </div>
+
+              {/* Starts At */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Available From (Start Time)</label>
+                <div className="relative">
+                  <input
+                    type="datetime-local"
+                    value={startsAt}
+                    onChange={(e) => setStartsAt(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
                   />
                 </div>
-                <div className="grid sm:grid-cols-2 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-medium text-foreground mb-1.5">Duration (minutes)</label>
-                    <input
-                      type="number"
-                      value={duration}
-                      onChange={(e) => setDuration(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-foreground mb-1.5">Total Marks</label>
-                    <input
-                      type="number"
-                      value={totalMarks}
-                      onChange={(e) => setTotalMarks(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                    />
-                  </div>
+              </div>
+
+              {/* Ends At */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Deadline (End Time)</label>
+                <div className="relative">
+                  <input
+                    type="datetime-local"
+                    value={endsAt}
+                    onChange={(e) => setEndsAt(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Topics */}
+              <div className="sm:col-span-2">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-semibold text-slate-700">Syllabus Topics *</label>
+                  <button
+                    type="button"
+                    onClick={handleAddTopic}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add Topic
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {topics.map((t, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={t}
+                        onChange={(e) => handleTopicChange(idx, e.target.value)}
+                        placeholder={`Topic ${idx + 1} (e.g., OSI Layer 4 Transport Protocols)`}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                      />
+                      {topics.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTopic(idx)}
+                          className="rounded-lg p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-foreground">Topics to Cover</h3>
+            {/* Step 1 Actions */}
+            <div className="flex justify-end pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={handleNextFromStep1}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-md hover:bg-blue-700 transition-all"
+              >
+                Proceed to Questions <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 2: QUESTIONS ================= */}
+        {currentStep === 2 && (
+          <div className="space-y-6">
+            {/* Top Bar for Questions */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Step 2: Questions & Content</h2>
+                <p className="text-xs text-slate-500">
+                  {questions.length} Questions · Current Marks:{" "}
+                  <span className={`font-bold ${currentTotalMarks === Number(totalMarks) ? "text-emerald-600" : "text-amber-600"}`}>
+                    {currentTotalMarks} / {totalMarks}
+                  </span>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <button
-                  onClick={handleAddTopic}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                  type="button"
+                  onClick={() => setShowManualModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Topic
+                  <Plus className="h-4 w-4" /> Add Manually
+                </button>
+                <button
+                  type="button"
+                  disabled={isGenerating}
+                  onClick={handleAiGenerate}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50"
+                >
+                  <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating..." : "Generate with AI"}
                 </button>
               </div>
-              <div className="space-y-2.5">
-                {topics.map((topic, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={topic}
-                      onChange={(e) => handleTopicChange(index, e.target.value)}
-                      placeholder={`Topic ${index + 1}`}
-                      className="flex-1 px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                    />
-                    {topics.length > 1 && (
+            </div>
+
+            {/* Questions List */}
+            {questions.length === 0 ? (
+              <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-white p-12 text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 mb-4">
+                  <FileText className="h-7 w-7" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900">No Questions Added Yet</h3>
+                <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
+                  Click "Generate with AI" to automatically synthesize balanced questions from your syllabus, or "Add Manually" to author custom questions.
+                </p>
+                <div className="mt-6 flex justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualModal(true)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Plus className="h-4 w-4" /> Add Manually
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAiGenerate}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700"
+                  >
+                    <Sparkles className="h-4 w-4" /> Generate with AI
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {questions.map((q, idx) => (
+                  <div
+                    key={q.id || idx}
+                    className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:border-slate-300 transition-all flex flex-wrap items-start justify-between gap-4"
+                  >
+                    <div className="flex items-start gap-3.5 min-w-0 flex-1">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
+                        {idx + 1}
+                      </span>
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">
+                            {q.question_type.toUpperCase()}
+                          </span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
+                            {q.marks} {Number(q.marks) === 1 ? "Mark" : "Marks"}
+                          </span>
+                          <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] font-medium text-slate-500 uppercase">
+                            {q.difficulty}
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-slate-800 leading-snug">{q.text}</p>
+                        {q.options && q.options.length > 0 && (
+                          <div className="grid grid-cols-2 gap-1.5 pt-1 text-xs text-slate-600">
+                            {q.options.map((opt, oIdx) => (
+                              <div key={oIdx} className="truncate">
+                                <span className="font-semibold text-slate-400 mr-1.5">{String.fromCharCode(65 + oIdx)}.</span>
+                                {opt}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions: Move Up, Move Down, Delete */}
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <button
-                        onClick={() => handleRemoveTopic(index)}
-                        className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => handleMoveQuestion(idx, "up")}
+                        className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30"
+                        title="Move Up"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <ArrowUp className="h-4 w-4" />
                       </button>
+                      <button
+                        type="button"
+                        disabled={idx === questions.length - 1}
+                        onClick={() => handleMoveQuestion(idx, "down")}
+                        className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30"
+                        title="Move Down"
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteQuestion(q.id)}
+                        className="rounded-lg p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete Question"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Step 2 Navigation */}
+            <div className="flex justify-between pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(1)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <ArrowLeft className="h-4 w-4" /> Back to Details
+              </button>
+              <button
+                type="button"
+                onClick={handleNextFromStep2}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-md hover:bg-blue-700"
+              >
+                Configure Settings <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 3: SETTINGS ================= */}
+        {currentStep === 3 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-900">Step 3: Security & Proctoring Controls</h2>
+              <p className="text-xs text-slate-500">Configure question randomization, anti-cheat deterrents, and exam integrity</p>
+            </div>
+
+            <div className="grid gap-6 sm:grid-cols-2">
+              {/* Shuffle Questions Toggle */}
+              <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Shuffle Questions (Fisher-Yates)</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Randomizes the sequence of questions for each student. Shuffled order is securely persisted on attempt start.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={shuffleQuestions}
+                  onChange={(e) => setShuffleQuestions(e.target.checked)}
+                  className="mt-1 h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Shuffle Options Toggle */}
+              <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Shuffle Options (MCQ Choices)</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Permutes A, B, C, D choices differently for each student while automatically mapping answers back for grading.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={shuffleOptions}
+                  onChange={(e) => setShuffleOptions(e.target.checked)}
+                  className="mt-1 h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Random Subset Size */}
+              <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
+                <label className="block text-sm font-bold text-slate-900">Random Subset Size (Optional)</label>
+                <p className="text-xs text-slate-500 mt-0.5 mb-2.5">
+                  Select a randomized balanced subset for each attempt (e.g., 20 questions out of a bank of 50). Leave blank to use all questions.
+                </p>
+                <input
+                  type="number"
+                  min="1"
+                  max={questions.length || undefined}
+                  value={randomSubsetSize}
+                  onChange={(e) => setRandomSubsetSize(e.target.value)}
+                  placeholder={`Optional (Bank has ${questions.length} questions)`}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm focus:border-blue-500 focus:outline-hidden"
+                />
+              </div>
+
+              {/* Max Warnings Threshold */}
+              <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
+                <label className="block text-sm font-bold text-slate-900">Max Proctoring Warnings Threshold</label>
+                <p className="text-xs text-slate-500 mt-0.5 mb-2.5">
+                  Allowed proctoring infractions (fullscreen exit, tab switch). Exceeding this limit immediately terminates and auto-submits.
+                </p>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={maxWarnings}
+                    onChange={(e) => setMaxWarnings(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm focus:border-blue-500 focus:outline-hidden pl-10"
+                  />
+                  <ShieldAlert className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
+                </div>
+              </div>
+
+              {/* Allow Retakes Toggle */}
+              <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Allow Exam Retakes</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Permit students to take multiple attempts. Each attempt receives an independent randomized set of questions.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={allowRetakes}
+                  onChange={(e) => setAllowRetakes(e.target.checked)}
+                  className="mt-1 h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Show Result Immediately */}
+              <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Show Results Immediately</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Disclose objective question scores and solutions right after student submission. Turn off to keep answers secret until review.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={showResultImmediately}
+                  onChange={(e) => setShowResultImmediately(e.target.checked)}
+                  className="mt-1 h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {/* Step 3 Navigation */}
+            <div className="flex justify-between pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(2)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <ArrowLeft className="h-4 w-4" /> Back to Questions
+              </button>
+              <button
+                type="button"
+                onClick={handleNextFromStep3}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-bold text-white shadow-md hover:bg-blue-700"
+              >
+                Preview & Validate <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= STEP 4: PREVIEW & PUBLISH ================= */}
+        {currentStep === 4 && (
+          <div className="space-y-6">
+            {/* Live Validation Report Card */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <ShieldCheck className="h-5 w-5 text-blue-600" /> Pre-Publish Validation Report
+                </h2>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-bold ${
+                    validationChecks.canPublish ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {validationChecks.canPublish ? "All Checks Passed" : "Action Required"}
+                </span>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 text-xs sm:text-sm">
+                <div className="flex items-center gap-2.5">
+                  {validationChecks.hasDept ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>
+                    Department Assignment: <strong>{facultyDept || "Unassigned"}</strong>
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  {validationChecks.hasQuestions ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>
+                    Question Pool: <strong>{questions.length} questions ready</strong>
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  {validationChecks.marksValid ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>
+                    Marks Matching: Current{" "}
+                    <strong>
+                      {currentTotalMarks} / {totalMarks} Total
+                    </strong>
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  {validationChecks.scheduleValid ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>Schedule Window: {startsAt && endsAt ? "Valid Window" : "Open Schedule"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Paper Preview Card */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
+              {/* Paper Header Banner */}
+              <div className="text-center border-b border-slate-100 pb-6 space-y-2">
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                  {facultyDept} Department
+                </span>
+                <h1 className="text-2xl font-bold text-slate-900">{examTitle || "Untitled Exam"}</h1>
+                <p className="text-xs text-slate-500">
+                  Duration: {duration} Minutes · Total Marks: {totalMarks} · Warnings Threshold: {maxWarnings}
+                </p>
+                <div className="flex items-center justify-center gap-4 text-xs font-medium text-slate-600 pt-2">
+                  <span>Questions Shuffle: {shuffleQuestions ? "Enabled" : "Disabled"}</span>
+                  <span>•</span>
+                  <span>Options Shuffle: {shuffleOptions ? "Enabled" : "Disabled"}</span>
+                  <span>•</span>
+                  <span>Retakes: {allowRetakes ? "Allowed" : "Single Attempt"}</span>
+                </div>
+              </div>
+
+              {/* Questions Preview */}
+              <div className="space-y-6">
+                {questions.map((q, idx) => (
+                  <div key={q.id || idx} className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-900">Question {idx + 1}</span>
+                      <span className="font-semibold text-slate-600">[{q.marks} Marks]</span>
+                    </div>
+                    <p className="text-sm text-slate-800">{q.text}</p>
+                    {q.options && q.options.length > 0 && (
+                      <div className="grid grid-cols-2 gap-2 pt-2 text-xs text-slate-600">
+                        {q.options.map((opt, oIdx) => (
+                          <div key={oIdx} className="rounded-lg bg-white p-2 border border-slate-200">
+                            <span className="font-bold text-slate-400 mr-2">{String.fromCharCode(65 + oIdx)}.</span>
+                            {opt}
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-              <h3 className="font-semibold text-foreground mb-4">Question Types</h3>
-              <div className="grid sm:grid-cols-2 gap-3.5">
-                {Object.entries({
-                  mcq: "Multiple Choice",
-                  subjective: "Subjective",
-                  trueFalse: "True/False",
-                  fillBlanks: "Fill in the Blanks"
-                }).map(([key, label]) => (
-                  <label key={key} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-muted/30 transition-colors cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={questionTypes[key as keyof typeof questionTypes]}
-                      onChange={(e) => setQuestionTypes({
-                        ...questionTypes,
-                        [key]: e.target.checked
-                      })}
-                      className="w-4 h-4 rounded border-border text-primary focus:ring-2 focus:ring-primary accent-primary"
-                    />
-                    <span className="text-xs sm:text-sm font-medium text-foreground">{label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-              <h3 className="font-semibold text-foreground mb-4">Difficulty Distribution</h3>
-              <div className="space-y-4">
-                {difficultyKeys.map((level) => {
-                  const value = difficultyMix[level];
-                  return (
-                  <div key={level}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-medium text-foreground">{level}</label>
-                      <span className="text-xs font-bold text-primary">{value}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={value}
-                      onChange={(e) => handleDifficultyChange(level, e.target.value)}
-                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
-                    />
-                  </div>
-                    );
-                  })}
-                  {(() => {
-                    const total = difficultyKeys.reduce((sum, level) => sum + difficultyMix[level], 0);
-                    return <p className={`text-sm ${total === 100 ? "text-muted-foreground" : "text-red-600"}`}>Total: {total}%</p>;
-                  })()}
-              </div>
-            </div>
-
-            {previewPaper && (
-              <div className="bg-white rounded-xl p-6 shadow-sm border border-border">
-                <div className="flex items-center justify-between gap-4 mb-4">
-                  <h3 className="font-semibold">Preview</h3>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => void handleExport("pdf")} className="px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2 text-sm">
-                      <Download className="w-4 h-4" />
-                      PDF
-                    </button>
-                    <button onClick={() => void handleExport("docx")} className="px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-2 text-sm">
-                      <Download className="w-4 h-4" />
-                      DOCX
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-4 text-sm">
-                  <div className="text-center border-b border-border pb-4">
-                    <p className="font-semibold text-lg">{previewPaper.institution.institution_name}</p>
-                    <p className="font-semibold">{previewPaper.title}</p>
-                    <p className="text-muted-foreground">Duration: {previewPaper.duration} minutes | Total Marks: {previewPaper.total_marks}</p>
-                    {generationSource && <p className="text-xs text-muted-foreground mt-1">Generated by {generationSource.provider} ({generationSource.model})</p>}
-                  </div>
-                  <div>
-                    <p className="font-medium">Instructions</p>
-                    <p className="text-muted-foreground">Answer all questions. Marks are shown beside each question.</p>
-                  </div>
-                  {["MCQ", "Subjective", "True/False", "Fill in the Blanks"].map((type, sectionIndex) => {
-                    const questions = previewPaper.questions.filter((question) => question.type === type);
-                    if (!questions.length) return null;
-                    return (
-                      <div key={type}>
-                        <p className="font-semibold mb-2">Section {String.fromCharCode(65 + sectionIndex)}</p>
-                        <div className="space-y-3">
-                          {questions.map((question) => (
-                            <div key={question.question_number}>
-                              <p>{question.question_number}. {question.question} <span className="text-muted-foreground">[{question.marks} marks]</span></p>
-                              {question.options.length > 0 && (
-                                <ul className="mt-1 ml-5 list-disc text-muted-foreground">
-                                  {question.options.map((option) => <li key={option}>{option}</li>)}
-                                </ul>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-              <h3 className="font-semibold text-foreground mb-4">Upload Syllabus</h3>
-              <label className="block border-2 border-dashed border-border rounded-xl p-6 text-center hover:border-primary/60 hover:bg-primary/5 transition-all cursor-pointer">
-                <Upload className="w-9 h-9 text-muted-foreground/60 mx-auto mb-2" />
-                <p className="text-sm font-medium text-foreground mb-1">Click to upload</p>
-                <p className="text-xs text-muted-foreground">PDF, DOCX (Max 10MB)</p>
-                <input
-                  type="file"
-                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  className="hidden"
-                  onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-                />
-              </label>
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between text-xs sm:text-sm p-2 rounded-lg bg-muted/40">
-                  <span className="text-muted-foreground">Uploaded:</span>
-                  <span className="font-medium text-foreground truncate max-w-[200px]">{uploadedSyllabus?.original_filename || syllabusFile?.name || "-"}</span>
-                </div>
-                {(uploadProgress > 0 || isGenerating) && (
-                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div className="h-full bg-primary transition-all" style={{ width: `${uploadProgress}%` }} />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-              <h3 className="font-semibold text-foreground mb-3">AI Model</h3>
-              <select
-                value={aiModel}
-                onChange={(e) => setAiModel(e.target.value as AiModel)}
-                className="w-full px-3.5 py-2 rounded-lg bg-input-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            {/* Step 4 Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(3)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
-                {aiModels.map((model) => (
-                  <option key={model} value={model}>{aiModelLabels[model]}</option>
-                ))}
-              </select>
-              <p className={`mt-2 text-xs font-medium ${ollamaStatus === "connected" ? "text-emerald-600" : ollamaStatus === "model-missing" ? "text-amber-600" : "text-rose-600"}`}>
-                {ollamaStatusMessage}
-              </p>
-            </div>
+                <ArrowLeft className="h-4 w-4" /> Back to Settings
+              </button>
 
-            {isGenerating && (
-              <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border">
-                <div className="flex items-center justify-between text-xs sm:text-sm mb-2">
-                  <span className="text-muted-foreground">Generation Progress</span>
-                  <span className="font-semibold text-primary">{generationProgress}%</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-primary to-secondary transition-all" style={{ width: `${generationProgress}%` }} />
-                </div>
-              </div>
-            )}
-
-            <div className="bg-white rounded-xl p-5 sm:p-6 shadow-sm border border-border space-y-3">
-              <h3 className="font-semibold text-foreground text-sm">Quality & Deduplication Settings</h3>
-              <label className="flex items-center gap-2.5 text-xs sm:text-sm text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={avoidRepeats}
-                  onChange={(e) => setAvoidRepeats(e.target.checked)}
-                  className="rounded border-border text-primary focus:ring-primary w-4 h-4"
-                />
-                <span>Avoid repeating questions from my recent papers (last 3 papers / 30 days)</span>
-              </label>
-              <label className="flex items-center gap-2.5 text-xs sm:text-sm text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={forceRegenerate}
-                  onChange={(e) => setForceRegenerate(e.target.checked)}
-                  className="rounded border-border text-primary focus:ring-primary w-4 h-4"
-                />
-                <span>Bypass cache (force fresh in-memory generation)</span>
-              </label>
-              <div className="pt-2 border-t border-border flex justify-between items-center text-xs">
-                <span className="text-muted-foreground">Cached papers load in &lt; 200 ms</span>
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={async () => {
-                    try {
-                      await facultyExamApi.clearPaperCache();
-                      toast.success("Cached papers cleared!");
-                    } catch {
-                      toast.error("Failed to clear cache");
-                    }
-                  }}
-                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                  onClick={handleSaveAsDraft}
+                  className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs"
                 >
-                  Clear My Paper Cache
+                  Save as Draft
+                </button>
+                <button
+                  type="button"
+                  disabled={!validationChecks.canPublish || isPublishing}
+                  onClick={handlePublishExam}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-2.5 text-sm font-bold text-white shadow-md hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 transition-all"
+                >
+                  <Send className="h-4 w-4" /> {isPublishing ? "Publishing..." : "Publish Exam"}
                 </button>
               </div>
             </div>
-
-            {error && <p className="text-xs sm:text-sm text-destructive font-medium">{error}</p>}
-
-            <button
-              onClick={() => void handleGenerate()}
-              disabled={isGenerating}
-              className="w-full px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-secondary text-white font-medium text-sm hover:opacity-90 shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <Sparkles className="w-4 h-4" />
-              {isGenerating ? "Generating paper..." : "Generate Paper"}
-            </button>
           </div>
-        </div>
+        )}
+
+        {/* Modal: Author Question Manually */}
+        {showManualModal && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-lg rounded-3xl bg-white p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-base font-bold text-slate-900">Add Question Manually</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowManualModal(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 text-xs sm:text-sm">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Question Type</label>
+                  <select
+                    value={manualQType}
+                    onChange={(e) => setManualQType(e.target.value as any)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                  >
+                    <option value="mcq">Multiple Choice (Single)</option>
+                    <option value="truefalse">True / False</option>
+                    <option value="fillblank">Fill in the Blank</option>
+                    <option value="subjective">Subjective / Long Answer</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Question Text *</label>
+                  <textarea
+                    rows={3}
+                    value={manualQText}
+                    onChange={(e) => setManualQText(e.target.value)}
+                    placeholder="Enter the question text..."
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 p-3 text-sm focus:bg-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Marks</label>
+                    <input
+                      type="number"
+                      min="0.5"
+                      step="0.5"
+                      value={manualQMarks}
+                      onChange={(e) => setManualQMarks(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Difficulty</label>
+                    <select
+                      value={manualQDiff}
+                      onChange={(e) => setManualQDiff(e.target.value as any)}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                    >
+                      <option value="easy">Easy</option>
+                      <option value="medium">Medium</option>
+                      <option value="hard">Hard</option>
+                    </select>
+                  </div>
+                </div>
+
+                {manualQType === "mcq" && (
+                  <div className="space-y-2">
+                    <label className="block text-xs font-semibold text-slate-700">Options (A, B, C, D)</label>
+                    {manualQOptions.map((opt, oIdx) => (
+                      <div key={oIdx} className="flex items-center gap-2">
+                        <span className="w-5 text-xs font-bold text-slate-400">{String.fromCharCode(65 + oIdx)}.</span>
+                        <input
+                          type="text"
+                          value={opt}
+                          onChange={(e) => {
+                            const next = [...manualQOptions];
+                            next[oIdx] = e.target.value;
+                            setManualQOptions(next);
+                          }}
+                          placeholder={`Option ${String.fromCharCode(65 + oIdx)} text`}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Correct Answer / Model Answer</label>
+                  <input
+                    type="text"
+                    value={manualQAnswer}
+                    onChange={(e) => setManualQAnswer(e.target.value)}
+                    placeholder={manualQType === "mcq" ? "e.g., A or the option text" : "e.g., Expected key terms"}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowManualModal(false)}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveManualQuestion}
+                  className="rounded-xl bg-blue-600 px-5 py-2 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-blue-700"
+                >
+                  Add Question
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

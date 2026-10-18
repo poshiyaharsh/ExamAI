@@ -124,6 +124,120 @@ class QuestionUpdateView(FacultyExamViewMixin, APIView):
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
         return Response(FacultyQuestionSerializer(question).data)
 
+    def delete(self, request, exam_id, question_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            return Response(
+                {'detail': 'Published exams are immutable and cannot be modified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        question = Question.objects.filter(exam=exam, institution=exam.institution, id=question_id).first()
+        if not question:
+            return Response({'detail': 'Question not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        question.delete()
+        from api.paper_engine.cache import PaperCacheService
+        PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+        return Response({'deleted': True, 'id': question_id}, status=status.HTTP_200_OK)
+
+
+class ExamQuestionCreateView(FacultyExamViewMixin, APIView):
+    def post(self, request, exam_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            return Response(
+                {'detail': 'Published exams are immutable and cannot be modified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bank_q_id = request.data.get('bank_question_id')
+        next_order = exam.questions.count() + 1
+
+        if bank_q_id:
+            bank_q = Question.objects.filter(id=bank_q_id, institution=exam.institution).first()
+            if not bank_q:
+                return Response({'detail': 'Question bank item not found.'}, status=status.HTTP_404_NOT_FOUND)
+            new_q = Question.objects.create(
+                institution=exam.institution,
+                exam=exam,
+                order=next_order,
+                department=exam.department,
+                subject=bank_q.subject,
+                topic=bank_q.topic,
+                topic_text=bank_q.topic_text,
+                question_type=bank_q.question_type,
+                difficulty=bank_q.difficulty,
+                text=bank_q.text,
+                options=bank_q.options,
+                correct_answer=bank_q.correct_answer,
+                model_answer=bank_q.model_answer,
+                explanation=bank_q.explanation,
+                marks=bank_q.marks,
+                created_by=request.user,
+            )
+        else:
+            q_text = str(request.data.get('text', '')).strip()
+            if not q_text:
+                return Response({'detail': 'Question text is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            q_type = request.data.get('question_type', 'mcq')
+            q_diff = request.data.get('difficulty', 'medium')
+            q_marks = float(request.data.get('marks', 1.0))
+            q_opts = request.data.get('options') or []
+            q_ans = request.data.get('correct_answer')
+            q_topic = request.data.get('topic', '')
+
+            new_q = Question.objects.create(
+                institution=exam.institution,
+                exam=exam,
+                order=next_order,
+                department=exam.department,
+                topic_text=q_topic,
+                question_type=q_type,
+                difficulty=q_diff,
+                text=q_text,
+                options=q_opts,
+                correct_answer=q_ans,
+                marks=q_marks,
+                created_by=request.user,
+            )
+
+        from api.paper_engine.cache import PaperCacheService
+        PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+        return Response(FacultyQuestionSerializer(new_q).data, status=status.HTTP_201_CREATED)
+
+
+class ReorderQuestionsView(FacultyExamViewMixin, APIView):
+    def post(self, request, exam_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            return Response(
+                {'detail': 'Published exams are immutable and cannot be modified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        question_ids = request.data.get('question_ids', [])
+        if not isinstance(question_ids, list):
+            return Response({'detail': 'question_ids must be a list.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        for idx, qid in enumerate(question_ids, start=1):
+            Question.objects.filter(id=qid, exam=exam, institution=exam.institution).update(order=idx)
+
+        from api.paper_engine.cache import PaperCacheService
+        PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+
+        exam.refresh_from_db()
+        return Response(ExamDetailSerializer(exam).data, status=status.HTTP_200_OK)
+
 
 class ShuffleExamView(FacultyExamViewMixin, APIView):
     def post(self, request, exam_id):
@@ -196,7 +310,13 @@ class PublishExamView(FacultyExamViewMixin, APIView):
         questions = list(exam.questions.all())
         if not questions:
             return Response({'detail': 'An exam must contain at least one question.'}, status=status.HTTP_400_BAD_REQUEST)
-        if sum(question.marks for question in questions) != exam.total_marks:
+        if exam.random_subset_size:
+            if len(questions) < exam.random_subset_size:
+                return Response(
+                    {'detail': f'The exam question bank has {len(questions)} questions, which is less than the requested subset size of {exam.random_subset_size}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif sum(question.marks for question in questions) != exam.total_marks:
             return Response(
                 {'detail': 'Question marks must sum exactly to the exam total marks before publishing.'},
                 status=status.HTTP_400_BAD_REQUEST,

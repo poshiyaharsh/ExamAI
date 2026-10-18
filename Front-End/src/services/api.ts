@@ -258,6 +258,7 @@ export type ExamQuestion = {
 export type FacultyExam = {
   id: number;
   title: string;
+  department?: string;
   duration_minutes: number;
   total_marks: number;
   topics: string[];
@@ -271,6 +272,12 @@ export type FacultyExam = {
   request_hash?: string;
   is_immutable?: boolean;
   validation_report?: any;
+  shuffle_questions?: boolean;
+  shuffle_options?: boolean;
+  random_subset_size?: number | null;
+  max_warnings?: number;
+  allow_retakes?: boolean;
+  show_result_immediately?: boolean;
   starts_at: string | null;
   ends_at: string | null;
   created_at: string;
@@ -1310,6 +1317,38 @@ export const facultyExamApi = {
   },
   reevaluateAnswer: async (answerId: number, force: boolean = false): Promise<any> => {
     const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/re-evaluate/`, { force });
+    return response.data;
+  },
+  updateExam: async (examId: number, patchData: Partial<FacultyExam>): Promise<FacultyExam> => {
+    const response = await apiClient.patch<FacultyExam>(`/api/faculty/exams/${examId}/`, patchData);
+    return response.data;
+  },
+  addQuestion: async (
+    examId: number,
+    data: {
+      bank_question_id?: number;
+      text?: string;
+      question_type?: string;
+      difficulty?: string;
+      marks?: number;
+      options?: string[];
+      correct_answer?: any;
+      topic?: string;
+    }
+  ): Promise<ExamQuestion> => {
+    const response = await apiClient.post<ExamQuestion>(`/api/faculty/exams/${examId}/questions/`, data);
+    return response.data;
+  },
+  deleteQuestion: async (examId: number, questionId: number): Promise<{ deleted: boolean; id: number }> => {
+    const response = await apiClient.delete<{ deleted: boolean; id: number }>(
+      `/api/faculty/exams/${examId}/questions/${questionId}/`
+    );
+    return response.data;
+  },
+  reorderQuestions: async (examId: number, questionIds: number[]): Promise<FacultyExam> => {
+    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/questions/reorder/`, {
+      question_ids: questionIds,
+    });
     return response.data;
   },
   manualGradeAnswer: async (answerId: number, score: number, feedback: string): Promise<any> => {
