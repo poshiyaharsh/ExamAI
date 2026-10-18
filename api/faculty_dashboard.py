@@ -1,5 +1,7 @@
 import logging
-from django.db.models import Avg, Count, ExpressionWrapper, F, FloatField, Q
+import uuid
+from django.db import models
+from django.db.models import Avg, Count, ExpressionWrapper, F, FloatField, Q, Sum
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -24,13 +26,24 @@ class FacultyDashboardView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
 
     def get(self, request):
-        user = request.user
-        now = timezone.now()
-        from api.tenant import get_user_institution
-        tenant = getattr(request, 'tenant', None) or get_user_institution(user)
-        if not tenant:
-            return Response({'status': 'error', 'message': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+        req_id = str(uuid.uuid4())[:8]
+        try:
+            user = request.user
+            now = timezone.now()
+            from api.tenant import get_user_institution
+            tenant = getattr(request, 'tenant', None) or get_user_institution(user)
+            if not tenant:
+                return Response({'status': 'error', 'message': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+            return self._build_dashboard(request, user, tenant, now)
+        except Exception as exc:
+            logger.exception("[%s] Unexpected error in FacultyDashboardView: %s", req_id, exc)
+            return Response({
+                'status': 'error',
+                'message': 'Failed to load faculty dashboard. Please try again.',
+                'request_id': req_id,
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def _build_dashboard(self, request, user, tenant, now):
         faculty_profile = getattr(user, 'faculty_profile', None)
         dept = faculty_profile.department if faculty_profile else ''
 
@@ -125,18 +138,21 @@ class FacultyDashboardView(APIView):
         from api.exams.eligibility import compute_live_exam_metrics
 
         ongoing_exams_list = []
-        for e in ongoing_qs:
-            m = compute_live_exam_metrics(e, now=now)
-            m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
-            viol_stats = StudentAttempt.objects.filter(exam=e).aggregate(
-                total_violations=models.Sum('violation_count'),
-                flagged_students=Count('id', filter=Q(violation_count__gt=0)),
-            )
-            m['total_violations'] = viol_stats.get('total_violations') or 0
-            m['flagged_students'] = viol_stats.get('flagged_students') or 0
-            m['question_count'] = e.questions.filter(is_deleted=False).count()
-            m['topics'] = e.topics[:2] if isinstance(e.topics, list) else []
-            ongoing_exams_list.append(m)
+        try:
+            for e in ongoing_qs:
+                m = compute_live_exam_metrics(e, now=now)
+                m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
+                viol_stats = StudentAttempt.objects.filter(exam=e).aggregate(
+                    total_violations=Sum('violation_count'),
+                    flagged_students=Count('id', filter=Q(violation_count__gt=0)),
+                )
+                m['total_violations'] = viol_stats.get('total_violations') or 0
+                m['flagged_students'] = viol_stats.get('flagged_students') or 0
+                m['question_count'] = e.questions.filter(is_deleted=False).count()
+                m['topics'] = e.topics[:2] if isinstance(e.topics, list) else []
+                ongoing_exams_list.append(m)
+        except Exception as ex:
+            logger.warning("Error computing ongoing live exams: %s", ex, exc_info=True)
 
         # 4. Upcoming Exams (scheduled for future or next unattempted)
         upcoming_qs = faculty_exams.filter(

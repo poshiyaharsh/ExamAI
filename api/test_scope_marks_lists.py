@@ -183,3 +183,89 @@ class ScopeMarksListsTestCase(TestCase):
         # Verify sum of question marks equals 100
         new_sum = sum(q.marks for q in self.exam.questions.all())
         self.assertEqual(new_sum, 100)
+
+    def test_faculty_dashboard_loads_cleanly(self):
+        """Faculty dashboard returns 200 with all required sections and violation stats."""
+        response = self.client.get("/api/faculty/dashboard/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data.get("data", {})
+        self.assertIn("profile", data)
+        self.assertIn("stats", data)
+        self.assertIn("ongoing_exams", data)
+        self.assertIn("recent_exams", data)
+
+        # Verify recent exams data structure
+        recent = data["recent_exams"]
+        self.assertGreaterEqual(len(recent), 1)
+        r0 = recent[0]
+        self.assertEqual(r0["id"], self.exam.id)
+        self.assertEqual(r0["target_total_marks"], 100)
+        self.assertEqual(r0["total_marks"], 73)
+        self.assertEqual(r0["marks_shortfall"], 27)
+
+    def test_faculty_dashboard_isolation(self):
+        """Second faculty user only sees their own data, and cannot see other faculty exams."""
+        faculty_user_2 = User.objects.create_user(
+            username="faculty_math",
+            password="testpassword123",
+            email="math_prof@techu.edu",
+        )
+        FacultyProfile.objects.create(
+            user=faculty_user_2,
+            institution=self.institution,
+            department="Mathematics",
+            employee_id="FAC002",
+        )
+        exam_2 = Exam.objects.create(
+            institution=self.institution,
+            created_by=faculty_user_2,
+            title="Calculus I",
+            subject="Mathematics",
+            department="Mathematics",
+            duration_minutes=90,
+            total_marks=50,
+            target_total_marks=50,
+            marks_shortfall=0,
+            status=Exam.Status.PUBLISHED,
+        )
+
+        client_2 = APIClient()
+        token_2 = _auth_token(faculty_user_2, "faculty", self.institution)
+        client_2.credentials(HTTP_AUTHORIZATION=f"Bearer {token_2}")
+
+        resp_2 = client_2.get("/api/faculty/dashboard/")
+        self.assertEqual(resp_2.status_code, status.HTTP_200_OK)
+        data_2 = resp_2.data.get("data", {})
+        recent_2 = data_2["recent_exams"]
+        self.assertEqual(len(recent_2), 1)
+        self.assertEqual(recent_2[0]["id"], exam_2.id)
+
+        # First faculty dashboard must NOT include exam_2
+        resp_1 = self.client.get("/api/faculty/dashboard/")
+        data_1 = resp_1.data.get("data", {})
+        recent_1 = data_1["recent_exams"]
+        self.assertTrue(all(e["id"] != exam_2.id for e in recent_1))
+
+    def test_faculty_dashboard_zero_exams(self):
+        """Faculty with zero exams loads dashboard with 200 and empty lists."""
+        empty_faculty = User.objects.create_user(
+            username="faculty_empty",
+            password="testpassword123",
+            email="empty_prof@techu.edu",
+        )
+        FacultyProfile.objects.create(
+            user=empty_faculty,
+            institution=self.institution,
+            department="Physics",
+            employee_id="FAC003",
+        )
+        client_empty = APIClient()
+        token_empty = _auth_token(empty_faculty, "faculty", self.institution)
+        client_empty.credentials(HTTP_AUTHORIZATION=f"Bearer {token_empty}")
+
+        resp = client_empty.get("/api/faculty/dashboard/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.data.get("data", {})
+        self.assertEqual(len(data["recent_exams"]), 0)
+        self.assertEqual(len(data["ongoing_exams"]), 0)
+        self.assertEqual(data["stats"]["total_exams"], 0)

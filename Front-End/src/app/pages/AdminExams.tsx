@@ -505,31 +505,20 @@ export function AdminExams() {
             </div>
           ) : (
             <div className="w-full min-w-0 max-w-full">
-              {/* Desktop/Tablet Table (>= 768px) with table-layout: fixed */}
-              <div className="hidden md:block overflow-x-auto w-full min-w-0">
+              {/* Desktop Table (>= xl) with table-layout: fixed */}
+              <div className="hidden xl:block w-full min-w-0">
                 <table className="w-full text-left border-collapse table-fixed">
-                  <colgroup>
-                    <col className="w-[30%] lg:w-[32%]" />
-                    <col className="w-[18%] lg:w-[18%]" />
-                    <col className="w-[10%] lg:w-[10%]" />
-                    <col className="w-[12%] lg:w-[12%]" />
-                    <col className="w-[8%] lg:w-[8%]" />
-                    <col className="hidden xl:table-column xl:w-[8%]" />
-                    <col className="w-[12%] lg:w-[10%]" />
-                    <col className="hidden 2xl:table-column 2xl:w-[10%]" />
-                    <col className="w-[10%] lg:w-[10%]" />
-                  </colgroup>
                   <thead className="bg-muted/50 border-b border-border text-xs uppercase font-semibold text-muted-foreground tracking-wider">
                     <tr>
                       <th className="px-4 py-3.5 truncate">Exam Title & Subject</th>
-                      <th className="px-3 py-3.5 truncate">Faculty / Dept</th>
-                      <th className="px-3 py-3.5 truncate">Duration</th>
-                      <th className="px-3 py-3.5 truncate">Total Marks</th>
-                      <th className="px-3 py-3.5 text-center truncate">Questions</th>
-                      <th className="px-3 py-3.5 text-center truncate hidden xl:table-cell">Attempts</th>
-                      <th className="px-3 py-3.5 truncate">Status</th>
-                      <th className="px-3 py-3.5 truncate hidden 2xl:table-cell">Created On</th>
-                      <th className="px-4 py-3.5 text-right truncate">Actions</th>
+                      <th className="w-44 px-3 py-3.5 truncate">Faculty / Dept</th>
+                      <th className="w-20 px-3 py-3.5 truncate">Duration</th>
+                      <th className="w-28 px-3 py-3.5 truncate">Total Marks</th>
+                      <th className="w-20 px-3 py-3.5 text-center truncate">Questions</th>
+                      <th className="w-20 px-3 py-3.5 text-center truncate hidden 2xl:table-cell">Attempts</th>
+                      <th className="w-28 px-3 py-3.5 truncate">Status</th>
+                      <th className="w-28 px-3 py-3.5 truncate hidden 2xl:table-cell">Created On</th>
+                      <th className="w-28 px-4 py-3.5 text-right truncate">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border text-sm">
@@ -621,8 +610,8 @@ export function AdminExams() {
                             </span>
                           </td>
 
-                          {/* Attempts count (hidden below xl) */}
-                          <td className="px-3 py-3.5 text-xs text-center text-foreground font-medium hidden xl:table-cell">
+                          {/* Attempts count (hidden below 2xl) */}
+                          <td className="px-3 py-3.5 text-xs text-center text-foreground font-medium hidden 2xl:table-cell">
                             <span className="inline-block px-2 py-0.5 rounded bg-muted/60 text-xs">
                               {exam.attempts_count}
                             </span>
@@ -703,8 +692,8 @@ export function AdminExams() {
                 </table>
               </div>
 
-              {/* Mobile Stacked Cards (< 768px) with zero horizontal overflow */}
-              <div className="md:hidden divide-y divide-border">
+              {/* Tablet & Mobile Stacked Cards (< 1280px) with zero horizontal overflow */}
+              <div className="xl:hidden divide-y divide-border">
                 {exams.map((exam) => {
                   const badge = getStatusBadgeStyle(exam.status);
                   return (
