@@ -188,9 +188,9 @@ def call_ollama(
     eff_temp = temperature if temperature is not None else OLLAMA_TEMPERATURE
     eff_keep_alive = keep_alive or OLLAMA_KEEP_ALIVE
 
-    # Compute dynamic context if not provided
-    prompt_token_est = max(512, len(prompt) // 4)
-    eff_num_ctx = num_ctx or min(8192, max(OLLAMA_NUM_CTX, prompt_token_est + num_predict + 512))
+    # Right-size dynamic context: min(4096, max(1024, prompt + predict + margin))
+    prompt_token_est = max(256, len(prompt) // 4)
+    eff_num_ctx = num_ctx or min(4096, max(1024, prompt_token_est + num_predict + 256))
 
     # Dynamic timeout based on expected output tokens
     eff_timeout = timeout or max(OLLAMA_TIMEOUT, int(num_predict * 0.15) + 60)
@@ -239,6 +239,12 @@ def call_ollama(
     done_reason = response_data.get('done_reason', 'stop')
     eval_count = response_data.get('eval_count', 0)
 
+    if done_reason == 'length':
+        logger.warning(
+            "Ollama output was truncated by token limit for model=%s (eval_count=%s, limit=%s)",
+            canonical_tag, eval_count, num_predict
+        )
+
     if FACULTY_DEBUG_MODE:
         snippet = (result[:300] if result else '').replace('\n', ' ')
         logger.info(
@@ -254,6 +260,28 @@ def call_ollama(
     if not isinstance(result, str) or not result.strip():
         raise RuntimeError(f'Ollama response for model tag "{canonical_tag}" did not contain generated text.')
     return result
+
+
+def warmup_ollama_model(model_tag: Optional[str] = None, base_url: str = OLLAMA_BASE_URL) -> bool:
+    """
+    Sends a minimal 1-token query to warm up and keep the model loaded in GPU VRAM for 30 minutes.
+    """
+    canonical_tag = canonicalize_model_tag(model_tag)
+    generate_url = f"{base_url.rstrip('/')}/api/generate"
+    payload = json.dumps({
+        'model': canonical_tag,
+        'prompt': 'ping',
+        'stream': False,
+        'keep_alive': '30m',
+        'options': {'num_predict': 1, 'num_ctx': 512}
+    }).encode('utf-8')
+    req = Request(generate_url, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urlopen(req, timeout=15) as resp:
+            return resp.status == 200
+    except Exception as exc:
+        logger.debug("Ollama warmup ping failed for %s: %s", canonical_tag, exc)
+        return False
 
 
 def parse_json_safely(raw: str) -> dict:

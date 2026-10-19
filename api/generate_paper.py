@@ -21,18 +21,22 @@ from .utils.blueprint_allocator import compute_blueprint_total
 from .utils.evaluation_config import (
     FACULTY_DEBUG_MODE,
     OLLAMA_LONG_ANSWER_BATCH_SIZE,
+    OLLAMA_LONG_ANSWER_SINGLE_PASS,
     OLLAMA_MAX_BATCH_SIZE,
     OLLAMA_MAX_RETRIES,
+    OLLAMA_WARMUP_ON_INIT,
 )
 from .utils.extract_text import (
     chunk_syllabus_by_topics,
     extract_syllabus_text,
+    get_cached_syllabus_data,
     get_relevant_syllabus_chunk,
 )
-from .utils.ollama_client import call_ollama, parse_json_safely
+from .utils.ollama_client import call_ollama, parse_json_safely, warmup_ollama_model
 from .utils.prompts import (
     build_long_answer_step_a_prompt,
     build_long_answer_step_b_prompt,
+    build_single_pass_long_answer_prompt,
     build_type_generation_prompt,
     get_question_type_schema,
 )
@@ -154,21 +158,46 @@ def _validated_type_questions(data, question_type, default_marks=1):
 def deduplicate_questions(questions, similarity_threshold=0.85):
     """
     Deduplicates questions based on normalized text similarity.
+    Uses exact SHA-256 hash match + Jaccard token pre-filter before difflib.SequenceMatcher.
     Does not drop legitimately different questions.
     """
     unique = []
+    seen_hashes = set()
+    unique_tokens = []
     dropped_count = 0
+
     for q in questions:
-        text_a = str(q.get('text', '')).strip().lower()
+        raw_text = str(q.get('text', '')).strip().lower()
+        norm_text = ' '.join(raw_text.split())
+        if not norm_text:
+            continue
+
+        text_hash = hashlib.sha256(norm_text.encode('utf-8')).hexdigest()
+        if text_hash in seen_hashes:
+            dropped_count += 1
+            continue
+
+        q_tokens = set(norm_text.split())
         is_dup = False
-        for u in unique:
-            text_b = str(u.get('text', '')).strip().lower()
-            if difflib.SequenceMatcher(None, text_a, text_b).ratio() >= similarity_threshold:
+
+        for idx, u in enumerate(unique):
+            u_tokens = unique_tokens[idx]
+            intersection_len = len(q_tokens & u_tokens)
+            union_len = len(q_tokens | u_tokens)
+            if union_len > 0 and (intersection_len / union_len) < (similarity_threshold * 0.6):
+                continue
+
+            text_b = ' '.join(str(u.get('text', '')).strip().lower().split())
+            if difflib.SequenceMatcher(None, norm_text, text_b).ratio() >= similarity_threshold:
                 is_dup = True
                 dropped_count += 1
                 break
+
         if not is_dup:
+            seen_hashes.add(text_hash)
             unique.append(q)
+            unique_tokens.append(q_tokens)
+
     if dropped_count:
         logger.info("Deduplication removed %s duplicate questions", dropped_count)
     return unique, dropped_count
@@ -176,99 +205,137 @@ def deduplicate_questions(questions, similarity_threshold=0.85):
 
 def _generate_single_long_answer(model_tag, marks_per_q, topic, difficulty, syllabus_chunk, progress_cb=None, item_idx=1, total_items=1):
     """
-    Two-step reliable generation for a single long-answer question:
-    Step A: Question metadata, rubric criteria, word limit, source evidence (JSON Schema)
-    Step B: Comprehensive academic model answer (JSON Schema)
+    High-reliability generation for a single long-answer question:
+    If OLLAMA_LONG_ANSWER_SINGLE_PASS is True, attempts single-pass generation
+    (combining question metadata, rubric, model answer, and source evidence into 1 call).
+    Falls back to two-step generation (Step A: question & rubric, Step B: model answer)
+    if single-pass fails or is disabled.
     """
     if progress_cb:
-        progress_cb(f"Long answer {item_idx}/{total_items}: crafting question & rubric")
+        progress_cb(f"Long answer {item_idx}/{total_items}: crafting comprehensive question & rubric")
 
     last_error = None
     question_item = None
 
-    # Step A: Generate Question + Rubric Criteria
-    for attempt in range(OLLAMA_MAX_RETRIES + 1):
+    # Option 1: Fast Single-Pass Generation
+    if OLLAMA_LONG_ANSWER_SINGLE_PASS:
         try:
-            feedback = f"Previous error: {last_error}" if attempt > 0 else None
-            prompt_a = build_long_answer_step_a_prompt(
+            prompt_single = build_single_pass_long_answer_prompt(
                 count=1,
                 marks_per_question=marks_per_q,
                 topics=[topic] if topic else [],
                 difficulty_pct={difficulty: 100},
                 syllabus_text=syllabus_chunk,
-                retry_feedback=feedback,
             )
-            raw_a = call_ollama(
+            raw_single = call_ollama(
                 model=model_tag,
-                prompt=prompt_a,
-                format_schema=get_question_type_schema('long_answer_step_a'),
-                num_predict=400,
+                prompt=prompt_single,
+                format_schema=get_question_type_schema('long_answer_single_pass'),
+                num_predict=1200,
                 temperature=0.2,
             )
-            parsed_a = parse_json_safely(raw_a)
-            candidates = _validated_type_questions(parsed_a, 'long_answer', default_marks=marks_per_q)
+            parsed_single = parse_json_safely(raw_single)
+            candidates = _validated_type_questions(parsed_single, 'long_answer', default_marks=marks_per_q)
             if candidates:
-                question_item = candidates[0]
-                break
+                cand = candidates[0]
+                model_ans = str(cand.get('model_answer', '')).strip()
+                if model_ans and len(model_ans.split()) >= 30:
+                    question_item = cand
+                    question_item['topic'] = topic or question_item.get('topic', '')
+                    question_item['difficulty'] = difficulty
+                    question_item['marks'] = marks_per_q
+                    question_item['rubric'] = repair_rubric_marks(question_item.get('rubric'), marks_per_q)
+                    question_item['model_answer'] = model_ans
+                    logger.info("Single-pass long answer successfully generated for topic '%s'", topic)
         except Exception as exc:
-            last_error = exc
-            logger.warning("Long answer Step A attempt %s failed for topic '%s': %s", attempt + 1, topic, exc)
+            logger.info("Single-pass long answer generation failed for '%s': %s. Falling back to two-step.", topic, exc)
+            question_item = None
 
+    # Option 2: Fallback to Two-Step Generation (Step A + Step B)
     if not question_item:
-        logger.error("Long answer Step A failed after retries for topic '%s': %s", topic, last_error)
-        return None
+        # Step A: Generate Question + Rubric Criteria
+        for attempt in range(OLLAMA_MAX_RETRIES + 1):
+            try:
+                feedback = f"Previous error: {last_error}" if attempt > 0 else None
+                prompt_a = build_long_answer_step_a_prompt(
+                    count=1,
+                    marks_per_question=marks_per_q,
+                    topics=[topic] if topic else [],
+                    difficulty_pct={difficulty: 100},
+                    syllabus_text=syllabus_chunk,
+                    retry_feedback=feedback,
+                )
+                raw_a = call_ollama(
+                    model=model_tag,
+                    prompt=prompt_a,
+                    format_schema=get_question_type_schema('long_answer_step_a'),
+                    num_predict=400,
+                    temperature=0.2,
+                )
+                parsed_a = parse_json_safely(raw_a)
+                candidates = _validated_type_questions(parsed_a, 'long_answer', default_marks=marks_per_q)
+                if candidates:
+                    question_item = candidates[0]
+                    break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Long answer Step A attempt %s failed for topic '%s': %s", attempt + 1, topic, exc)
 
-    # Guarantee topic, marks, difficulty, and rubric marks sum
-    question_item['topic'] = topic or question_item.get('topic', '')
-    question_item['difficulty'] = difficulty
-    question_item['marks'] = marks_per_q
-    question_item['rubric'] = repair_rubric_marks(question_item.get('rubric'), marks_per_q)
+        if not question_item:
+            logger.error("Long answer Step A failed after retries for topic '%s': %s", topic, last_error)
+            return None
 
-    # Step B: Generate Comprehensive Model Answer
-    if progress_cb:
-        progress_cb(f"Long answer {item_idx}/{total_items}: generating model answer")
+        # Guarantee topic, marks, difficulty, and rubric marks sum
+        question_item['topic'] = topic or question_item.get('topic', '')
+        question_item['difficulty'] = difficulty
+        question_item['marks'] = marks_per_q
+        question_item['rubric'] = repair_rubric_marks(question_item.get('rubric'), marks_per_q)
 
-    model_answer = ""
-    for attempt in range(OLLAMA_MAX_RETRIES + 1):
-        try:
-            prompt_b = build_long_answer_step_b_prompt(
-                question_text=question_item['text'],
-                topic=question_item['topic'],
-                marks=question_item['marks'],
-                rubric=question_item['rubric'],
-                syllabus_chunk=syllabus_chunk,
-                word_limit=question_item.get('word_limit', 350),
+        # Step B: Generate Comprehensive Model Answer
+        if progress_cb:
+            progress_cb(f"Long answer {item_idx}/{total_items}: generating model answer")
+
+        model_answer = ""
+        for attempt in range(OLLAMA_MAX_RETRIES + 1):
+            try:
+                prompt_b = build_long_answer_step_b_prompt(
+                    question_text=question_item['text'],
+                    topic=question_item['topic'],
+                    marks=question_item['marks'],
+                    rubric=question_item['rubric'],
+                    syllabus_chunk=syllabus_chunk,
+                    word_limit=question_item.get('word_limit', 350),
+                )
+                raw_b = call_ollama(
+                    model=model_tag,
+                    prompt=prompt_b,
+                    format_schema=get_question_type_schema('long_answer_step_b'),
+                    num_predict=1024,
+                    temperature=0.2,
+                )
+                parsed_b = parse_json_safely(raw_b)
+                ans = parsed_b.get('model_answer', '') if isinstance(parsed_b, dict) else ''
+                if ans and len(str(ans).split()) >= 30:
+                    model_answer = str(ans).strip()
+                    break
+            except Exception as exc:
+                logger.warning("Long answer Step B attempt %s failed: %s", attempt + 1, exc)
+
+        if not model_answer or len(model_answer.split()) < 30:
+            logger.info("Using secondary structured model answer synthesizer for question: %s", question_item['text'][:60])
+            model_answer = _ensure_subjective_model_answer(
+                question_item['text'],
+                question_item['topic'],
+                question_item['marks'],
+                syllabus_chunk,
+                model_name=None,
             )
-            raw_b = call_ollama(
-                model=model_tag,
-                prompt=prompt_b,
-                format_schema=get_question_type_schema('long_answer_step_b'),
-                num_predict=1024,
-                temperature=0.2,
-            )
-            parsed_b = parse_json_safely(raw_b)
-            ans = parsed_b.get('model_answer', '') if isinstance(parsed_b, dict) else ''
-            if ans and len(str(ans).split()) >= 30:
-                model_answer = str(ans).strip()
-                break
-        except Exception as exc:
-            logger.warning("Long answer Step B attempt %s failed: %s", attempt + 1, exc)
 
-    if not model_answer or len(model_answer.split()) < 30:
-        logger.info("Using secondary structured model answer synthesizer for question: %s", question_item['text'][:60])
-        model_answer = _ensure_subjective_model_answer(
-            question_item['text'],
-            question_item['topic'],
-            question_item['marks'],
-            syllabus_chunk,
-            model_name=None,
-        )
-
-    question_item['model_answer'] = model_answer
+        question_item['model_answer'] = model_answer
 
     # Grounding check: verify source evidence exists in syllabus chunk
     is_grounded = verify_grounding_evidence(question_item.get('source_evidence', ''), syllabus_chunk)
-    question_item['needs_review'] = not is_grounded or len(model_answer.split()) < 40
+    question_item['needs_review'] = not is_grounded or len(str(question_item.get('model_answer', '')).split()) < 40
 
     return question_item
 
@@ -348,11 +415,15 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
         return generated
 
     # Objective & Short Answer generation in small batches
-    chunk = get_relevant_syllabus_chunk(syllabus_text, topics[0] if topics else '', chunks_map)
     batch_size = max(1, min(OLLAMA_MAX_BATCH_SIZE, count))
 
-    for start in range(0, count, batch_size):
+    for batch_idx, start in enumerate(range(0, count, batch_size)):
         req_count = min(batch_size, count - start)
+        # Select topic for this batch to ensure balanced topic distribution and accurate syllabus chunking
+        batch_topic = topics[batch_idx % len(topics)] if topics else ''
+        batch_chunk = get_relevant_syllabus_chunk(syllabus_text, batch_topic, chunks_map)
+        batch_topics = [batch_topic] if batch_topic else topics
+
         if progress_cb:
             progress_cb(f"Generating {canon_type.replace('_', ' ').upper()} ({len(generated)} of {count})")
 
@@ -361,9 +432,9 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
             count=req_count,
             marks_per_q=marks_per_q,
             model_key=model_name,
-            topics=topics,
+            topics=batch_topics,
             difficulty_distribution=difficulty_distribution,
-            syllabus_chunk=chunk,
+            syllabus_chunk=batch_chunk,
         )
         generated.extend(batch)
         shortfall = req_count - len(batch)
@@ -374,9 +445,9 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
                 count=shortfall,
                 marks_per_q=marks_per_q,
                 model_key=model_name,
-                topics=topics,
+                topics=batch_topics,
                 difficulty_distribution=difficulty_distribution,
-                syllabus_chunk=chunk,
+                syllabus_chunk=batch_chunk,
                 retry_feedback=f"Shortfall: generate {shortfall} more {canon_type} questions.",
             )
             generated.extend(retry_batch[:shortfall])
@@ -396,6 +467,9 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
     job.save(update_fields=['status', 'started_at', 'current_step', 'progress'])
 
     try:
+        # Pre-warm Ollama model to avoid cold-start delay during first inference
+        if OLLAMA_WARMUP_ON_INIT:
+            warmup_ollama_model(MODEL_MAP.get(model_name, model_name))
         counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
         total_requested = max(sum(counts.values()), 1)
 

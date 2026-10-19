@@ -12,16 +12,25 @@ OLLAMA_FALLBACK_MODELS: List[str] = [
     for m in os.getenv('OLLAMA_FALLBACK_MODELS', 'llama3.2:3b,phi3:mini').split(',')
     if m.strip()
 ]
-OLLAMA_TIMEOUT: int = int(os.getenv('OLLAMA_TIMEOUT', '180'))
+OLLAMA_TIMEOUT: int = int(os.getenv('OLLAMA_TIMEOUT', '120'))
+OLLAMA_CALL_TIMEOUT: int = int(os.getenv('OLLAMA_CALL_TIMEOUT', '90'))
+OLLAMA_JOB_TIMEOUT: int = int(os.getenv('OLLAMA_JOB_TIMEOUT', '360'))
 OLLAMA_NUM_CTX: int = int(os.getenv('OLLAMA_NUM_CTX', '4096'))
-OLLAMA_KEEP_ALIVE: str = os.getenv('OLLAMA_KEEP_ALIVE', '5m').strip()
+OLLAMA_KEEP_ALIVE: str = os.getenv('OLLAMA_KEEP_ALIVE', '30m').strip()
 OLLAMA_TEMPERATURE: float = float(os.getenv('OLLAMA_TEMPERATURE', '0.2'))
 OLLAMA_MAX_PARALLEL: int = int(os.getenv('OLLAMA_MAX_PARALLEL', '1'))
-OLLAMA_MAX_BATCH_SIZE: int = int(os.getenv('OLLAMA_MAX_BATCH_SIZE', '4'))
+OLLAMA_MAX_BATCH_SIZE: int = int(os.getenv('OLLAMA_MAX_BATCH_SIZE', '6'))
 OLLAMA_LONG_ANSWER_BATCH_SIZE: int = int(os.getenv('OLLAMA_LONG_ANSWER_BATCH_SIZE', '1'))
+OLLAMA_LONG_ANSWER_SINGLE_PASS: bool = os.getenv('OLLAMA_LONG_ANSWER_SINGLE_PASS', 'true').strip().lower() in ('true', '1', 'yes')
 OLLAMA_MAX_RETRIES: int = int(os.getenv('OLLAMA_MAX_RETRIES', '2'))
+OLLAMA_WARMUP_ON_INIT: bool = os.getenv('OLLAMA_WARMUP_ON_INIT', 'true').strip().lower() in ('true', '1', 'yes')
 FACULTY_DEBUG_MODE: bool = os.getenv('FACULTY_DEBUG_MODE', 'false').strip().lower() in ('true', '1', 'yes')
 SYLLABUS_CACHE_TTL: int = int(os.getenv('SYLLABUS_CACHE_TTL', '3600'))
+
+# Model Routing Configuration
+ENABLE_MODEL_ROUTING: bool = os.getenv('ENABLE_MODEL_ROUTING', 'false').strip().lower() in ('true', '1', 'yes')
+OLLAMA_OBJECTIVE_MODEL: str = os.getenv('OLLAMA_OBJECTIVE_MODEL', 'qwen2.5:3b-instruct').strip()
+OLLAMA_SUBJECTIVE_MODEL: str = os.getenv('OLLAMA_SUBJECTIVE_MODEL', 'qwen2.5:3b-instruct').strip()
 
 EVAL_PROVIDER_ORDER: List[str] = [
     p.strip().lower()
@@ -55,3 +64,22 @@ def canonicalize_model_tag(tag: Optional[str]) -> str:
         return OLLAMA_MODEL
     clean = str(tag).strip().lower()
     return TAG_ALIASES.get(clean, TAG_ALIASES.get(clean.replace(':', '-'), clean))
+
+
+def route_model_for_type(question_type: str, user_selected_model: Optional[str] = None) -> str:
+    """
+    Resolves model tag for a given question type.
+    If ENABLE_MODEL_ROUTING is True, routes objective questions to OLLAMA_OBJECTIVE_MODEL
+    and subjective questions to OLLAMA_SUBJECTIVE_MODEL.
+    Otherwise, respects user_selected_model (falling back to OLLAMA_MODEL).
+    """
+    if not ENABLE_MODEL_ROUTING and user_selected_model:
+        return canonicalize_model_tag(user_selected_model)
+
+    norm_type = str(question_type or '').strip().lower()
+    if ENABLE_MODEL_ROUTING:
+        if norm_type in {'mcq', 'true_false', 'truefalse', 'fill_blank', 'fillblank'}:
+            return canonicalize_model_tag(OLLAMA_OBJECTIVE_MODEL)
+        return canonicalize_model_tag(OLLAMA_SUBJECTIVE_MODEL)
+
+    return canonicalize_model_tag(user_selected_model or OLLAMA_MODEL)

@@ -1,13 +1,30 @@
-import os
+import hashlib
 import logging
+import os
+import time
 
+from .evaluation_config import SYLLABUS_CACHE_TTL
 
 logger = logging.getLogger(__name__)
 
+_SYLLABUS_CACHE = {}
+
 
 def extract_syllabus_text(django_file):
-    """Extract readable text from a PDF or DOCX Django uploaded file."""
+    """Extract readable text from a PDF or DOCX Django uploaded file (with in-memory & Django caching)."""
     django_file.seek(0)
+    raw = django_file.read()
+    django_file.seek(0)
+    if not raw:
+        raise ValueError('Uploaded syllabus file is empty.')
+
+    file_hash = hashlib.sha256(raw).hexdigest()
+    now = time.time()
+    if file_hash in _SYLLABUS_CACHE and (now - _SYLLABUS_CACHE[file_hash].get('time', 0)) < SYLLABUS_CACHE_TTL:
+        cached_entry = _SYLLABUS_CACHE[file_hash].get('data', {})
+        if isinstance(cached_entry, dict) and cached_entry.get('text'):
+            return cached_entry['text']
+
     filename = getattr(django_file, 'name', '') or ''
     extension = os.path.splitext(filename)[1].lower()
 
@@ -17,23 +34,33 @@ def extract_syllabus_text(django_file):
         except ImportError as exc:
             raise ValueError('PDF extraction requires pdfplumber to be installed.') from exc
 
-        with pdfplumber.open(django_file) as pdf:
-            page_lengths = []
-            page_texts = []
-            for page in pdf.pages:
-                page_text = page.extract_text() or ''
-                page_lengths.append(len(page_text))
-                page_texts.append(page_text)
-            logger.debug('PDF text lengths name=%s pages=%s', filename, page_lengths)
-            text = '\n'.join(page_texts).strip()
+        try:
+            with pdfplumber.open(django_file) as pdf:
+                page_lengths = []
+                page_texts = []
+                for page in pdf.pages:
+                    page_text = page.extract_text() or ''
+                    page_lengths.append(len(page_text))
+                    page_texts.append(page_text)
+                logger.debug('PDF text lengths name=%s pages=%s', filename, page_lengths)
+                text = '\n'.join(page_texts).strip()
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f'Could not read PDF file: {exc}') from exc
     elif extension == '.docx':
         try:
             from docx import Document
         except ImportError as exc:
             raise ValueError('DOCX extraction requires python-docx to be installed.') from exc
 
-        document = Document(django_file)
-        text = '\n'.join(paragraph.text for paragraph in document.paragraphs).strip()
+        try:
+            document = Document(django_file)
+            text = '\n'.join(paragraph.text for paragraph in document.paragraphs).strip()
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f'Could not read DOCX file: {exc}') from exc
     else:
         raise ValueError('Unsupported syllabus type. Upload a PDF or DOCX file.')
 
@@ -45,6 +72,8 @@ def extract_syllabus_text(django_file):
             )
         raise ValueError('The uploaded DOCX did not contain extractable text.')
 
+    # Cache extracted text
+    _SYLLABUS_CACHE[file_hash] = {'data': {'text': text, 'hash': file_hash}, 'time': now}
     return text
 
 
@@ -288,17 +317,19 @@ def detect_syllabus_topics(text: str) -> list[str]:
     return detected[:10]
 
 
-import hashlib
-import time
-
-_SYLLABUS_CACHE = {}
 
 
 def get_cached_syllabus_data(file_obj, filename=""):
     """
     Extracts text, topics, and chunks for a syllabus file once and caches them by SHA-256 hash.
+    Checks in-memory process cache first, then Django cache backend.
     """
     from .evaluation_config import SYLLABUS_CACHE_TTL
+    try:
+        from django.core.cache import cache
+    except Exception:
+        cache = None
+
     file_obj.seek(0)
     content = file_obj.read()
     file_obj.seek(0)
@@ -310,6 +341,13 @@ def get_cached_syllabus_data(file_obj, filename=""):
         entry = _SYLLABUS_CACHE[file_hash]
         if now - entry.get('time', 0) < SYLLABUS_CACHE_TTL:
             return entry['data']
+
+    if cache:
+        cache_key = f'syllabus_data_{file_hash}'
+        cached_entry = cache.get(cache_key)
+        if cached_entry:
+            _SYLLABUS_CACHE[file_hash] = {'data': cached_entry, 'time': now}
+            return cached_entry
 
     text = extract_syllabus_text(file_obj)
     try:
@@ -328,6 +366,8 @@ def get_cached_syllabus_data(file_obj, filename=""):
         'chunks': chunks,
     }
     _SYLLABUS_CACHE[file_hash] = {'data': data, 'time': now}
+    if cache:
+        cache.set(f'syllabus_data_{file_hash}', data, timeout=SYLLABUS_CACHE_TTL)
     return data
 
 

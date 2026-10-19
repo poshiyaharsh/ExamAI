@@ -1,0 +1,1036 @@
+{
+  "PDF": {
+    "20": {
+      "median_total_time": 36.806431399993016,
+      "all_run_times": [
+        38.200130700002774,
+        36.12924229999771,
+        36.806431399993016
+      ],
+      "closest_run": {
+        "total_time": 36.806431399993016,
+        "stage_timings": {
+          "upload_and_extraction": 5.583952400003909,
+          "hierarchy_and_chunking": 0.0034654999908525497,
+          "prompt_building": 0.0001120000088121742,
+          "ollama_calls": 31.188012599974172,
+          "json_parsing_and_repair": 0.00019880001491401345,
+          "schema_validation": 0.0003505999920889735,
+          "evidence_verification": 0.0,
+          "deduplication": 0.006299500004388392,
+          "database_saves": 0.0038945999986026436,
+          "status_progress_updates": 0.0032543000124860555
+        },
+        "ollama_calls_count": 4,
+        "ollama_calls": [
+          {
+            "wall_time": 12.255104399999254,
+            "load_duration": 0.0216326,
+            "prompt_eval_duration": 0.208483,
+            "prompt_eval_count": 1039,
+            "eval_duration": 11.873359,
+            "eval_count": 570,
+            "total_duration": 12.2380815,
+            "tps": 48.00663401148739,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 2.8314705999946455,
+            "load_duration": 0.0210684,
+            "prompt_eval_duration": 0.024543,
+            "prompt_eval_count": 996,
+            "eval_duration": 2.684987,
+            "eval_count": 126,
+            "total_duration": 2.8051858,
+            "tps": 46.927601511664676,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 3.027779999989434,
+            "load_duration": 0.0184326,
+            "prompt_eval_duration": 0.025477,
+            "prompt_eval_count": 1008,
+            "eval_duration": 2.89557,
+            "eval_count": 134,
+            "total_duration": 3.0030128,
+            "tps": 46.27758955922322,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 13.073657599990838,
+            "load_duration": 0.0201486,
+            "prompt_eval_duration": 0.021655,
+            "prompt_eval_count": 1030,
+            "eval_duration": 12.930174,
+            "eval_count": 613,
+            "total_duration": 13.0434395,
+            "tps": 47.40848808376438,
+            "done_reason": "stop"
+          }
+        ],
+        "tokens_generated": 1443,
+        "prompt_tokens": 4073,
+        "retry_counts": {
+          "total_retries": 0,
+          "truncation": 0,
+          "bad_json": 0,
+          "schema_failure": 0,
+          "evidence_not_found": 0,
+          "shortfall": 0
+        },
+        "job_status": "completed_with_warnings",
+        "questions_generated": 5,
+        "actual_marks": 16.0,
+        "target_marks": 20
+      },
+      "median_tps": 47.038119945752285,
+      "stage_timings": {
+        "upload_and_extraction": 5.583952400003909,
+        "hierarchy_and_chunking": 0.0034654999908525497,
+        "prompt_building": 0.0001120000088121742,
+        "ollama_calls": 31.188012599974172,
+        "json_parsing_and_repair": 0.00019880001491401345,
+        "schema_validation": 0.0003505999920889735,
+        "evidence_verification": 0.0,
+        "deduplication": 0.006299500004388392,
+        "database_saves": 0.0038945999986026436,
+        "status_progress_updates": 0.0032543000124860555
+      },
+      "ollama_calls_count": 4,
+      "tokens_generated": 1443,
+      "prompt_tokens": 4073,
+      "questions_generated": 5,
+      "actual_marks": 16.0
+    },
+    "50": {
+      "median_total_time": 124.22436169999128,
+      "all_run_times": [
+        125.08381120000558,
+        119.65232249999826,
+        124.22436169999128
+      ],
+      "closest_run": {
+        "total_time": 124.22436169999128,
+        "stage_timings": {
+          "upload_and_extraction": 5.59247360000154,
+          "hierarchy_and_chunking": 0.0029494999907910824,
+          "prompt_building": 0.0002557000261731446,
+          "ollama_calls": 118.53852560001542,
+          "json_parsing_and_repair": 0.0011685000208672136,
+          "schema_validation": 0.0006711999740218744,
+          "evidence_verification": 0.0003060999879380688,
+          "deduplication": 0.046283899995614775,
+          "database_saves": 0.007355599998845719,
+          "status_progress_updates": 0.004964300023857504
+        },
+        "ollama_calls_count": 10,
+        "ollama_calls": [
+          {
+            "wall_time": 12.638007900008233,
+            "load_duration": 0.0177983,
+            "prompt_eval_duration": 0.152219,
+            "prompt_eval_count": 1039,
+            "eval_duration": 12.292313,
+            "eval_count": 585,
+            "total_duration": 12.6134301,
+            "tps": 47.59071787384522,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 2.953615300008096,
+            "load_duration": 0.0211281,
+            "prompt_eval_duration": 0.028305,
+            "prompt_eval_count": 996,
+            "eval_duration": 2.785488,
+            "eval_count": 126,
+            "total_duration": 2.9228515,
+            "tps": 45.23444365942341,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 4.42419350000273,
+            "load_duration": 0.0220886,
+            "prompt_eval_duration": 0.026023,
+            "prompt_eval_count": 1008,
+            "eval_duration": 4.276895999,
+            "eval_count": 201,
+            "total_duration": 4.3903134,
+            "tps": 46.9967004217537,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 12.328804299992044,
+            "load_duration": 0.020886,
+            "prompt_eval_duration": 0.022615,
+            "prompt_eval_count": 1030,
+            "eval_duration": 12.182031,
+            "eval_count": 584,
+            "total_duration": 12.2994213,
+            "tps": 47.93946099792391,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.431251700007124,
+            "load_duration": 0.0217419,
+            "prompt_eval_duration": 0.046558,
+            "prompt_eval_count": 972,
+            "eval_duration": 7.264024,
+            "eval_count": 342,
+            "total_duration": 7.4062217,
+            "tps": 47.081342242261314,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 20.480067299999064,
+            "load_duration": 0.0192309,
+            "prompt_eval_duration": 0.500254,
+            "prompt_eval_count": 992,
+            "eval_duration": 19.870161,
+            "eval_count": 951,
+            "total_duration": 20.4498595,
+            "tps": 47.86070933194754,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.628417800005991,
+            "load_duration": 0.0236987,
+            "prompt_eval_duration": 0.04538,
+            "prompt_eval_count": 972,
+            "eval_duration": 7.447162,
+            "eval_count": 346,
+            "total_duration": 7.5995621,
+            "tps": 46.46065172209226,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 20.961533899986534,
+            "load_duration": 0.0217322,
+            "prompt_eval_duration": 0.4874,
+            "prompt_eval_count": 1008,
+            "eval_duration": 20.358482,
+            "eval_count": 962,
+            "total_duration": 20.9277019,
+            "tps": 47.253031930376736,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.696617299996433,
+            "load_duration": 0.0211418,
+            "prompt_eval_duration": 0.040613,
+            "prompt_eval_count": 972,
+            "eval_duration": 7.512981,
+            "eval_count": 348,
+            "total_duration": 7.6621712,
+            "tps": 46.31982963886106,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 21.99601660000917,
+            "load_duration": 0.0220498,
+            "prompt_eval_duration": 0.48274,
+            "prompt_eval_count": 999,
+            "eval_duration": 21.362893,
+            "eval_count": 1018,
+            "total_duration": 21.9287799,
+            "tps": 47.65272194173327,
+            "done_reason": "stop"
+          }
+        ],
+        "tokens_generated": 5463,
+        "prompt_tokens": 9988,
+        "retry_counts": {
+          "total_retries": 0,
+          "truncation": 0,
+          "bad_json": 0,
+          "schema_failure": 0,
+          "evidence_not_found": 0,
+          "shortfall": 0
+        },
+        "job_status": "completed_with_warnings",
+        "questions_generated": 10,
+        "actual_marks": 50.0,
+        "target_marks": 50
+      },
+      "median_tps": 47.30333671298193,
+      "stage_timings": {
+        "upload_and_extraction": 5.59247360000154,
+        "hierarchy_and_chunking": 0.0029494999907910824,
+        "prompt_building": 0.0002557000261731446,
+        "ollama_calls": 118.53852560001542,
+        "json_parsing_and_repair": 0.0011685000208672136,
+        "schema_validation": 0.0006711999740218744,
+        "evidence_verification": 0.0003060999879380688,
+        "deduplication": 0.046283899995614775,
+        "database_saves": 0.007355599998845719,
+        "status_progress_updates": 0.004964300023857504
+      },
+      "ollama_calls_count": 10,
+      "tokens_generated": 5463,
+      "prompt_tokens": 9988,
+      "questions_generated": 10,
+      "actual_marks": 50.0
+    },
+    "100": {
+      "median_total_time": 238.7263865999994,
+      "all_run_times": [
+        245.37387900000613,
+        238.7263865999994,
+        228.35623230000783
+      ],
+      "closest_run": {
+        "total_time": 238.7263865999994,
+        "stage_timings": {
+          "upload_and_extraction": 5.17060670000501,
+          "hierarchy_and_chunking": 0.00342839999939315,
+          "prompt_building": 0.0004651000344892964,
+          "ollama_calls": 233.2574590999866,
+          "json_parsing_and_repair": 0.04862159996991977,
+          "schema_validation": 0.0010840999893844128,
+          "evidence_verification": 0.0002429000160191208,
+          "deduplication": 0.1809473000030266,
+          "database_saves": 0.015529399970546365,
+          "status_progress_updates": 0.00813249999191612
+        },
+        "ollama_calls_count": 17,
+        "ollama_calls": [
+          {
+            "wall_time": 15.876363799994579,
+            "load_duration": 0.0204427,
+            "prompt_eval_duration": 0.234648,
+            "prompt_eval_count": 1039,
+            "eval_duration": 15.431272,
+            "eval_count": 741,
+            "total_duration": 15.8532375,
+            "tps": 48.01937260907591,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 4.558766000001924,
+            "load_duration": 0.0208864,
+            "prompt_eval_duration": 0.023097,
+            "prompt_eval_count": 1039,
+            "eval_duration": 4.396602,
+            "eval_count": 209,
+            "total_duration": 4.5296613,
+            "tps": 47.53671130568562,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.888331800000742,
+            "load_duration": 0.0295393,
+            "prompt_eval_duration": 0.023666,
+            "prompt_eval_count": 996,
+            "eval_duration": 7.757156,
+            "eval_count": 372,
+            "total_duration": 7.8786694,
+            "tps": 47.95571985402898,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.806210900002043,
+            "load_duration": 0.022111,
+            "prompt_eval_duration": 0.022995,
+            "prompt_eval_count": 1008,
+            "eval_duration": 7.666784,
+            "eval_count": 368,
+            "total_duration": 7.7957576,
+            "tps": 47.99926540254688,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 21.0306094000116,
+            "load_duration": 0.0232654,
+            "prompt_eval_duration": 0.02328,
+            "prompt_eval_count": 1030,
+            "eval_duration": 20.871683,
+            "eval_count": 1001,
+            "total_duration": 20.9994022,
+            "tps": 47.95971652118327,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 8.690510799991898,
+            "load_duration": 0.0231391,
+            "prompt_eval_duration": 0.039987,
+            "prompt_eval_count": 972,
+            "eval_duration": 8.521875,
+            "eval_count": 400,
+            "total_duration": 8.665724,
+            "tps": 46.93802713604694,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 22.140862000000197,
+            "load_duration": 0.0179331,
+            "prompt_eval_duration": 0.532095,
+            "prompt_eval_count": 1116,
+            "eval_duration": 21.491249,
+            "eval_count": 1024,
+            "total_duration": 22.0914612,
+            "tps": 47.64730053613915,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 8.667731399997137,
+            "load_duration": 0.0195545,
+            "prompt_eval_duration": 0.049704,
+            "prompt_eval_count": 972,
+            "eval_duration": 8.470632,
+            "eval_count": 400,
+            "total_duration": 8.6367278,
+            "tps": 47.221978242001306,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 18.688220199997886,
+            "load_duration": 0.0275008,
+            "prompt_eval_duration": 0.526337999,
+            "prompt_eval_count": 1085,
+            "eval_duration": 18.04253,
+            "eval_count": 858,
+            "total_duration": 18.6582143,
+            "tps": 47.554306408247626,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 8.682757499991567,
+            "load_duration": 0.0198747,
+            "prompt_eval_duration": 0.042389,
+            "prompt_eval_count": 972,
+            "eval_duration": 8.503958,
+            "eval_count": 400,
+            "total_duration": 8.6498329,
+            "tps": 47.03692092552667,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 20.447997399998712,
+            "load_duration": 0.019637,
+            "prompt_eval_duration": 0.525101,
+            "prompt_eval_count": 1059,
+            "eval_duration": 19.814351,
+            "eval_count": 938,
+            "total_duration": 20.4349106,
+            "tps": 47.33942585351395,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.918419299996458,
+            "load_duration": 0.020694,
+            "prompt_eval_duration": 0.044197,
+            "prompt_eval_count": 972,
+            "eval_duration": 7.73996,
+            "eval_count": 364,
+            "total_duration": 7.8903904,
+            "tps": 47.02866681481558,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 21.62017520000518,
+            "load_duration": 0.0202027,
+            "prompt_eval_duration": 0.482375,
+            "prompt_eval_count": 1020,
+            "eval_duration": 21.043481,
+            "eval_count": 1004,
+            "total_duration": 21.6085253,
+            "tps": 47.710737591370936,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 8.72929760000261,
+            "load_duration": 0.0278905,
+            "prompt_eval_duration": 0.044871,
+            "prompt_eval_count": 972,
+            "eval_duration": 8.540046,
+            "eval_count": 400,
+            "total_duration": 8.6984763,
+            "tps": 46.83815520431623,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 22.445724299992435,
+            "load_duration": 0.0210812,
+            "prompt_eval_duration": 0.56247,
+            "prompt_eval_count": 1173,
+            "eval_duration": 21.784906,
+            "eval_count": 1024,
+            "total_duration": 22.4235009,
+            "tps": 47.00502265192239,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 7.90123930000118,
+            "load_duration": 0.0213381,
+            "prompt_eval_duration": 0.040896,
+            "prompt_eval_count": 972,
+            "eval_duration": 7.723911,
+            "eval_count": 362,
+            "total_duration": 7.8718282,
+            "tps": 46.86744836909695,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 20.164242200000444,
+            "load_duration": 0.0184749,
+            "prompt_eval_duration": 0.489009,
+            "prompt_eval_count": 1024,
+            "eval_duration": 19.581107,
+            "eval_count": 933,
+            "total_duration": 20.1494709,
+            "tps": 47.64797005603412,
+            "done_reason": "stop"
+          }
+        ],
+        "tokens_generated": 10798,
+        "prompt_tokens": 17421,
+        "retry_counts": {
+          "total_retries": 0,
+          "truncation": 6,
+          "bad_json": 0,
+          "schema_failure": 0,
+          "evidence_not_found": 0,
+          "shortfall": 0
+        },
+        "job_status": "completed_with_warnings",
+        "questions_generated": 19,
+        "actual_marks": 98.0,
+        "target_marks": 100
+      },
+      "median_tps": 47.45699967090567,
+      "stage_timings": {
+        "upload_and_extraction": 5.17060670000501,
+        "hierarchy_and_chunking": 0.00342839999939315,
+        "prompt_building": 0.0004651000344892964,
+        "ollama_calls": 233.2574590999866,
+        "json_parsing_and_repair": 0.04862159996991977,
+        "schema_validation": 0.0010840999893844128,
+        "evidence_verification": 0.0002429000160191208,
+        "deduplication": 0.1809473000030266,
+        "database_saves": 0.015529399970546365,
+        "status_progress_updates": 0.00813249999191612
+      },
+      "ollama_calls_count": 17,
+      "tokens_generated": 10798,
+      "prompt_tokens": 17421,
+      "questions_generated": 19,
+      "actual_marks": 98.0
+    }
+  },
+  "DOCX": {
+    "20": {
+      "median_total_time": 29.98054129999946,
+      "all_run_times": [
+        32.884868299996015,
+        29.494892000002437,
+        29.98054129999946
+      ],
+      "closest_run": {
+        "total_time": 29.98054129999946,
+        "stage_timings": {
+          "upload_and_extraction": 0.018313000007765368,
+          "hierarchy_and_chunking": 0.0005850000015925616,
+          "prompt_building": 0.00013120000949129462,
+          "ollama_calls": 29.903206199989654,
+          "json_parsing_and_repair": 0.00028249999741092324,
+          "schema_validation": 0.0003173000004608184,
+          "evidence_verification": 0.0,
+          "deduplication": 0.010127200002898462,
+          "database_saves": 0.004838599968934432,
+          "status_progress_updates": 0.022972300008405
+        },
+        "ollama_calls_count": 4,
+        "ollama_calls": [
+          {
+            "wall_time": 11.386187899988727,
+            "load_duration": 0.0165745,
+            "prompt_eval_duration": 0.025433,
+            "prompt_eval_count": 1044,
+            "eval_duration": 11.236295,
+            "eval_count": 535,
+            "total_duration": 11.3507534,
+            "tps": 47.61355945175879,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 2.8734452999924542,
+            "load_duration": 0.0251501,
+            "prompt_eval_duration": 0.025858,
+            "prompt_eval_count": 1001,
+            "eval_duration": 2.711609,
+            "eval_count": 126,
+            "total_duration": 2.8421154,
+            "tps": 46.46687630849433,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 4.545231600000989,
+            "load_duration": 0.0186227,
+            "prompt_eval_duration": 0.027241,
+            "prompt_eval_count": 1013,
+            "eval_duration": 4.389194,
+            "eval_count": 204,
+            "total_duration": 4.5221387,
+            "tps": 46.477781569919216,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 11.098341400007484,
+            "load_duration": 0.0270765,
+            "prompt_eval_duration": 0.022823,
+            "prompt_eval_count": 1035,
+            "eval_duration": 10.945272,
+            "eval_count": 516,
+            "total_duration": 11.0777986,
+            "tps": 47.14364339232502,
+            "done_reason": "stop"
+          }
+        ],
+        "tokens_generated": 1381,
+        "prompt_tokens": 4093,
+        "retry_counts": {
+          "total_retries": 0,
+          "truncation": 0,
+          "bad_json": 0,
+          "schema_failure": 0,
+          "evidence_not_found": 0,
+          "shortfall": 0
+        },
+        "job_status": "completed_with_warnings",
+        "questions_generated": 7,
+        "actual_marks": 20.0,
+        "target_marks": 20
+      },
+      "median_tps": 46.902971571475916,
+      "stage_timings": {
+        "upload_and_extraction": 0.018313000007765368,
+        "hierarchy_and_chunking": 0.0005850000015925616,
+        "prompt_building": 0.00013120000949129462,
+        "ollama_calls": 29.903206199989654,
+        "json_parsing_and_repair": 0.00028249999741092324,
+        "schema_validation": 0.0003173000004608184,
+        "evidence_verification": 0.0,
+        "deduplication": 0.010127200002898462,
+        "database_saves": 0.004838599968934432,
+        "status_progress_updates": 0.022972300008405
+      },
+      "ollama_calls_count": 4,
+      "tokens_generated": 1381,
+      "prompt_tokens": 4093,
+      "questions_generated": 7,
+      "actual_marks": 20.0
+    },
+    "50": {
+      "median_total_time": 118.33201280000503,
+      "all_run_times": [
+        118.33201280000503,
+        125.81821639998816,
+        116.56840649999504
+      ],
+      "closest_run": {
+        "total_time": 118.33201280000503,
+        "stage_timings": {
+          "upload_and_extraction": 0.018011899999692105,
+          "hierarchy_and_chunking": 0.0008578000124543905,
+          "prompt_building": 0.00036210000689607114,
+          "ollama_calls": 118.18383989999711,
+          "json_parsing_and_repair": 0.0322508000099333,
+          "schema_validation": 0.0006759000098099932,
+          "evidence_verification": 0.0002165000041713938,
+          "deduplication": 0.037837299998500384,
+          "database_saves": 0.007475300022633746,
+          "status_progress_updates": 0.011474600032670423
+        },
+        "ollama_calls_count": 10,
+        "ollama_calls": [
+          {
+            "wall_time": 13.065647300012643,
+            "load_duration": 0.0161398,
+            "prompt_eval_duration": 0.028259,
+            "prompt_eval_count": 1044,
+            "eval_duration": 12.922883,
+            "eval_count": 622,
+            "total_duration": 13.0545084,
+            "tps": 48.13167464257008,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 3.0962004000029992,
+            "load_duration": 0.0220293,
+            "prompt_eval_duration": 0.025888,
+            "prompt_eval_count": 1001,
+            "eval_duration": 2.967286,
+            "eval_count": 139,
+            "total_duration": 3.0886593,
+            "tps": 46.844153209363704,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 4.286882699991111,
+            "load_duration": 0.0093325,
+            "prompt_eval_duration": 0.023493,
+            "prompt_eval_count": 1013,
+            "eval_duration": 4.157447,
+            "eval_count": 197,
+            "total_duration": 4.2777091,
+            "tps": 47.384849403973156,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 9.772798399993917,
+            "load_duration": 0.0248359,
+            "prompt_eval_duration": 0.021359,
+            "prompt_eval_count": 1035,
+            "eval_duration": 9.631622,
+            "eval_count": 462,
+            "total_duration": 9.7576394,
+            "tps": 47.96699870489103,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 8.964151799998945,
+            "load_duration": 0.0216933,
+            "prompt_eval_duration": 0.461139,
+            "prompt_eval_count": 977,
+            "eval_duration": 8.394118,
+            "eval_count": 400,
+            "total_duration": 8.9275458,
+            "tps": 47.652415655819944,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 22.294817100002547,
+            "load_duration": 0.0181866,
+            "prompt_eval_duration": 0.548455,
+            "prompt_eval_count": 1073,
+            "eval_duration": 21.643982,
+            "eval_count": 1024,
+            "total_duration": 22.2640343,
+            "tps": 47.31107242650636,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 7.743393400000059,
+            "load_duration": 0.0218794,
+            "prompt_eval_duration": 0.042305,
+            "prompt_eval_count": 977,
+            "eval_duration": 7.554585,
+            "eval_count": 354,
+            "total_duration": 7.7081192,
+            "tps": 46.858960485585904,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 19.390825299997232,
+            "load_duration": 0.0217179,
+            "prompt_eval_duration": 0.493403,
+            "prompt_eval_count": 1022,
+            "eval_duration": 18.797648,
+            "eval_count": 890,
+            "total_duration": 19.3805287,
+            "tps": 47.346348862368316,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.2940864999982296,
+            "load_duration": 0.0230035,
+            "prompt_eval_duration": 0.042944,
+            "prompt_eval_count": 977,
+            "eval_duration": 7.120093,
+            "eval_count": 336,
+            "total_duration": 7.269531,
+            "tps": 47.19039484456172,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 22.27503699999943,
+            "load_duration": 0.0232533,
+            "prompt_eval_duration": 0.487105,
+            "prompt_eval_count": 1004,
+            "eval_duration": 21.678944,
+            "eval_count": 1024,
+            "total_duration": 22.2454104,
+            "tps": 47.23477305905675,
+            "done_reason": "length"
+          }
+        ],
+        "tokens_generated": 5448,
+        "prompt_tokens": 10123,
+        "retry_counts": {
+          "total_retries": 0,
+          "truncation": 3,
+          "bad_json": 0,
+          "schema_failure": 0,
+          "evidence_not_found": 0,
+          "shortfall": 0
+        },
+        "job_status": "completed_with_warnings",
+        "questions_generated": 10,
+        "actual_marks": 50.0,
+        "target_marks": 50
+      },
+      "median_tps": 47.30049933072063,
+      "stage_timings": {
+        "upload_and_extraction": 0.018011899999692105,
+        "hierarchy_and_chunking": 0.0008578000124543905,
+        "prompt_building": 0.00036210000689607114,
+        "ollama_calls": 118.18383989999711,
+        "json_parsing_and_repair": 0.0322508000099333,
+        "schema_validation": 0.0006759000098099932,
+        "evidence_verification": 0.0002165000041713938,
+        "deduplication": 0.037837299998500384,
+        "database_saves": 0.007475300022633746,
+        "status_progress_updates": 0.011474600032670423
+      },
+      "ollama_calls_count": 10,
+      "tokens_generated": 5448,
+      "prompt_tokens": 10123,
+      "questions_generated": 10,
+      "actual_marks": 50.0
+    },
+    "100": {
+      "median_total_time": 230.04982660000678,
+      "all_run_times": [
+        218.7144963000028,
+        232.7304479000013,
+        230.04982660000678
+      ],
+      "closest_run": {
+        "total_time": 230.04982660000678,
+        "stage_timings": {
+          "upload_and_extraction": 0.017476699998951517,
+          "hierarchy_and_chunking": 0.000622300009126775,
+          "prompt_building": 0.0005058999813627452,
+          "ollama_calls": 229.79831659999036,
+          "json_parsing_and_repair": 0.05975580004451331,
+          "schema_validation": 0.0009066000202437863,
+          "evidence_verification": 0.0004295999970054254,
+          "deduplication": 0.10231740000017453,
+          "database_saves": 0.012882100068964064,
+          "status_progress_updates": 0.014667900002677925
+        },
+        "ollama_calls_count": 17,
+        "ollama_calls": [
+          {
+            "wall_time": 19.115766799994162,
+            "load_duration": 0.0161869,
+            "prompt_eval_duration": 0.02704,
+            "prompt_eval_count": 1044,
+            "eval_duration": 18.93811,
+            "eval_count": 897,
+            "total_duration": 19.0775922,
+            "tps": 47.364810955264275,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 4.8473258999874815,
+            "load_duration": 0.023585,
+            "prompt_eval_duration": 0.029002,
+            "prompt_eval_count": 1044,
+            "eval_duration": 4.664113,
+            "eval_count": 216,
+            "total_duration": 4.8268805,
+            "tps": 46.31105635733954,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 8.246214400001918,
+            "load_duration": 0.0214572,
+            "prompt_eval_duration": 0.027359,
+            "prompt_eval_count": 1001,
+            "eval_duration": 8.083939,
+            "eval_count": 382,
+            "total_duration": 8.213807,
+            "tps": 47.25419130451132,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 6.811485300000641,
+            "load_duration": 0.019846,
+            "prompt_eval_duration": 0.025649,
+            "prompt_eval_count": 1013,
+            "eval_duration": 6.673969,
+            "eval_count": 314,
+            "total_duration": 6.7828074,
+            "tps": 47.04846546335472,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 17.75962919999438,
+            "load_duration": 0.0175565,
+            "prompt_eval_duration": 0.028197,
+            "prompt_eval_count": 1035,
+            "eval_duration": 17.594055,
+            "eval_count": 837,
+            "total_duration": 17.7269798,
+            "tps": 47.57288754638996,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 8.016188900000998,
+            "load_duration": 0.021642,
+            "prompt_eval_duration": 0.049617,
+            "prompt_eval_count": 977,
+            "eval_duration": 7.828773,
+            "eval_count": 369,
+            "total_duration": 7.9815587,
+            "tps": 47.13382288642167,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 22.378661399998236,
+            "load_duration": 0.0238537,
+            "prompt_eval_duration": 0.495208,
+            "prompt_eval_count": 1036,
+            "eval_duration": 21.78426,
+            "eval_count": 1024,
+            "total_duration": 22.3595555,
+            "tps": 47.006416559479185,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 8.736625899997307,
+            "load_duration": 0.0218538,
+            "prompt_eval_duration": 0.061318,
+            "prompt_eval_count": 977,
+            "eval_duration": 8.513957,
+            "eval_count": 400,
+            "total_duration": 8.7028792,
+            "tps": 46.9816796114897,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 22.193945999999414,
+            "load_duration": 0.0191151,
+            "prompt_eval_duration": 0.531818999,
+            "prompt_eval_count": 1055,
+            "eval_duration": 21.555445,
+            "eval_count": 1024,
+            "total_duration": 22.1654239,
+            "tps": 47.50539828799638,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 8.382509200004279,
+            "load_duration": 0.0208501,
+            "prompt_eval_duration": 0.052148,
+            "prompt_eval_count": 977,
+            "eval_duration": 8.192602,
+            "eval_count": 385,
+            "total_duration": 8.3528662,
+            "tps": 46.99361692414693,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 22.28952649999701,
+            "load_duration": 0.0193278,
+            "prompt_eval_duration": 0.520979,
+            "prompt_eval_count": 1055,
+            "eval_duration": 21.660498,
+            "eval_count": 1024,
+            "total_duration": 22.2586932,
+            "tps": 47.274998017127764,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 8.051019999998971,
+            "load_duration": 0.0211718,
+            "prompt_eval_duration": 0.048871,
+            "prompt_eval_count": 977,
+            "eval_duration": 7.868148,
+            "eval_count": 369,
+            "total_duration": 8.0314558,
+            "tps": 46.89794853884294,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 22.19498630000453,
+            "load_duration": 0.0216497,
+            "prompt_eval_duration": 0.495371,
+            "prompt_eval_count": 1037,
+            "eval_duration": 21.583914,
+            "eval_count": 1024,
+            "total_duration": 22.1555863,
+            "tps": 47.442739069475536,
+            "done_reason": "length"
+          },
+          {
+            "wall_time": 7.792503599994234,
+            "load_duration": 0.019539,
+            "prompt_eval_duration": 0.039753,
+            "prompt_eval_count": 977,
+            "eval_duration": 7.593408,
+            "eval_count": 357,
+            "total_duration": 7.7584454,
+            "tps": 47.014463071126954,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 18.919215700007044,
+            "load_duration": 0.019387,
+            "prompt_eval_duration": 0.48717,
+            "prompt_eval_count": 1026,
+            "eval_duration": 18.344018,
+            "eval_count": 865,
+            "total_duration": 18.9016591,
+            "tps": 47.154336634427644,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 7.720094300006167,
+            "load_duration": 0.026395,
+            "prompt_eval_duration": 0.047202,
+            "prompt_eval_count": 977,
+            "eval_duration": 7.54743,
+            "eval_count": 353,
+            "total_duration": 7.7119559,
+            "tps": 46.770887573650896,
+            "done_reason": "stop"
+          },
+          {
+            "wall_time": 16.342617200003588,
+            "load_duration": 0.0207578,
+            "prompt_eval_duration": 0.506066,
+            "prompt_eval_count": 1013,
+            "eval_duration": 15.71086,
+            "eval_count": 738,
+            "total_duration": 16.2898866,
+            "tps": 46.97387666875015,
+            "done_reason": "stop"
+          }
+        ],
+        "tokens_generated": 10578,
+        "prompt_tokens": 17221,
+        "retry_counts": {
+          "total_retries": 0,
+          "truncation": 5,
+          "bad_json": 0,
+          "schema_failure": 0,
+          "evidence_not_found": 0,
+          "shortfall": 0
+        },
+        "job_status": "completed_with_warnings",
+        "questions_generated": 19,
+        "actual_marks": 90.0,
+        "target_marks": 100
+      },
+      "median_tps": 47.15650663382198,
+      "stage_timings": {
+        "upload_and_extraction": 0.017476699998951517,
+        "hierarchy_and_chunking": 0.000622300009126775,
+        "prompt_building": 0.0005058999813627452,
+        "ollama_calls": 229.79831659999036,
+        "json_parsing_and_repair": 0.05975580004451331,
+        "schema_validation": 0.0009066000202437863,
+        "evidence_verification": 0.0004295999970054254,
+        "deduplication": 0.10231740000017453,
+        "database_saves": 0.012882100068964064,
+        "status_progress_updates": 0.014667900002677925
+      },
+      "ollama_calls_count": 17,
+      "tokens_generated": 10578,
+      "prompt_tokens": 17221,
+      "questions_generated": 19,
+      "actual_marks": 90.0
+    }
+  }
+}
