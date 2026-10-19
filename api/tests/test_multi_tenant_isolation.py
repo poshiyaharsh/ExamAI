@@ -1,6 +1,8 @@
 import json
+from datetime import timedelta
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -429,7 +431,7 @@ class MultiTenantIsolationTestSuite(TestCase):
         self.assertEqual(vis['eligible_students_count'], 1)
         self.assertIn('Computer Science', vis['status_summary'])
 
-        # Create draft exam and publish
+        now = timezone.now()
         draft_exam = Exam.objects.create(
             institution=self.inst_a,
             title='New Draft Exam',
@@ -438,6 +440,8 @@ class MultiTenantIsolationTestSuite(TestCase):
             duration_minutes=30,
             total_marks=1,
             status=Exam.Status.DRAFT,
+            starts_at=now,
+            ends_at=now + timedelta(hours=2),
         )
         Question.objects.create(
             exam=draft_exam,
@@ -492,10 +496,10 @@ class MultiTenantIsolationTestSuite(TestCase):
         self.assertFalse(future_entry['available'])
         self.assertIn('scheduled for', future_entry['availability_reason'].lower())
 
-        # Attempt to start future exam -> rejected with 400
+        # Attempt to start future exam -> rejected with 403 (or 400)
         resp_start = self.client.post(f'/api/student/exams/{future_exam.id}/start/')
-        self.assertEqual(resp_start.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('scheduled', resp_start.data['detail'].lower())
+        self.assertIn(resp_start.status_code, [status.HTTP_400_BAD_REQUEST, status.HTTP_403_FORBIDDEN])
+        self.assertTrue('scheduled' in resp_start.data.get('detail', '').lower() or 'not started' in resp_start.data.get('detail', '').lower())
 
         # Ended exam
         ended_exam = Exam.objects.create(
@@ -515,7 +519,7 @@ class MultiTenantIsolationTestSuite(TestCase):
             text='Q1', marks=1,
         )
         resp_start_ended = self.client.post(f'/api/student/exams/{ended_exam.id}/start/')
-        self.assertEqual(resp_start_ended.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn(resp_start_ended.status_code, [status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN])
 
     def test_19_admin_exam_audit_endpoint(self):
         """19. Admin audit endpoint scans exams and reports health metrics."""

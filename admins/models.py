@@ -5,6 +5,7 @@ from django.utils import timezone
 
 class AdminProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_profile')
+    is_seed = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -15,6 +16,12 @@ class AdminInstitution(models.Model):
     admin = models.OneToOneField(User, on_delete=models.CASCADE, related_name='admin_institution')
     institution_name = models.CharField(max_length=255)
     institution_code = models.CharField(max_length=13, unique=True, editable=False)
+    short_code = models.CharField(max_length=30, blank=True, default='', db_index=True)
+    institution_type = models.CharField(max_length=100, blank=True, default='')
+    city = models.CharField(max_length=100, blank=True, default='')
+    state = models.CharField(max_length=100, blank=True, default='')
+    established_year = models.PositiveIntegerField(null=True, blank=True)
+    website = models.CharField(max_length=255, blank=True, default='')
     address = models.CharField(max_length=500, blank=True, default='')
     phone = models.CharField(max_length=20, blank=True, default='')
     STATUS_ACTIVE = 'active'
@@ -24,6 +31,7 @@ class AdminInstitution(models.Model):
         (STATUS_SUSPENDED, 'Suspended'),
     )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE, db_index=True)
+    is_seed = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

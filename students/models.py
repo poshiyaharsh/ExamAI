@@ -17,6 +17,7 @@ class StudentProfile(models.Model):
     )
     student_id = models.CharField(max_length=13, blank=True, null=True)
     department = models.CharField(max_length=120, blank=True, default='')
+    is_seed = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

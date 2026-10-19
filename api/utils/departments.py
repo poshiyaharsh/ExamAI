@@ -143,7 +143,7 @@ def is_exam_visible_to_student(exam, user) -> Tuple[bool, bool, str]:
 
     if phase == 'upcoming':
         # Scheduled in the future: visible to students in list as upcoming, but cannot start yet
-        return True, False, f"Exam is scheduled to open on {sched.get('starts_at_display', '')} ({sched.get('timezone', 'Asia/Kolkata')}). You cannot start it yet."
+        return True, False, f"Exam is scheduled for {sched.get('starts_at_display', '')} ({sched.get('timezone', 'Asia/Kolkata')}). You cannot start it yet."
 
     if phase == 'ended':
         # Exam window closed: visible to students as ended/missed, but cannot start
@@ -240,8 +240,8 @@ def get_exam_visibility_status_for_faculty(exam) -> dict:
             user__is_active=True,
         ).count()
 
-    is_visible_now = is_published and (schedule_state in {'active', 'upcoming'}) and bool(exam_dept) and questions_count > 0
-    can_start_now = is_published and schedule_state == 'active' and bool(exam_dept) and questions_count > 0
+    is_visible_now = is_published and (schedule_state in {'live', 'active', 'upcoming'}) and bool(exam_dept) and questions_count > 0
+    can_start_now = is_published and (schedule_state in {'live', 'active'}) and bool(exam_dept) and questions_count > 0
 
     if is_visible_now:
         status_summary = f"Visible to {eligible_students} student{'s' if eligible_students != 1 else ''} of {exam_dept}, {inst_name}"
