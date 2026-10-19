@@ -577,12 +577,38 @@ export type StudentPerformanceTrendResponse = {
   data: StudentPerformanceTrendItem[];
 };
 
+export type ClassificationInfo = {
+  code: "strong" | "average" | "needs_focus" | "no_results" | string;
+  label: string;
+  color: string;
+  token: string;
+  min?: number;
+  max?: number;
+  value?: number;
+};
+
+export type StudentSubjectTopic = {
+  topic: string;
+  average_score: number;
+  questions_count: number;
+  classification: ClassificationInfo;
+};
+
 export type StudentSubjectItem = {
   subject: string;
   average_score: number;
+  exams_counted?: number;
   exam_count: number;
   highest_score: number;
   lowest_score: number;
+  best_exam_title?: string;
+  worst_exam_title?: string;
+  classification?: ClassificationInfo;
+  cohort_average?: number | null;
+  pending_exams_count?: number;
+  missed_exams_count?: number;
+  has_topic_data?: boolean;
+  topics?: StudentSubjectTopic[];
   is_strongest?: boolean;
   is_weakest?: boolean;
 };
@@ -590,9 +616,28 @@ export type StudentSubjectItem = {
 export type StudentPerformanceSubjectsResponse = {
   status: string;
   data: {
+    title?: string;
     subjects: StudentSubjectItem[];
+    unattempted_subjects?: Array<{
+      subject: string;
+      exams_total: number;
+      pending_exams_count: number;
+      missed_exams_count: number;
+      status: string;
+    }>;
     strongest_subject: string | null;
     weakest_subject: string | null;
+    insight?: string;
+    total_graded_subjects?: number;
+    total_pending_exams?: number;
+    total_missed_exams?: number;
+    excluded_exams_note?: string;
+    thresholds?: {
+      strong: number;
+      average: number;
+      needs_focus: number;
+    };
+    generated_at?: string;
   };
 };
 
@@ -838,8 +883,35 @@ export type FacultyRecentExamItem = {
 export type FacultyExamPerfItem = {
   id: number;
   exam_title: string;
-  average_score: number;
+  subject?: string;
+  department?: string;
+  status?: "has_results" | "no_submissions" | "pending_grading" | string;
+  average_score: number | null;
+  highest_score?: number | null;
+  lowest_score?: number | null;
+  pass_rate?: number | null;
+  passing_percentage?: number;
+  submissions_count?: number;
   attempts_count: number;
+  graded_count?: number;
+  eligible_students_count?: number;
+  pending_grading_count?: number;
+  not_attempted_count?: number;
+  ends_at?: string | null;
+  starts_at?: string | null;
+  created_at?: string;
+  classification?: ClassificationInfo;
+};
+
+export type FacultyExamPerfSummary = {
+  total_exams: number;
+  with_results: number;
+  badge_text: string;
+  thresholds: {
+    strong: number;
+    average: number;
+    needs_focus: number;
+  };
 };
 
 export type FacultyScoreDistributionItem = {
@@ -896,6 +968,8 @@ export type FacultyDashboardData = {
   upcoming_exams: FacultyUpcomingExamItem[];
   recent_exams: FacultyRecentExamItem[];
   exam_performance: FacultyExamPerfItem[];
+  exam_perf_summary?: FacultyExamPerfSummary;
+  exam_perf_generated_at?: string;
   score_distribution: FacultyScoreDistributionItem[];
   top_performers: FacultyTopPerformerItem[];
   needs_attention: {

@@ -845,11 +845,11 @@ export function AdminDashboard() {
               </div>
 
               {/* Chart visualization */}
-              <div className="w-full h-64 mb-6">
+              <div className="w-full h-64 mb-6 min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={deptChartData.length > 0 ? deptChartData : [{ name: "No Active Depts", students: 0, exams: 0, average: 0 }]}
-                    margin={{ top: 10, right: 10, left: -20, bottom: 25 }}
+                    margin={{ top: 10, right: 10, left: -20, bottom: 30 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.6} />
                     <XAxis
@@ -858,6 +858,8 @@ export function AdminDashboard() {
                       interval={0}
                       angle={-20}
                       textAnchor="end"
+                      height={40}
+                      tickFormatter={(val: string) => (val && val.length > 14 ? `${val.substring(0, 12)}...` : val)}
                     />
                     <YAxis tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} />
                     <Tooltip
@@ -957,9 +959,9 @@ export function AdminDashboard() {
             </div>
 
             {/* Trends and Score Distribution (2-column grid) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-w-0">
               {/* Activity Trend Chart */}
-              <div className="bg-card rounded-xl p-5 border border-border shadow-sm flex flex-col justify-between">
+              <div className="bg-card rounded-xl p-5 border border-border shadow-sm flex flex-col justify-between min-w-0">
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="font-bold text-base text-foreground">Activity Trend</h3>
@@ -970,7 +972,7 @@ export function AdminDashboard() {
                   </p>
                 </div>
 
-                <div className="w-full h-64">
+                <div className="w-full h-64 min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={activityTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <defs>
@@ -1019,7 +1021,7 @@ export function AdminDashboard() {
               </div>
 
               {/* Score Distribution Chart */}
-              <div className="bg-card rounded-xl p-5 border border-border shadow-sm flex flex-col justify-between">
+              <div className="bg-card rounded-xl p-5 border border-border shadow-sm flex flex-col justify-between min-w-0">
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="font-bold text-base text-foreground">Score Distribution</h3>
@@ -1030,7 +1032,7 @@ export function AdminDashboard() {
                   </p>
                 </div>
 
-                <div className="w-full h-64">
+                <div className="w-full h-64 min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={scoreDist} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.6} />

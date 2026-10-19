@@ -313,52 +313,22 @@ class StudentPerformanceTrendView(StudentPerformancePermissionMixin, APIView):
 class StudentPerformanceSubjectsView(StudentPerformancePermissionMixin, APIView):
     def get(self, request):
         from api.tenant import get_user_institution
+        from api.utils.analytics import compute_student_subjects_breakdown
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
-        attempts_qs, _, pct_expr = _get_student_completed_attempts(request.user, tenant=tenant)
 
-        # Database aggregation: GROUP BY exam__topics
-        grouped_topics = (
-            attempts_qs.values('exam__topics')
-            .annotate(
-                avg_score=Avg(pct_expr),
-                exam_count=Count('id'),
-                highest_score=Max(pct_expr),
-                lowest_score=Min(pct_expr),
-            )
-            .order_by('-avg_score')
-        )
+        data = compute_student_subjects_breakdown(request.user, tenant=tenant)
 
-        subject_list = []
-        for item in grouped_topics:
-            raw_topics = item.get('exam__topics')
-            subject_name = ', '.join(str(t) for t in raw_topics) if isinstance(raw_topics, list) and raw_topics else 'General'
-            avg_pct = round(item['avg_score'], 1) if item.get('avg_score') is not None else 0.0
-            subject_list.append({
-                'subject': subject_name,
-                'average_score': avg_pct,
-                'exam_count': item['exam_count'],
-                'highest_score': round(item['highest_score'], 1) if item.get('highest_score') is not None else avg_pct,
-                'lowest_score': round(item['lowest_score'], 1) if item.get('lowest_score') is not None else avg_pct,
-            })
-
-        # Identify strongest and weakest subjects
-        if subject_list:
-            highest_avg = max(s['average_score'] for s in subject_list)
-            lowest_avg = min(s['average_score'] for s in subject_list)
-
-            for s in subject_list:
-                s['is_strongest'] = s['average_score'] == highest_avg
-                # Only mark weakest if there is more than 1 subject or distinct score
-                s['is_weakest'] = (s['average_score'] == lowest_avg) and (len(subject_list) > 1 and highest_avg != lowest_avg)
-        else:
-            highest_avg = None
-            lowest_avg = None
+        # Backwards compatibility flags for any existing callers
+        subjects = data.get('subjects', [])
+        if subjects:
+            max_avg = max(s['average_score'] for s in subjects)
+            min_avg = min(s['average_score'] for s in subjects)
+            for s in subjects:
+                s['exam_count'] = s.get('exams_counted', 0)
+                s['is_strongest'] = s['average_score'] == max_avg
+                s['is_weakest'] = (s['average_score'] == min_avg) and (len(subjects) > 1 and max_avg != min_avg)
 
         return Response({
             'status': 'success',
-            'data': {
-                'subjects': subject_list,
-                'strongest_subject': next((s['subject'] for s in subject_list if s.get('is_strongest')), None),
-                'weakest_subject': next((s['subject'] for s in subject_list if s.get('is_weakest')), None),
-            }
+            'data': data,
         })

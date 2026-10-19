@@ -221,19 +221,11 @@ class FacultyDashboardView(APIView):
                 'topics': e.topics if isinstance(e.topics, list) else [],
             })
 
-        # 6. Exam Performance for Bar Chart (last 8-10 published exams)
-        perf_exams = list(faculty_exams.filter(status=Exam.Status.PUBLISHED).order_by('-created_at')[:8])
-        perf_exams.reverse()
-        exam_perf_data = []
-        for e in perf_exams:
-            e_attempts = StudentAttempt.objects.filter(exam=e, status__in=COMPLETED_STATUSES)
-            avg_val = e_attempts.annotate(pct=pct_expr).aggregate(avg=Avg('pct')).get('avg')
-            exam_perf_data.append({
-                'id': e.id,
-                'exam_title': e.title,
-                'average_score': round(avg_val, 1) if avg_val is not None else 0.0,
-                'attempts_count': e_attempts.count(),
-            })
+        # 6. Exam Performance Overview for Analytics Charts (last 8 published exams)
+        from api.utils.analytics import compute_faculty_exam_performance_overview
+        perf_overview = compute_faculty_exam_performance_overview(user, tenant, limit=8)
+        exam_perf_data = perf_overview['exams']
+        exam_perf_summary = perf_overview['summary']
 
         # 7. Score Distribution
         dist_agg = faculty_attempts.annotate(pct=pct_expr).aggregate(
@@ -398,6 +390,8 @@ class FacultyDashboardView(APIView):
                 'upcoming_exams': upcoming_exams_list,
                 'recent_exams': recent_exams_list,
                 'exam_performance': exam_perf_data,
+                'exam_perf_summary': exam_perf_summary,
+                'exam_perf_generated_at': perf_overview.get('generated_at'),
                 'score_distribution': score_distribution,
                 'top_performers': top_performers_list,
                 'needs_attention': {

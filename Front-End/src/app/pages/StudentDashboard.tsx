@@ -380,7 +380,7 @@ export function StudentDashboard() {
               </div>
 
               {/* Performance Trend Mini-Chart */}
-              <div className="bg-white rounded-xl shadow-2xs border border-border overflow-hidden flex flex-col">
+              <div className="bg-card rounded-xl shadow-2xs border border-border overflow-hidden flex flex-col min-w-0">
                 <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between">
                   <div>
                     <h3 className="font-semibold text-foreground text-sm sm:text-base">Recent Score Progression</h3>
@@ -390,7 +390,7 @@ export function StudentDashboard() {
                     Details <ArrowRight className="w-3 h-3" />
                   </Link>
                 </div>
-                <div className="p-4 sm:p-5 flex-1 flex flex-col justify-center">
+                <div className="p-4 sm:p-5 flex-1 flex flex-col justify-center min-w-0">
                   {trend.length === 0 ? (
                     <div className="text-center py-8">
                       <TrendingUp className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
@@ -399,16 +399,22 @@ export function StudentDashboard() {
                       </p>
                     </div>
                   ) : (
-                    <div className="h-52 w-full">
+                    <div className="h-52 w-full min-w-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={trend} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.6} />
                           <XAxis dataKey="date" stroke="#6B7280" fontSize={11} tickLine={false} />
                           <YAxis domain={[0, 100]} stroke="#6B7280" fontSize={11} tickLine={false} unit="%" />
                           <RechartsTooltip
                             formatter={(val: any) => [`${val}%`, "Percentage"]}
                             labelFormatter={(l) => `Date: ${l}`}
-                            contentStyle={{ backgroundColor: "#FFFFFF", borderRadius: "8px", borderColor: "#E5E7EB", fontSize: "12px" }}
+                            contentStyle={{
+                              backgroundColor: "var(--card)",
+                              borderColor: "var(--border)",
+                              borderRadius: "8px",
+                              fontSize: "12px",
+                              color: "var(--foreground)",
+                            }}
                           />
                           <Line
                             type="monotone"

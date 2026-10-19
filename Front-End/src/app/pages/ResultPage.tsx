@@ -99,27 +99,36 @@ export function ResultPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="bg-white rounded-xl shadow-sm border border-border p-6"
+          className="bg-card rounded-xl shadow-sm border border-border p-6 min-w-0"
         >
-          <h3 className="font-semibold text-xl mb-6">Topic Wise Analysis</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={topicWiseData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-              <XAxis dataKey="topic" stroke="#6B7280" />
-              <YAxis stroke="#6B7280" />
-              <Tooltip />
-              <Bar dataKey="score" fill="#4F46E5" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <h3 className="font-semibold text-xl mb-6 text-foreground">Topic Wise Analysis</h3>
+          <div className="w-full h-[300px] min-w-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topicWiseData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.6} />
+                <XAxis dataKey="topic" stroke="var(--muted-foreground)" tick={{ fontSize: 12, fill: "var(--muted-foreground)" }} />
+                <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 12, fill: "var(--muted-foreground)" }} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "var(--card)",
+                    borderColor: "var(--border)",
+                    borderRadius: "8px",
+                    fontSize: "12px",
+                  }}
+                />
+                <Bar dataKey="score" fill="#3B82F6" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </motion.div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
+        <div className="grid lg:grid-cols-2 gap-6 min-w-0">
           {/* AI Feedback Section */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="bg-white rounded-xl shadow-sm border border-border p-6"
+            className="bg-card rounded-xl shadow-sm border border-border p-6 min-w-0"
           >
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
@@ -135,7 +144,7 @@ export function ResultPage() {
                   Your performance in arrays and sorting algorithms is exceptional.
                 </p>
               </div>
-              <div className="bg-blue-50 rounded-lg p-4">
+              <div className="bg-blue-500/10 rounded-lg p-4 border border-blue-500/20">
                 <h4 className="font-semibold text-foreground mb-2">Areas of Improvement</h4>
                 <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                   <li>Focus more on graph traversal algorithms</li>
@@ -143,7 +152,7 @@ export function ResultPage() {
                   <li>Review time complexity analysis for tree operations</li>
                 </ul>
               </div>
-              <div className="bg-green-50 rounded-lg p-4">
+              <div className="bg-emerald-500/10 rounded-lg p-4 border border-emerald-500/20">
                 <h4 className="font-semibold text-foreground mb-2">Recommended Topics</h4>
                 <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                   <li>Advanced graph algorithms (Dijkstra, Bellman-Ford)</li>
@@ -159,17 +168,19 @@ export function ResultPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="bg-white rounded-xl shadow-sm border border-border p-6"
+            className="bg-card rounded-xl shadow-sm border border-border p-6 min-w-0"
           >
-            <h3 className="font-semibold text-xl mb-6">Skills Assessment</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <RadarChart data={skillsRadarData}>
-                <PolarGrid stroke="#E5E7EB" />
-                <PolarAngleAxis dataKey="skill" stroke="#6B7280" />
-                <PolarRadiusAxis stroke="#6B7280" />
-                <Radar name="Your Score" dataKey="value" stroke="#4F46E5" fill="#4F46E5" fillOpacity={0.3} />
-              </RadarChart>
-            </ResponsiveContainer>
+            <h3 className="font-semibold text-xl mb-6 text-foreground">Skills Assessment</h3>
+            <div className="w-full h-[300px] min-w-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={skillsRadarData}>
+                  <PolarGrid stroke="var(--border)" opacity={0.6} />
+                  <PolarAngleAxis dataKey="skill" stroke="var(--muted-foreground)" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} />
+                  <PolarRadiusAxis stroke="var(--muted-foreground)" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
+                  <Radar name="Your Score" dataKey="value" stroke="#3B82F6" fill="#3B82F6" fillOpacity={0.25} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
             <div className="mt-6 grid grid-cols-2 gap-4">
               <div className="bg-green-50 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">

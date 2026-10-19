@@ -39,6 +39,7 @@ import {
   YAxis,
 } from "recharts";
 import { DashboardLayout } from "../components/DashboardLayout";
+import { ExamPerformanceOverviewChart } from "../components/analytics/ExamPerformanceOverviewChart";
 import {
   facultyDashboardApi,
   type FacultyDashboardData,
@@ -599,52 +600,25 @@ export function FacultyDashboard() {
                 />
 
                 {/* 2-Column Visualizations: Exam Performance & Score Distribution */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Exam Performance Bar Chart */}
-                  <div className="bg-white rounded-xl shadow-2xs border border-border p-5 sm:p-6 flex flex-col">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="font-semibold text-foreground text-sm sm:text-base">Exam Performance Overview</h3>
-                        <p className="text-xs text-muted-foreground">Average score (%) across recent published exams</p>
-                      </div>
-                      <span className="text-xs text-primary font-medium bg-primary/10 px-2 py-0.5 rounded-full">
-                        {examPerf.length} exams
-                      </span>
-                    </div>
-
-                    {examPerf.length === 0 ? (
-                      <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">
-                        No exam attempts recorded yet.
-                      </div>
-                    ) : (
-                      <div className="h-56 sm:h-64 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={examPerf} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                            <XAxis dataKey="exam_title" stroke="#6B7280" fontSize={11} tickLine={false} interval={0} />
-                            <YAxis domain={[0, 100]} stroke="#6B7280" fontSize={11} tickLine={false} unit="%" />
-                            <Tooltip
-                              formatter={(val: any, _, item) => [
-                                `${val}% (${item.payload.attempts_count} ${item.payload.attempts_count === 1 ? "attempt" : "attempts"})`,
-                                "Average",
-                              ]}
-                              contentStyle={{ backgroundColor: "#FFFFFF", borderRadius: "8px", borderColor: "#E5E7EB", fontSize: "12px" }}
-                            />
-                            <Bar dataKey="average_score" fill="#4F46E5" radius={[6, 6, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-                  </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-w-0">
+                  {/* Redesigned Exam Performance Overview */}
+                  <ExamPerformanceOverviewChart
+                    exams={examPerf}
+                    summary={data?.exam_perf_summary}
+                    generatedAt={data?.exam_perf_generated_at}
+                    loading={loading}
+                    error={error}
+                    onRetry={() => void loadDashboard()}
+                  />
 
                   {/* Score Distribution Chart */}
-                  <div className="bg-white rounded-xl shadow-2xs border border-border p-5 sm:p-6 flex flex-col">
+                  <div className="bg-card rounded-xl shadow-2xs border border-border p-5 sm:p-6 flex flex-col justify-between min-w-0">
                     <div className="flex items-center justify-between mb-4">
                       <div>
                         <h3 className="font-semibold text-foreground text-sm sm:text-base">Student Score Distribution</h3>
                         <p className="text-xs text-muted-foreground">Attempt distribution across performance brackets</p>
                       </div>
-                      <span className="text-xs text-muted-foreground font-medium">
+                      <span className="text-xs text-muted-foreground font-medium bg-muted px-2 py-0.5 rounded-full">
                         {stats?.total_attempts} total
                       </span>
                     </div>
@@ -654,15 +628,21 @@ export function FacultyDashboard() {
                         No student attempts evaluated yet.
                       </div>
                     ) : (
-                      <div className="h-56 sm:h-64 w-full">
+                      <div className="h-56 sm:h-64 w-full min-w-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={scoreDist} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.6} />
                             <XAxis dataKey="range" stroke="#6B7280" fontSize={11} tickLine={false} />
                             <YAxis allowDecimals={false} stroke="#6B7280" fontSize={11} tickLine={false} />
                             <Tooltip
                               formatter={(val: any, _, item) => [`${val} submissions`, item.payload.label]}
-                              contentStyle={{ backgroundColor: "#FFFFFF", borderRadius: "8px", borderColor: "#E5E7EB", fontSize: "12px" }}
+                              contentStyle={{
+                                backgroundColor: "var(--card)",
+                                borderColor: "var(--border)",
+                                borderRadius: "8px",
+                                fontSize: "12px",
+                                color: "var(--foreground)",
+                              }}
                             />
                             <Bar dataKey="count" radius={[6, 6, 0, 0]}>
                               {scoreDist.map((_, index) => (

@@ -32,6 +32,7 @@ import {
   YAxis,
 } from "recharts";
 import { DashboardLayout } from "../components/DashboardLayout";
+import { SubjectPerformanceChart } from "../components/analytics/SubjectPerformanceChart";
 import {
   studentExamApi,
   studentPerformanceApi,
@@ -39,6 +40,7 @@ import {
   type StudentPerformanceResultRow,
   type StudentPerformanceSummary,
   type StudentPerformanceTrendItem,
+  type StudentPerformanceSubjectsResponse,
   type StudentSubjectItem,
 } from "../../services/api";
 
@@ -67,11 +69,7 @@ function getStatusBadge(status: string) {
 export function StudentPerformance() {
   const [summary, setSummary] = useState<StudentPerformanceSummary | null>(null);
   const [trend, setTrend] = useState<StudentPerformanceTrendItem[]>([]);
-  const [subjectsData, setSubjectsData] = useState<{
-    subjects: StudentSubjectItem[];
-    strongest_subject: string | null;
-    weakest_subject: string | null;
-  } | null>(null);
+  const [subjectsData, setSubjectsData] = useState<StudentPerformanceSubjectsResponse["data"] | null>(null);
 
   const [results, setResults] = useState<StudentPerformanceResultRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -344,9 +342,9 @@ export function StudentPerformance() {
             )}
 
             {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 min-w-0">
               {/* Line Chart: Trend over time */}
-              <div className="bg-white rounded-xl p-5 sm:p-6 shadow-xs border border-border">
+              <div className="bg-card rounded-xl p-5 sm:p-6 shadow-2xs border border-border min-w-0 flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="font-semibold text-foreground text-sm sm:text-base">Score Trend Over Time</h3>
@@ -362,16 +360,22 @@ export function StudentPerformance() {
                     No trend history recorded yet.
                   </div>
                 ) : (
-                  <div className="h-64 sm:h-72 w-full">
+                  <div className="h-64 sm:h-72 w-full min-w-0">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={trend} margin={{ top: 10, right: 15, left: -15, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                        <XAxis dataKey="date" stroke="#6B7280" fontSize={12} tickLine={false} />
-                        <YAxis domain={[0, 100]} stroke="#6B7280" fontSize={12} tickLine={false} unit="%" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.6} />
+                        <XAxis dataKey="date" stroke="#6B7280" fontSize={11} tickLine={false} />
+                        <YAxis domain={[0, 100]} stroke="#6B7280" fontSize={11} tickLine={false} unit="%" />
                         <Tooltip
                           formatter={(value: any) => [`${value}%`, "Score"]}
                           labelFormatter={(label) => `Date: ${label}`}
-                          contentStyle={{ backgroundColor: "#FFFFFF", borderRadius: "8px", borderColor: "#E5E7EB", fontSize: "12px" }}
+                          contentStyle={{
+                            backgroundColor: "var(--card)",
+                            borderColor: "var(--border)",
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                            color: "var(--foreground)",
+                          }}
                         />
                         <Line
                           type="monotone"
@@ -387,54 +391,14 @@ export function StudentPerformance() {
                 )}
               </div>
 
-              {/* Bar Chart: Subject / Topic Analysis */}
-              <div className="bg-white rounded-xl p-5 sm:p-6 shadow-xs border border-border">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="font-semibold text-foreground text-sm sm:text-base">Subject & Topic Breakdown</h3>
-                    <p className="text-xs text-muted-foreground">Average performance across subjects</p>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="flex items-center gap-1 font-medium text-emerald-700">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" /> Strongest
-                    </span>
-                    <span className="flex items-center gap-1 font-medium text-amber-700">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Needs Focus
-                    </span>
-                  </div>
-                </div>
-
-                {!subjectsData || subjectsData.subjects.length === 0 ? (
-                  <div className="h-64 flex items-center justify-center text-xs text-muted-foreground">
-                    No subject breakdown available.
-                  </div>
-                ) : (
-                  <div className="h-64 sm:h-72 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={subjectsData.subjects} margin={{ top: 10, right: 15, left: -15, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                        <XAxis dataKey="subject" stroke="#6B7280" fontSize={11} tickLine={false} interval={0} />
-                        <YAxis domain={[0, 100]} stroke="#6B7280" fontSize={12} tickLine={false} unit="%" />
-                        <Tooltip
-                          formatter={(value: any, _, item) => [
-                            `${value}% (${item.payload.exam_count} ${item.payload.exam_count === 1 ? "exam" : "exams"})`,
-                            "Average",
-                          ]}
-                          contentStyle={{ backgroundColor: "#FFFFFF", borderRadius: "8px", borderColor: "#E5E7EB", fontSize: "12px" }}
-                        />
-                        <Bar dataKey="average_score" radius={[6, 6, 0, 0]}>
-                          {subjectsData.subjects.map((entry, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={entry.is_strongest ? "#10B981" : entry.is_weakest ? "#F59E0B" : "#4F46E5"}
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
+              {/* Subject Performance Breakdown Component */}
+              <SubjectPerformanceChart
+                data={subjectsData}
+                loading={loading}
+                error={error}
+                onRetry={loadAnalytics}
+                overallAverage={summary?.overall_average}
+              />
             </div>
 
             {/* Results Table Section */}
