@@ -23,6 +23,7 @@ import { ResultsPage } from "./pages/ResultsPage";
 import { StudentPerformance } from "./pages/StudentPerformance";
 import { StudentSettings } from "./pages/StudentSettings";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { NotFound } from "./pages/NotFound";
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
   return <ProtectedRoute allowedRoles={["admin"]}>{children}</ProtectedRoute>;
@@ -204,5 +205,9 @@ export const router = createBrowserRouter([
         <StudentSettings />
       </StudentOnly>
     ),
+  },
+  {
+    path: "*",
+    Component: NotFound,
   },
 ]);
