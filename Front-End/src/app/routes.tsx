@@ -22,8 +22,6 @@ import { TakeExamPage } from "./pages/TakeExamPage";
 import { ResultsPage } from "./pages/ResultsPage";
 import { StudentPerformance } from "./pages/StudentPerformance";
 import { StudentSettings } from "./pages/StudentSettings";
-import { ExamInterface } from "./pages/ExamInterface";
-import { ResultPage } from "./pages/ResultPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
@@ -204,22 +202,6 @@ export const router = createBrowserRouter([
     Component: () => (
       <StudentOnly>
         <StudentSettings />
-      </StudentOnly>
-    ),
-  },
-  {
-    path: "/exam/:id",
-    Component: () => (
-      <StudentOnly>
-        <ExamInterface />
-      </StudentOnly>
-    ),
-  },
-  {
-    path: "/result/:id",
-    Component: () => (
-      <StudentOnly>
-        <ResultPage />
       </StudentOnly>
     ),
   },
