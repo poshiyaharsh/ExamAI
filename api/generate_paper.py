@@ -1029,12 +1029,36 @@ class GeneratePaperView(APIView):
 
 class ParseSyllabusView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
         syllabus_file = request.FILES.get('syllabus')
-        if not syllabus_file:
-            return Response({'detail': 'No syllabus file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        syllabus_text = request.data.get('syllabus_text') or (
+            request.data.get('syllabus') if isinstance(request.data.get('syllabus'), str) else None
+        )
+        if not syllabus_file and not (syllabus_text and str(syllabus_text).strip()):
+            return Response({'detail': 'No syllabus file or text provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not syllabus_file and syllabus_text:
+            text = str(syllabus_text).strip()
+            raw_lines = [line.strip().lstrip('-*•0123456789. ') for line in text.splitlines() if line.strip()]
+            topics = [t for t in raw_lines if len(t) > 2][:30]
+            if not topics:
+                topics = [text[:100]]
+            from .utils.extract_text import estimate_syllabus_capacity
+            capacity = estimate_syllabus_capacity(len(text), len(topics))
+            return Response({
+                'filename': 'direct_text_input',
+                'file_hash': '',
+                'char_count': len(text),
+                'units': [],
+                'has_multiple_subjects': False,
+                'detected_domains': [],
+                'topics': topics,
+                'detected_topics_count': len(topics),
+                'capacity': capacity,
+                'preview': text[:600] + ('...' if len(text) > 600 else ''),
+            })
 
         try:
             from .utils.extract_text import get_cached_syllabus_data
@@ -1215,6 +1239,9 @@ class ScopeCheckView(APIView):
     Flags off-scope questions, hallucinations, or ungrounded questions with explanations.
     """
     permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def get(self, request, exam_id):
+        return self.post(request, exam_id)
 
     def post(self, request, exam_id):
         from .tenant import get_user_institution

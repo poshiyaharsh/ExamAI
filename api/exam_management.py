@@ -213,6 +213,28 @@ class QuestionUpdateView(FacultyExamViewMixin, APIView):
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
         return Response(FacultyQuestionSerializer(question).data)
 
+    def patch(self, request, exam_id, question_id):
+        exam = self.get_exam(request, exam_id)
+        if not exam:
+            return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            return Response(
+                {'detail': 'Published exams are immutable and cannot be modified.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        question = Question.objects.filter(exam=exam, institution=exam.institution, id=question_id).first()
+        if not question:
+            return Response({'detail': 'Question not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = QuestionUpdateSerializer(question, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        from api.paper_engine.cache import PaperCacheService
+        PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+        return Response(FacultyQuestionSerializer(question).data)
+
     def delete(self, request, exam_id, question_id):
         exam = self.get_exam(request, exam_id)
         if not exam:
