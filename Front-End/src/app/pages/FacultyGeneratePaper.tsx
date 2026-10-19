@@ -66,27 +66,19 @@ const aiModelLabels: Record<AiModel, string> = {
   "phi3-mini": "Phi-3 Mini (Local)",
 };
 
-export interface BlueprintTypeConfig {
-  enabled: boolean;
-  count: number;
-  marks: number;
-}
+import {
+  type BlueprintTypeConfig,
+  type BlueprintState,
+  computeBlueprintTotal,
+  allocateBlueprintToTarget,
+  rebalanceBlueprintToTarget,
+  balanceBlueprintSmallestChange,
+  ALL_QUESTION_TYPES,
+} from "../../utils/blueprintAllocator";
 
-export type BlueprintState = {
-  mcq: BlueprintTypeConfig;
-  true_false: BlueprintTypeConfig;
-  fill_blank: BlueprintTypeConfig;
-  short_answer: BlueprintTypeConfig;
-  long_answer: BlueprintTypeConfig;
-};
+export type { BlueprintTypeConfig, BlueprintState };
 
-const DEFAULT_BLUEPRINT: BlueprintState = {
-  mcq: { enabled: true, count: 5, marks: 2 },
-  true_false: { enabled: true, count: 5, marks: 2 },
-  fill_blank: { enabled: true, count: 5, marks: 2 },
-  short_answer: { enabled: true, count: 4, marks: 5 },
-  long_answer: { enabled: true, count: 5, marks: 10 },
-};
+const DEFAULT_BLUEPRINT: BlueprintState = allocateBlueprintToTarget(100).blueprint;
 
 const questionTypeDetails: Record<
   keyof BlueprintState,
@@ -296,14 +288,35 @@ export function FacultyGeneratePaper() {
     [questions]
   );
 
+  const targetMarksNum = useMemo(() => {
+    const val = parseInt(totalMarks, 10);
+    if (isNaN(val) || val <= 0) return 50;
+    return Math.min(500, val);
+  }, [totalMarks]);
+
+  const [lastConfirmedTargetMarks, setLastConfirmedTargetMarks] = useState<number>(() => {
+    const val = parseInt(totalMarks, 10);
+    return isNaN(val) || val <= 0 ? 50 : val;
+  });
+  const [rebalancePrompt, setRebalancePrompt] = useState<{ open: boolean; oldTarget: number; newTarget: number } | null>(null);
+  const [previousBlueprint, setPreviousBlueprint] = useState<BlueprintState | null>(null);
+  const [balanceModal, setBalanceModal] = useState<{
+    open: boolean;
+    proposal: BlueprintState | null;
+    explanation: string;
+  }>({
+    open: false,
+    proposal: null,
+    explanation: "",
+  });
+
   const blueprintSummary = useMemo(() => {
     let totalQuestions = 0;
-    let blueprintMarks = 0;
+    const blueprintMarks = computeBlueprintTotal(blueprint);
     const typeEntries = Object.entries(blueprint) as [keyof BlueprintState, BlueprintTypeConfig][];
     for (const [, cfg] of typeEntries) {
       if (cfg.enabled && cfg.count > 0) {
         totalQuestions += cfg.count;
-        blueprintMarks += cfg.count * cfg.marks;
       }
     }
     return { totalQuestions, blueprintMarks };
@@ -337,76 +350,62 @@ export function FacultyGeneratePaper() {
   };
 
   const applyPreset = (preset: "objective" | "mixed" | "subjective") => {
-    if (preset === "objective") {
-      setBlueprint({
-        mcq: { enabled: true, count: 20, marks: 2 },
-        true_false: { enabled: true, count: 15, marks: 2 },
-        fill_blank: { enabled: true, count: 15, marks: 2 },
-        short_answer: { enabled: false, count: 0, marks: 5 },
-        long_answer: { enabled: false, count: 0, marks: 10 },
-      });
-      toast.success("Applied Objective Only blueprint preset.");
-    } else if (preset === "mixed") {
-      setBlueprint({
-        mcq: { enabled: true, count: 5, marks: 2 },
-        true_false: { enabled: true, count: 5, marks: 2 },
-        fill_blank: { enabled: true, count: 5, marks: 2 },
-        short_answer: { enabled: true, count: 4, marks: 5 },
-        long_answer: { enabled: true, count: 5, marks: 10 },
-      });
-      toast.success("Applied Balanced Mix blueprint preset.");
-    } else if (preset === "subjective") {
-      setBlueprint({
-        mcq: { enabled: false, count: 0, marks: 2 },
-        true_false: { enabled: false, count: 0, marks: 2 },
-        fill_blank: { enabled: false, count: 0, marks: 2 },
-        short_answer: { enabled: true, count: 8, marks: 5 },
-        long_answer: { enabled: true, count: 6, marks: 10 },
-      });
-      toast.success("Applied Subjective Focus blueprint preset.");
+    setPreviousBlueprint(JSON.parse(JSON.stringify(blueprint)));
+    const { blueprint: newBp, notes } = allocateBlueprintToTarget(targetMarksNum, undefined, preset);
+    setBlueprint(newBp);
+    try {
+      localStorage.setItem("examai_faculty_blueprint_customized", "true");
+    } catch {}
+    const label = preset === "objective" ? "Objective Only" : preset === "mixed" ? "Balanced Mix" : "Subjective Focus";
+    toast.success(`Applied ${label} preset (${targetMarksNum} marks).`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          if (previousBlueprint) {
+            setBlueprint(previousBlueprint);
+            toast.info("Reverted to previous blueprint.");
+          }
+        },
+      },
+    });
+    if (notes.length > 0) {
+      notes.forEach((n) => toast.info(n));
     }
   };
 
-  const handleAutoAlignMarks = () => {
-    const target = Number(totalMarks) || 100;
+  const handleProposeBalance = () => {
     const current = blueprintSummary.blueprintMarks;
-    if (current === 0) {
-      toast.error("Please enable at least one question type before auto-aligning.");
-      return;
-    }
-    if (current === target) {
+    if (current === targetMarksNum) {
       toast.info("Blueprint marks already match the target marks exactly!");
       return;
     }
-
-    const enabledTypes = (Object.keys(blueprint) as (keyof BlueprintState)[]).filter(
-      (k) => blueprint[k].enabled && blueprint[k].count > 0
-    );
-    if (!enabledTypes.length) return;
-
-    const scaleFactor = target / current;
-    const nextBp = { ...blueprint };
-    let accumulated = 0;
-    enabledTypes.forEach((k) => {
-      const newCount = Math.max(1, Math.round(nextBp[k].count * scaleFactor));
-      nextBp[k] = { ...nextBp[k], count: newCount };
-      accumulated += newCount * nextBp[k].marks;
-    });
-
-    const diff = target - accumulated;
-    if (diff !== 0) {
-      const primaryKey = enabledTypes[0];
-      const marksPerQ = nextBp[primaryKey].marks || 1;
-      const countAdjustment = Math.round(diff / marksPerQ);
-      nextBp[primaryKey] = {
-        ...nextBp[primaryKey],
-        count: Math.max(1, nextBp[primaryKey].count + countAdjustment),
-      };
-    }
-
-    setBlueprint(nextBp);
-    toast.success(`Blueprint auto-aligned to target marks (${target} marks)!`);
+    const { blueprint: proposal, explanation } = balanceBlueprintSmallestChange(blueprint, targetMarksNum);
+    setBalanceModal({ open: true, proposal, explanation });
   };
+
+  const handleConfirmBalance = () => {
+    if (balanceModal.proposal) {
+      setPreviousBlueprint(JSON.parse(JSON.stringify(blueprint)));
+      setBlueprint(balanceModal.proposal);
+      try {
+        localStorage.setItem("examai_faculty_blueprint_customized", "true");
+      } catch {}
+      toast.success(`Blueprint balanced to ${targetMarksNum} marks!`, {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            if (previousBlueprint) {
+              setBlueprint(previousBlueprint);
+              toast.info("Reverted to previous blueprint.");
+            }
+          },
+        },
+      });
+    }
+    setBalanceModal({ open: false, proposal: null, explanation: "" });
+  };
+
+  const handleAutoAlignMarks = handleProposeBalance;
 
   const handleSyllabusFileSelected = async (file: File) => {
     setSyllabusFile(file);
@@ -447,8 +446,10 @@ export function FacultyGeneratePaper() {
   // Step 1 Validation
   const validateStep1 = () => {
     if (!examTitle.trim()) return "Exam Title is required.";
-    if (Number(duration) <= 0) return "Duration must be greater than 0.";
-    if (Number(totalMarks) <= 0) return "Total Marks must be greater than 0.";
+    const dur = Number(duration);
+    if (isNaN(dur) || dur <= 0) return "Duration must be greater than 0.";
+    const tm = Number(totalMarks);
+    if (isNaN(tm) || tm < 1 || tm > 500) return "Target Total Marks must be an integer between 1 and 500.";
     if (cleanTopics.length === 0) return "At least one topic is required.";
     if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt)) {
       return "Exam schedule start date must precede end date.";
@@ -463,6 +464,20 @@ export function FacultyGeneratePaper() {
       toast.error(error);
       return;
     }
+    const currentTarget = targetMarksNum;
+    const bpTotal = blueprintSummary.blueprintMarks;
+    const isCustomized = localStorage.getItem("examai_faculty_blueprint_customized") === "true";
+
+    if (!isCustomized && bpTotal !== currentTarget) {
+      const { blueprint: autoBp, notes } = allocateBlueprintToTarget(currentTarget);
+      setBlueprint(autoBp);
+      setLastConfirmedTargetMarks(currentTarget);
+      if (notes.length > 0) {
+        notes.forEach((n) => toast.info(n));
+      }
+    } else if (lastConfirmedTargetMarks !== currentTarget && bpTotal !== currentTarget) {
+      setRebalancePrompt({ open: true, oldTarget: lastConfirmedTargetMarks, newTarget: currentTarget });
+    }
     setCurrentStep(2);
   };
 
@@ -470,6 +485,13 @@ export function FacultyGeneratePaper() {
   const handleAiGenerate = async () => {
     if (!examTitle.trim()) {
       toast.error("Please enter an exam title in Step 1.");
+      return;
+    }
+
+    if (blueprintSummary.blueprintMarks !== targetMarksNum) {
+      toast.error(
+        `Blueprint total marks (${blueprintSummary.blueprintMarks}) do not match target marks (${targetMarksNum}). Please balance your blueprint before generating.`
+      );
       return;
     }
 
@@ -696,7 +718,7 @@ export function FacultyGeneratePaper() {
 
   // Step 4 Validation Checks
   const validationChecks = useMemo(() => {
-    const target = Number(totalMarks);
+    const target = targetMarksNum;
     const subset = randomSubsetSize ? Number(randomSubsetSize) : null;
     const marksValid = subset ? questions.length >= subset : currentTotalMarks === target;
     const scheduleValid = !startsAt || !endsAt || new Date(startsAt) < new Date(endsAt);
@@ -710,7 +732,7 @@ export function FacultyGeneratePaper() {
       hasDept,
       canPublish: marksValid && scheduleValid && hasQuestions && hasDept,
     };
-  }, [totalMarks, randomSubsetSize, questions.length, currentTotalMarks, startsAt, endsAt, facultyDept]);
+  }, [targetMarksNum, randomSubsetSize, questions.length, currentTotalMarks, startsAt, endsAt, facultyDept]);
 
   // Publish Exam
   const handlePublishExam = async () => {
@@ -966,6 +988,174 @@ export function FacultyGeneratePaper() {
         {/* ================= STEP 2: QUESTIONS ================= */}
         {currentStep === 2 && (
           <div className="space-y-6">
+            {/* Rebalance Prompt Banner if Target Changed */}
+            {rebalancePrompt && (
+              <div className="rounded-2xl border border-blue-200 bg-blue-50/95 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-start sm:items-center gap-3">
+                  <AlertCircle className="h-5 w-5 text-blue-600 shrink-0 mt-0.5 sm:mt-0" />
+                  <div>
+                    <p className="text-xs sm:text-sm font-bold text-blue-950">
+                      Target marks changed from {rebalancePrompt.oldTarget} to {rebalancePrompt.newTarget} marks.
+                    </p>
+                    <p className="text-[11px] text-blue-700">
+                      Would you like to automatically rebalance your blueprint to match {rebalancePrompt.newTarget} marks?
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviousBlueprint(JSON.parse(JSON.stringify(blueprint)));
+                      const { blueprint: reb, notes } = rebalanceBlueprintToTarget(blueprint, rebalancePrompt.newTarget);
+                      setBlueprint(reb);
+                      setLastConfirmedTargetMarks(rebalancePrompt.newTarget);
+                      setRebalancePrompt(null);
+                      toast.success(`Rebalanced blueprint to ${rebalancePrompt.newTarget} marks.`, {
+                        action: {
+                          label: "Undo",
+                          onClick: () => {
+                            if (previousBlueprint) {
+                              setBlueprint(previousBlueprint);
+                              toast.info("Reverted to previous blueprint.");
+                            }
+                          },
+                        },
+                      });
+                      if (notes.length > 0) notes.forEach((n) => toast.info(n));
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-2xs"
+                  >
+                    Rebalance to {rebalancePrompt.newTarget}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLastConfirmedTargetMarks(rebalancePrompt.newTarget);
+                      setRebalancePrompt(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50"
+                  >
+                    Keep my numbers
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Sticky Blueprint vs Target Status Banner */}
+            <div
+              role="region"
+              aria-live="polite"
+              aria-atomic="true"
+              className={`sticky top-3 z-30 rounded-2xl border p-4 shadow-sm backdrop-blur-md transition-all ${
+                blueprintSummary.blueprintMarks === targetMarksNum
+                  ? "border-emerald-200 bg-emerald-50/95 text-emerald-950"
+                  : blueprintSummary.blueprintMarks > targetMarksNum
+                  ? "border-amber-200 bg-amber-50/95 text-amber-950"
+                  : "border-blue-200 bg-blue-50/95 text-blue-950"
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  {blueprintSummary.blueprintMarks === targetMarksNum ? (
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <AlertCircle
+                      className={`h-5 w-5 shrink-0 ${
+                        blueprintSummary.blueprintMarks > targetMarksNum ? "text-amber-600" : "text-blue-600"
+                      }`}
+                      aria-hidden="true"
+                    />
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap text-xs sm:text-sm">
+                      <span>Target: <strong>{targetMarksNum}</strong> marks</span>
+                      <span className="text-slate-300">|</span>
+                      <span>Blueprint: <strong>{blueprintSummary.blueprintMarks}</strong> marks</span>
+                      <span className="text-slate-300">|</span>
+                      <span>
+                        Difference:{" "}
+                        <strong>
+                          {blueprintSummary.blueprintMarks - targetMarksNum >= 0 ? "+" : ""}
+                          {blueprintSummary.blueprintMarks - targetMarksNum}
+                        </strong>
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-medium opacity-90 mt-0.5">
+                      Status:{" "}
+                      {blueprintSummary.blueprintMarks === targetMarksNum
+                        ? "Matches target (Ready for generation)"
+                        : blueprintSummary.blueprintMarks > targetMarksNum
+                        ? `Blueprint is ${blueprintSummary.blueprintMarks - targetMarksNum} marks over target`
+                        : `Blueprint is ${targetMarksNum - blueprintSummary.blueprintMarks} marks under target`}
+                    </p>
+                  </div>
+                </div>
+
+                {blueprintSummary.blueprintMarks !== targetMarksNum && (
+                  <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleProposeBalance}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-amber-700 transition-colors"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Balance to target
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Balance Proposal Modal */}
+            {balanceModal.open && balanceModal.proposal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+                <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-slate-900 text-base">Propose Blueprint Balance</h4>
+                    <button
+                      type="button"
+                      onClick={() => setBalanceModal({ open: false, proposal: null, explanation: "" })}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    To match target marks (<strong>{targetMarksNum}</strong>), the following smallest adjustment is proposed:
+                  </p>
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-900 font-medium">
+                    {balanceModal.explanation}
+                  </div>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs space-y-1">
+                    <div className="flex justify-between text-slate-500">
+                      <span>Current blueprint total:</span>
+                      <span className="font-bold text-slate-800">{blueprintSummary.blueprintMarks} marks</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-700 font-bold">
+                      <span>New blueprint total:</span>
+                      <span>{computeBlueprintTotal(balanceModal.proposal)} marks</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setBalanceModal({ open: false, proposal: null, explanation: "" })}
+                      className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmBalance}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow-sm"
+                    >
+                      Apply Balance
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Top Bar for Questions */}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
               <div>
@@ -975,7 +1165,7 @@ export function FacultyGeneratePaper() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setShowManualModal(true)}
@@ -983,14 +1173,21 @@ export function FacultyGeneratePaper() {
                 >
                   <Plus className="h-4 w-4" /> Add Manually
                 </button>
-                <button
-                  type="button"
-                  disabled={isGenerating}
-                  onClick={handleAiGenerate}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50"
-                >
-                  <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating Paper..." : "Generate with AI"}
-                </button>
+                <div className="flex flex-col items-end gap-1">
+                  <button
+                    type="button"
+                    disabled={isGenerating || blueprintSummary.blueprintMarks !== targetMarksNum}
+                    onClick={handleAiGenerate}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
+                  >
+                    <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating Paper..." : "Generate with AI"}
+                  </button>
+                  {blueprintSummary.blueprintMarks !== targetMarksNum && (
+                    <span className="text-[11px] font-semibold text-amber-700 text-right">
+                      Disabled: Blueprint ({blueprintSummary.blueprintMarks}m) does not match target ({targetMarksNum}m)
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1199,12 +1396,15 @@ export function FacultyGeneratePaper() {
                         <input
                           type="checkbox"
                           checked={cfg.enabled}
-                          onChange={(e) =>
+                          onChange={(e) => {
                             setBlueprint({
                               ...blueprint,
                               [typeKey]: { ...cfg, enabled: e.target.checked },
-                            })
-                          }
+                            });
+                            try {
+                              localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                            } catch {}
+                          }}
                           className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                         />
                         <div className="min-w-0">
@@ -1227,12 +1427,15 @@ export function FacultyGeneratePaper() {
                             <button
                               type="button"
                               disabled={!cfg.enabled || cfg.count <= 0}
-                              onClick={() =>
+                              onClick={() => {
                                 setBlueprint({
                                   ...blueprint,
                                   [typeKey]: { ...cfg, count: Math.max(0, cfg.count - 1) },
-                                })
-                              }
+                                });
+                                try {
+                                  localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                                } catch {}
+                              }}
                               className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
                             >
                               -
@@ -1242,23 +1445,29 @@ export function FacultyGeneratePaper() {
                               min="0"
                               disabled={!cfg.enabled}
                               value={cfg.count}
-                              onChange={(e) =>
+                              onChange={(e) => {
                                 setBlueprint({
                                   ...blueprint,
                                   [typeKey]: { ...cfg, count: Math.max(0, Number(e.target.value) || 0) },
-                                })
-                              }
+                                });
+                                try {
+                                  localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                                } catch {}
+                              }}
                               className="w-12 text-center text-xs font-bold text-slate-800 border-x border-slate-100 py-1 focus:outline-hidden"
                             />
                             <button
                               type="button"
                               disabled={!cfg.enabled}
-                              onClick={() =>
+                              onClick={() => {
                                 setBlueprint({
                                   ...blueprint,
                                   [typeKey]: { ...cfg, count: cfg.count + 1 },
-                                })
-                              }
+                                });
+                                try {
+                                  localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                                } catch {}
+                              }}
                               className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
                             >
                               +
@@ -1273,12 +1482,15 @@ export function FacultyGeneratePaper() {
                             <button
                               type="button"
                               disabled={!cfg.enabled || cfg.marks <= 1}
-                              onClick={() =>
+                              onClick={() => {
                                 setBlueprint({
                                   ...blueprint,
                                   [typeKey]: { ...cfg, marks: Math.max(1, cfg.marks - 1) },
-                                })
-                              }
+                                });
+                                try {
+                                  localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                                } catch {}
+                              }}
                               className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
                             >
                               -
@@ -1288,23 +1500,29 @@ export function FacultyGeneratePaper() {
                               min="1"
                               disabled={!cfg.enabled}
                               value={cfg.marks}
-                              onChange={(e) =>
+                              onChange={(e) => {
                                 setBlueprint({
                                   ...blueprint,
                                   [typeKey]: { ...cfg, marks: Math.max(1, Number(e.target.value) || 1) },
-                                })
-                              }
+                                });
+                                try {
+                                  localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                                } catch {}
+                              }}
                               className="w-12 text-center text-xs font-bold text-slate-800 border-x border-slate-100 py-1 focus:outline-hidden"
                             />
                             <button
                               type="button"
                               disabled={!cfg.enabled}
-                              onClick={() =>
+                              onClick={() => {
                                 setBlueprint({
                                   ...blueprint,
                                   [typeKey]: { ...cfg, marks: cfg.marks + 1 },
-                                })
-                              }
+                                });
+                                try {
+                                  localStorage.setItem("examai_faculty_blueprint_customized", "true");
+                                } catch {}
+                              }}
                               className="px-2.5 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-30 font-bold"
                             >
                               +
@@ -1440,7 +1658,7 @@ export function FacultyGeneratePaper() {
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] text-slate-500 font-medium">Marks Status</span>
-                    {blueprintSummary.blueprintMarks === Number(totalMarks) ? (
+                    {blueprintSummary.blueprintMarks === targetMarksNum ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Perfect Match
                       </span>
@@ -1451,10 +1669,10 @@ export function FacultyGeneratePaper() {
                     )}
                   </div>
                   <div className="flex items-baseline gap-2 mt-0.5">
-                    <strong className={`text-base font-bold ${blueprintSummary.blueprintMarks === Number(totalMarks) ? "text-emerald-700" : "text-amber-700"}`}>
+                    <strong className={`text-base font-bold ${blueprintSummary.blueprintMarks === targetMarksNum ? "text-emerald-700" : "text-amber-700"}`}>
                       {blueprintSummary.blueprintMarks}
                     </strong>
-                    <span className="text-xs text-slate-500">/ {totalMarks} Target Marks</span>
+                    <span className="text-xs text-slate-500">/ {targetMarksNum} Target Marks</span>
                   </div>
                 </div>
 
@@ -1476,20 +1694,20 @@ export function FacultyGeneratePaper() {
               </div>
 
               {/* Mismatch Warning Alert + Auto Align Button */}
-              {blueprintSummary.blueprintMarks !== Number(totalMarks) && (
+              {blueprintSummary.blueprintMarks !== targetMarksNum && (
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-900">
                   <div className="flex items-center gap-2">
                     <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
                     <span>
-                      Blueprint total marks (<strong>{blueprintSummary.blueprintMarks}</strong>) does not equal target total marks (<strong>{totalMarks}</strong>).
+                      Blueprint total marks (<strong>{blueprintSummary.blueprintMarks}</strong>) does not equal target total marks (<strong>{targetMarksNum}</strong>).
                     </span>
                   </div>
                   <button
                     type="button"
-                    onClick={handleAutoAlignMarks}
-                    className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-amber-700 shrink-0 self-start sm:self-auto"
+                    onClick={handleProposeBalance}
+                    className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-amber-700 shrink-0 self-start sm:self-auto cursor-pointer"
                   >
-                    <RefreshCw className="h-3 w-3" /> Auto-Align to {totalMarks} Marks
+                    <RefreshCw className="h-3 w-3" /> Balance to {targetMarksNum} Marks
                   </button>
                 </div>
               )}
@@ -1774,7 +1992,7 @@ export function FacultyGeneratePaper() {
                   <span>
                     Marks Matching: Current{" "}
                     <strong>
-                      {currentTotalMarks} / {totalMarks} Total
+                      {currentTotalMarks} / {targetMarksNum} Total
                     </strong>
                   </span>
                 </div>
@@ -1799,7 +2017,7 @@ export function FacultyGeneratePaper() {
                 </span>
                 <h1 className="text-2xl font-bold text-slate-900">{examTitle || "Untitled Exam"}</h1>
                 <p className="text-xs text-slate-500">
-                  Duration: {duration} Minutes · Total Marks: {totalMarks} · Warnings Threshold: {maxWarnings}
+                  Duration: {duration} Minutes · Total Marks: {targetMarksNum} · Warnings Threshold: {maxWarnings}
                 </p>
                 <div className="flex items-center justify-center gap-4 text-xs font-medium text-slate-600 pt-2">
                   <span>Questions Shuffle: {shuffleQuestions ? "Enabled" : "Disabled"}</span>

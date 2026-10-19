@@ -1,9 +1,14 @@
+from datetime import timedelta
 import difflib
+import hashlib
 import json
 import logging
 import threading
+import time
+import uuid
 
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -12,6 +17,7 @@ from rest_framework.views import APIView
 
 from .models import Exam, Notification, PaperGenerationJob, Question
 from .permissions import IsFacultyUser
+from .utils.blueprint_allocator import compute_blueprint_total
 from .utils.evaluation_config import (
     FACULTY_DEBUG_MODE,
     OLLAMA_LONG_ANSWER_BATCH_SIZE,
@@ -379,7 +385,6 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
 
 
 def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text, blueprint=None):
-    from django.utils import timezone
     job = PaperGenerationJob.objects.filter(id=job_id).first()
     if not job or job.is_cancelled:
         return
@@ -502,7 +507,6 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         job.progress = 92
         job.save(update_fields=['current_step', 'progress'])
 
-        import time
         from api.utils.db_retry import is_lock_or_deadlock
         for attempt_idx in range(3):
             try:
@@ -716,14 +720,41 @@ class GeneratePaperView(APIView):
             logger.warning('GeneratePaperView rejected payload: %s', exc)
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Blueprint parsing and validation upfront
+        raw_bp = request.data.get('blueprint')
+        blueprint = None
+        if raw_bp:
+            try:
+                blueprint = json.loads(raw_bp) if isinstance(raw_bp, str) else raw_bp
+            except Exception:
+                blueprint = None
+
+        if blueprint and isinstance(blueprint, dict):
+            planned_total_marks = compute_blueprint_total(blueprint)
+            if planned_total_marks != total_marks:
+                diff = total_marks - planned_total_marks
+                return Response(
+                    {
+                        'detail': f"Blueprint total marks ({planned_total_marks}) do not match target marks ({total_marks}). Difference: {diff:+d}.",
+                        'blueprint_marks': planned_total_marks,
+                        'target_marks': total_marks,
+                        'difference': diff,
+                        'mismatch': abs(diff),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            counts, _ = compute_question_counts(question_types, total_marks, blueprint=blueprint)
+        else:
+            counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=None)
+
+        expected_question_count = sum(counts.values())
+
         # Concurrency / Double-submission prevention
         active_job = PaperGenerationJob.objects.filter(
             faculty=request.user,
             status__in=[PaperGenerationJob.Status.QUEUED, PaperGenerationJob.Status.RUNNING],
         ).first()
         if active_job:
-            from datetime import timedelta
-            from django.utils import timezone
             if timezone.now() - active_job.created_at > timedelta(minutes=10):
                 active_job.status = PaperGenerationJob.Status.FAILED
                 active_job.error_message = 'Generation timed out.'
@@ -738,7 +769,7 @@ class GeneratePaperView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-        syllabus_file = request.FILES.get('syllabus')
+        syllabus_file = request.FILES.get('syllabus') or request.FILES.get('syllabus_file')
         syllabus_text = ''
         if syllabus_file:
             try:
@@ -772,6 +803,7 @@ class GeneratePaperView(APIView):
             'difficulty_distribution': difficulty_distribution,
             'department': assigned_dept,
             'avoid_repeats': avoid_repeats,
+            'blueprint': blueprint,
         }
 
         from api.paper_engine.generator import generate_exam_paper
@@ -811,28 +843,6 @@ class GeneratePaperView(APIView):
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
 
-        raw_bp = request.data.get('blueprint')
-        blueprint = None
-        if raw_bp:
-            try:
-                blueprint = json.loads(raw_bp) if isinstance(raw_bp, str) else raw_bp
-            except Exception:
-                blueprint = None
-
-        counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
-        if blueprint and planned_total_marks != total_marks:
-            return Response(
-                {
-                    'detail': f"Blueprint marks ({planned_total_marks}) do not sum to target marks ({total_marks}). Adjust question counts or marks per question.",
-                    'blueprint_marks': planned_total_marks,
-                    'target_marks': total_marks,
-                    'mismatch': abs(total_marks - planned_total_marks),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        expected_question_count = sum(counts.values())
-
         # Clean subject
         raw_subj = str(request.data.get('subject') or '').strip()
         if not raw_subj:
@@ -842,7 +852,6 @@ class GeneratePaperView(APIView):
         # Source documents
         source_docs = []
         if syllabus_file:
-            import hashlib
             source_docs.append({
                 'filename': getattr(syllabus_file, 'name', 'syllabus'),
                 'file_hash': hashlib.sha256(syllabus_text.encode('utf-8')).hexdigest() if syllabus_text else '',
@@ -890,9 +899,13 @@ class GeneratePaperView(APIView):
                 request_hash=str(request.data.get('request_hash') or ''),
             )
         except Exception as exc:
-            logger.exception('Generated paper could not be initialized')
+            req_id = str(uuid.uuid4())
+            logger.exception('Generated paper could not be initialized [request_id=%s]: %s', req_id, exc)
             return Response(
-                {'detail': f'Generated paper could not be initialized: {exc}'},
+                {
+                    'detail': 'An unexpected error occurred while initializing paper generation. Please contact support.',
+                    'request_id': req_id,
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
