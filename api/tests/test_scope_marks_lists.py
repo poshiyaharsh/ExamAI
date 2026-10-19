@@ -1,5 +1,7 @@
+from datetime import timedelta
 from django.test import TestCase
 from django.contrib.auth.models import User
+from django.utils import timezone
 from admins.models import AdminInstitution, AdminDepartment
 from faculty.models import FacultyProfile
 from api.models import Exam, Question
@@ -51,6 +53,7 @@ class ScopeMarksListsTestCase(TestCase):
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
+        now = timezone.now()
         self.exam = Exam.objects.create(
             institution=self.institution,
             created_by=self.faculty_user,
@@ -65,6 +68,8 @@ class ScopeMarksListsTestCase(TestCase):
             source_syllabus_text="Chapter 1: Operating System Overview. An operating system is system software that manages computer hardware and software resources. Process management involves process scheduling, context switching, and PCB.",
             source_documents=[{"filename": "OS_Linux_Syllabus.pdf", "pages": 12}],
             status=Exam.Status.DRAFT,
+            starts_at=now + timedelta(minutes=10),
+            ends_at=now + timedelta(hours=3),
             is_reviewed=True,
         )
 

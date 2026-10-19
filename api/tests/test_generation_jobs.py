@@ -199,6 +199,7 @@ class PaperGenerationJobTestCase(TestCase):
 
     def test_review_required_before_publishing(self):
         """Generated exams are drafts and require confirm-review before publishing."""
+        now = timezone.now()
         exam = Exam.objects.create(
             institution=self.inst,
             title='AI Generated Paper',
@@ -208,6 +209,8 @@ class PaperGenerationJobTestCase(TestCase):
             total_marks=5,
             ai_model_used='phi3-mini',
             status=Exam.Status.DRAFT,
+            starts_at=now + timedelta(minutes=5),
+            ends_at=now + timedelta(hours=2),
             is_reviewed=False,
         )
         Question.objects.create(
