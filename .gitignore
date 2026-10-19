@@ -8,6 +8,8 @@
 *.pem
 *.key
 *.crt
+seed_credentials.csv
+auth_diagnostics.json
 
 # Python / Django
 __pycache__/
