@@ -84,15 +84,30 @@ class Exam(models.Model):
 	max_warnings = models.PositiveIntegerField(default=3)
 	allow_retakes = models.BooleanField(default=False)
 	show_result_immediately = models.BooleanField(default=True)
-	starts_at = models.DateTimeField(null=True, blank=True)
-	ends_at = models.DateTimeField(null=True, blank=True)
+	starts_at = models.DateTimeField(null=True, blank=True, db_index=True)
+	ends_at = models.DateTimeField(null=True, blank=True, db_index=True)
+	display_timezone = models.CharField(max_length=50, default='Asia/Kolkata')
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
+	@property
+	def schedule_phase(self) -> str:
+		from api.utils.schedule import get_exam_schedule_phase
+		return get_exam_schedule_phase(self)
+
 	def clean(self):
 		from django.core.exceptions import ValidationError
-		if self.starts_at and self.ends_at and self.starts_at > self.ends_at:
-			raise ValidationError({'ends_at': 'Exam end date cannot precede start date.'})
+		from api.utils.schedule import validate_exam_schedule
+		try:
+			validate_exam_schedule(
+				self.starts_at,
+				self.ends_at,
+				self.duration_minutes or 60,
+				is_publishing=(self.status == Exam.Status.PUBLISHED),
+				raise_exception=True,
+			)
+		except ValidationError as ve:
+			raise ve
 		if self.institution_id and self.created_by_id:
 			fac_profile = getattr(self.created_by, 'faculty_profile', None)
 			if fac_profile and fac_profile.institution_id and fac_profile.institution_id != self.institution_id:
@@ -124,6 +139,9 @@ class Exam(models.Model):
 			models.Index(fields=['institution', 'department', 'status']),
 			models.Index(fields=['institution', 'created_by']),
 			models.Index(fields=['institution', 'request_hash']),
+			models.Index(fields=['institution', 'status', 'starts_at', 'ends_at']),
+			models.Index(fields=['starts_at']),
+			models.Index(fields=['ends_at']),
 		]
 
 

@@ -116,6 +116,8 @@ class FacultyQuestionSerializer(serializers.ModelSerializer):
 class ExamListSerializer(serializers.ModelSerializer):
     question_count = serializers.IntegerField(read_only=True)
     attempts_count = serializers.IntegerField(read_only=True)
+    schedule_display = serializers.SerializerMethodField()
+    schedule_phase = serializers.ReadOnlyField()
 
     class Meta:
         model = Exam
@@ -126,13 +128,20 @@ class ExamListSerializer(serializers.ModelSerializer):
             'status', 'error_message', 'seed', 'request_hash', 'is_immutable', 'is_reviewed',
             'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
             'allow_retakes', 'show_result_immediately',
-            'starts_at', 'ends_at', 'created_at', 'updated_at',
+            'starts_at', 'ends_at', 'display_timezone', 'schedule_display', 'schedule_phase',
+            'created_at', 'updated_at',
             'question_count', 'attempts_count',
         )
+
+    def get_schedule_display(self, obj):
+        from .utils.schedule import format_exam_schedule_display
+        return format_exam_schedule_display(obj)
 
 
 class ExamDetailSerializer(serializers.ModelSerializer):
     questions = FacultyQuestionSerializer(many=True, read_only=True)
+    schedule_display = serializers.SerializerMethodField()
+    schedule_phase = serializers.ReadOnlyField()
 
     class Meta:
         model = Exam
@@ -141,6 +150,7 @@ class ExamDetailSerializer(serializers.ModelSerializer):
             'total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'source_documents',
             'difficulty_distribution', 'question_types', 'ai_model_used',
             'source_syllabus_text', 'status', 'starts_at', 'ends_at',
+            'display_timezone', 'schedule_display', 'schedule_phase',
             'error_message', 'seed', 'request_hash', 'validation_report', 'is_immutable', 'is_reviewed',
             'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
             'allow_retakes', 'show_result_immediately',
@@ -148,13 +158,18 @@ class ExamDetailSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'ai_model_used', 'source_syllabus_text', 'created_at', 'updated_at', 'questions')
 
+    def get_schedule_display(self, obj):
+        from .utils.schedule import format_exam_schedule_display
+        return format_exam_schedule_display(obj)
+
 
 class ExamUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exam
         fields = (
             'title', 'department', 'duration_minutes', 'total_marks', 'topics',
-            'difficulty_distribution', 'question_types', 'starts_at', 'ends_at', 'status',
+            'difficulty_distribution', 'question_types', 'starts_at', 'ends_at',
+            'display_timezone', 'status',
             'shuffle_questions', 'shuffle_options', 'random_subset_size', 'max_warnings',
             'allow_retakes', 'show_result_immediately',
         )

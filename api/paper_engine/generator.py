@@ -127,13 +127,27 @@ def generate_exam_paper(
                 error_message=f"idempotency:{idempotency_key}",
             ).first()
 
+        starts_at = payload.get('starts_at')
+        ends_at = payload.get('ends_at')
+        display_tz = payload.get('display_timezone') or 'Asia/Kolkata'
+
         if existing_exam:
             exam = existing_exam
             exam.questions.all().delete()
             exam.seed = seed
             exam.request_hash = req_hash
             exam.validation_report = validation_report.to_dict()
-            exam.save(update_fields=['seed', 'request_hash', 'validation_report'])
+            update_fields = ['seed', 'request_hash', 'validation_report']
+            if starts_at:
+                exam.starts_at = starts_at
+                update_fields.append('starts_at')
+            if ends_at:
+                exam.ends_at = ends_at
+                update_fields.append('ends_at')
+            if display_tz:
+                exam.display_timezone = display_tz
+                update_fields.append('display_timezone')
+            exam.save(update_fields=update_fields)
         else:
             exam = Exam.objects.create(
                 institution=tenant,
@@ -147,6 +161,9 @@ def generate_exam_paper(
                 question_types=question_types,
                 ai_model_used="Question Bank Engine",
                 status=Exam.Status.DRAFT,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                display_timezone=display_tz,
                 error_message=f"idempotency:{idempotency_key}" if idempotency_key else "",
                 seed=seed,
                 request_hash=req_hash,

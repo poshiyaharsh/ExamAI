@@ -140,12 +140,15 @@ class StudentDashboardView(APIView):
         completed_exam_ids = set(completed_attempts_qs.values_list('exam_id', flat=True))
         unattempted_exams = dept_exams.exclude(id__in=completed_exam_ids)
 
+        from .utils.schedule import get_exam_schedule_phase, format_exam_schedule_display
+
         def _serialize_exam(e):
             topics = e.topics
             subject = ', '.join(str(t) for t in topics) if isinstance(topics, list) and topics else 'General'
             faculty = e.created_by
             faculty_name = f"{faculty.first_name} {faculty.last_name}".strip() or faculty.username
-            is_open = (e.starts_at is None or e.starts_at <= now) and (e.ends_at is None or e.ends_at >= now)
+            phase = get_exam_schedule_phase(e, now)
+            is_open = (phase == 'live')
             return {
                 'id': e.id,
                 'title': e.title,
@@ -156,24 +159,24 @@ class StudentDashboardView(APIView):
                 'total_marks': e.total_marks,
                 'starts_at': e.starts_at.isoformat() if e.starts_at else None,
                 'ends_at': e.ends_at.isoformat() if e.ends_at else None,
+                'display_timezone': getattr(e, 'display_timezone', 'Asia/Kolkata'),
+                'schedule_display': format_exam_schedule_display(e),
+                'schedule_phase': phase,
                 'is_open': is_open,
             }
 
-        # Ongoing exams: currently within open window
+        # Ongoing exams: currently live
         ongoing_exams = [
             _serialize_exam(e)
             for e in unattempted_exams.filter(
                 Q(starts_at__isnull=True) | Q(starts_at__lte=now),
                 Q(ends_at__isnull=True) | Q(ends_at__gte=now),
             ).order_by('ends_at', 'id')[:5]
+            if get_exam_schedule_phase(e, now) == 'live'
         ]
 
-        # Upcoming exams: scheduled with starts_at in the future, or other unattempted
+        # Upcoming exams: strictly scheduled with starts_at in the future
         future_exams = unattempted_exams.filter(starts_at__gt=now).order_by('starts_at', 'id')[:5]
-        if not future_exams.exists():
-            # If no strict future starts_at, show upcoming unattempted exams
-            future_exams = unattempted_exams.order_by('starts_at', '-created_at')[:5]
-
         upcoming_exams = [_serialize_exam(e) for e in future_exams]
 
         from .utils.results import compute_attempt_result_status
@@ -257,6 +260,7 @@ class StudentDashboardView(APIView):
                     'all': subject_list,
                 },
                 'announcements': [],
+                'server_now': now.isoformat(),
             }
         }
         cache.set(cache_key, response_data, timeout=60)

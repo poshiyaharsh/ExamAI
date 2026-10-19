@@ -136,15 +136,18 @@ def is_exam_visible_to_student(exam, user) -> Tuple[bool, bool, str]:
         return False, False, reason
 
     # Schedule validation
+    from api.utils.schedule import get_exam_schedule_phase, format_exam_schedule_display
     now = timezone.now()
-    if exam.starts_at and exam.starts_at > now:
-        # Scheduled in the future: visible to students in list, but cannot start yet
-        formatted_start = exam.starts_at.strftime('%d %b %Y, %I:%M %p UTC')
-        return True, False, f'Exam is scheduled for {formatted_start}. You cannot start it yet.'
+    phase = get_exam_schedule_phase(exam, now)
+    sched = format_exam_schedule_display(exam)
 
-    if exam.ends_at and exam.ends_at < now:
-        formatted_end = exam.ends_at.strftime('%d %b %Y, %I:%M %p UTC')
-        return False, False, f'Exam window ended on {formatted_end}.'
+    if phase == 'upcoming':
+        # Scheduled in the future: visible to students in list as upcoming, but cannot start yet
+        return True, False, f"Exam is scheduled to open on {sched.get('starts_at_display', '')} ({sched.get('timezone', 'Asia/Kolkata')}). You cannot start it yet."
+
+    if phase == 'ended':
+        # Exam window closed: visible to students as ended/missed, but cannot start
+        return True, False, f"Exam window closed on {sched.get('ends_at_display', '')} ({sched.get('timezone', 'Asia/Kolkata')})."
 
     return True, True, ''
 
@@ -217,14 +220,14 @@ def get_exam_visibility_status_for_faculty(exam) -> dict:
         reasons.append("No department assigned to this exam")
 
     # 4. Schedule check
+    from api.utils.schedule import get_exam_schedule_phase, format_exam_schedule_display
     now = timezone.now()
-    schedule_state = 'active'
-    if exam.starts_at and exam.starts_at > now:
-        schedule_state = 'upcoming'
-        reasons.append(f"Scheduled in future (starts {exam.starts_at.strftime('%d %b %Y, %I:%M %p UTC')})")
-    elif exam.ends_at and exam.ends_at < now:
-        schedule_state = 'ended'
-        reasons.append(f"Exam window closed (ended {exam.ends_at.strftime('%d %b %Y, %I:%M %p UTC')})")
+    schedule_state = get_exam_schedule_phase(exam, now)
+    sched_info = format_exam_schedule_display(exam)
+    if schedule_state == 'upcoming':
+        reasons.append(f"Scheduled in future (starts {sched_info.get('starts_at_display')} {sched_info.get('timezone')})")
+    elif schedule_state == 'ended':
+        reasons.append(f"Exam window closed (ended {sched_info.get('ends_at_display')} {sched_info.get('timezone')})")
 
     # 5. Eligible students count
     eligible_students = 0

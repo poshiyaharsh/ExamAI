@@ -868,6 +868,21 @@ class GeneratePaperView(APIView):
         force_regenerate = str(request.data.get('force_regenerate', '')).lower() in ('true', '1', 'yes')
         avoid_repeats = str(request.data.get('avoid_repeats', 'true')).lower() not in ('false', '0', 'no')
 
+        raw_starts_at = request.data.get('starts_at') or request.data.get('available_from')
+        raw_ends_at = request.data.get('ends_at') or request.data.get('deadline')
+        display_tz = str(request.data.get('display_timezone') or 'Asia/Kolkata').strip()
+
+        from api.utils.schedule import normalize_to_utc, validate_exam_schedule
+        norm_starts_at = normalize_to_utc(raw_starts_at, display_tz) if raw_starts_at else None
+        norm_ends_at = normalize_to_utc(raw_ends_at, display_tz) if raw_ends_at else None
+
+        if norm_starts_at or norm_ends_at:
+            is_valid, err_msg = validate_exam_schedule(
+                norm_starts_at, norm_ends_at, duration_minutes, is_publishing=False
+            )
+            if not is_valid:
+                return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
+
         engine_payload = {
             'title': title,
             'duration_minutes': duration_minutes,
@@ -878,6 +893,9 @@ class GeneratePaperView(APIView):
             'department': assigned_dept,
             'avoid_repeats': avoid_repeats,
             'blueprint': blueprint,
+            'starts_at': norm_starts_at,
+            'ends_at': norm_ends_at,
+            'display_timezone': display_tz,
         }
 
         from api.paper_engine.generator import generate_exam_paper
@@ -951,6 +969,9 @@ class GeneratePaperView(APIView):
                 ai_model_used=model_name,
                 source_syllabus_text=syllabus_text,
                 status=Exam.Status.GENERATING,
+                starts_at=norm_starts_at,
+                ends_at=norm_ends_at,
+                display_timezone=display_tz,
                 is_reviewed=False,
             )
             from api.paper_engine.cache import PaperCacheService

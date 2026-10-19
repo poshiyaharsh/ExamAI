@@ -41,3 +41,6 @@ class ApiConfig(AppConfig):
         from django.db.models.signals import post_migrate
         connection_created.connect(configure_sqlite_connection)
         post_migrate.connect(cleanup_stuck_generation_jobs, sender=self)
+
+        from api.utils.schedule import start_schedule_cleaner_daemon
+        start_schedule_cleaner_daemon()

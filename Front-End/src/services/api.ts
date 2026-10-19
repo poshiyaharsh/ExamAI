@@ -304,6 +304,17 @@ export type FacultyExam = {
   show_result_immediately?: boolean;
   starts_at: string | null;
   ends_at: string | null;
+  display_timezone?: string;
+  schedule_display?: {
+    timezone: string;
+    starts_at_iso: string | null;
+    ends_at_iso: string | null;
+    starts_at_display: string | null;
+    ends_at_display: string | null;
+    summary: string;
+    phase: "upcoming" | "live" | "ended";
+  };
+  schedule_phase?: "upcoming" | "live" | "ended";
   created_at: string;
   updated_at: string;
   question_count?: number;
@@ -392,6 +403,17 @@ export type StudentExam = {
   question_count?: number;
   starts_at: string | null;
   ends_at: string | null;
+  display_timezone?: string;
+  schedule_display?: {
+    timezone: string;
+    starts_at_iso: string | null;
+    ends_at_iso: string | null;
+    starts_at_display: string | null;
+    ends_at_display: string | null;
+    summary: string;
+    phase: "upcoming" | "live" | "ended";
+  };
+  schedule_phase?: "upcoming" | "live" | "ended";
   shuffle_questions?: boolean;
   shuffle_options?: boolean;
   max_warnings?: number;
@@ -438,6 +460,9 @@ export type StudentExamStartResponse = {
   started_at: string;
   deadline: string;
   expires_at?: string;
+  server_now?: string;
+  duration_seconds?: number;
+  is_window_capped?: boolean;
   session_token?: string;
   violation_count?: number;
   max_warnings?: number;
@@ -452,6 +477,7 @@ export type ProctoringViolationResponse = {
   max_warnings: number;
   warnings_left: number;
   message: string;
+  server_now?: string;
 };
 
 export type ProctoringHeartbeatResponse = {
@@ -459,10 +485,12 @@ export type ProctoringHeartbeatResponse = {
   seconds_left?: number;
   expired?: boolean;
   auto_submitted?: boolean;
+  submit_reason?: string;
   concurrent_session?: boolean;
   violation_count?: number;
   max_warnings?: number;
   message?: string;
+  server_now?: string;
 };
 
 export type AdminStudentRow = {

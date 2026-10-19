@@ -443,6 +443,38 @@ export function FacultyGeneratePaper() {
     setTopics(next);
   };
 
+  const scheduleAnalysis = useMemo(() => {
+    if (!startsAt && !endsAt) {
+      return { status: "empty", message: "Schedule not set (Start and End times required before publishing)." };
+    }
+    if (!startsAt || !endsAt) {
+      return { status: "incomplete", message: "Both Start Time and Deadline must be set." };
+    }
+    const s = new Date(startsAt).getTime();
+    const e = new Date(endsAt).getTime();
+    if (isNaN(s) || isNaN(e)) {
+      return { status: "error", message: "Invalid date format." };
+    }
+    if (e <= s) {
+      return { status: "error", message: "Deadline must be after start time." };
+    }
+    const durMin = Number(duration) || 60;
+    const windowMin = Math.round((e - s) / 60000);
+    if (windowMin < durMin) {
+      return {
+        status: "error",
+        message: `Exam window (${windowMin}m) is less than exam duration (${durMin}m). Students need at least full duration.`,
+      };
+    }
+    const hours = Math.floor(windowMin / 60);
+    const mins = windowMin % 60;
+    const windowStr = hours > 0 ? `${hours}h ${mins > 0 ? `${mins}m` : ""}` : `${mins}m`;
+    return {
+      status: "valid",
+      message: `Valid exam window: ${windowStr} (Students have ${durMin} min to complete within this window).`,
+    };
+  }, [startsAt, endsAt, duration]);
+
   // Step 1 Validation
   const validateStep1 = () => {
     if (!examTitle.trim()) return "Exam Title is required.";
@@ -451,8 +483,8 @@ export function FacultyGeneratePaper() {
     const tm = Number(totalMarks);
     if (isNaN(tm) || tm < 1 || tm > 500) return "Target Total Marks must be an integer between 1 and 500.";
     if (cleanTopics.length === 0) return "At least one topic is required.";
-    if (startsAt && endsAt && new Date(startsAt) >= new Date(endsAt)) {
-      return "Exam schedule start date must precede end date.";
+    if (scheduleAnalysis.status === "error") {
+      return scheduleAnalysis.message;
     }
     return "";
   };
@@ -539,6 +571,9 @@ export function FacultyGeneratePaper() {
         avoidRepeats,
         subject: subjectName.trim() || undefined,
         selectedTopics: cleanTopics.length ? cleanTopics : undefined,
+        starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+        ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+        display_timezone: "Asia/Kolkata",
       });
 
       setGenerationProgress(100);
@@ -721,18 +756,40 @@ export function FacultyGeneratePaper() {
     const target = targetMarksNum;
     const subset = randomSubsetSize ? Number(randomSubsetSize) : null;
     const marksValid = subset ? questions.length >= subset : currentTotalMarks === target;
-    const scheduleValid = !startsAt || !endsAt || new Date(startsAt) < new Date(endsAt);
+    const durMin = Number(duration) || 60;
+    const now = Date.now();
+    const graceMs = 5 * 60 * 1000;
+
+    let scheduleError: string | null = null;
+    if (!startsAt || !endsAt) {
+      scheduleError = "Both Start Time and Deadline are required before publishing.";
+    } else {
+      const startMs = new Date(startsAt).getTime();
+      const endMs = new Date(endsAt).getTime();
+      if (isNaN(startMs) || isNaN(endMs)) {
+        scheduleError = "Invalid start or end date.";
+      } else if (endMs <= startMs) {
+        scheduleError = "Deadline must be strictly after the start time.";
+      } else if ((endMs - startMs) < durMin * 60 * 1000) {
+        scheduleError = `Exam window (${Math.round((endMs - startMs) / 60000)} min) cannot be less than duration (${durMin} min).`;
+      } else if (startMs < (now - graceMs)) {
+        scheduleError = "Start time cannot be in the past.";
+      }
+    }
+
+    const scheduleValid = scheduleError === null;
     const hasQuestions = questions.length > 0;
     const hasDept = Boolean(facultyDept);
 
     return {
       marksValid,
       scheduleValid,
+      scheduleError,
       hasQuestions,
       hasDept,
       canPublish: marksValid && scheduleValid && hasQuestions && hasDept,
     };
-  }, [targetMarksNum, randomSubsetSize, questions.length, currentTotalMarks, startsAt, endsAt, facultyDept]);
+  }, [targetMarksNum, randomSubsetSize, questions.length, currentTotalMarks, startsAt, endsAt, duration, facultyDept]);
 
   // Publish Exam
   const handlePublishExam = async () => {
@@ -741,7 +798,11 @@ export function FacultyGeneratePaper() {
       return;
     }
     if (!validationChecks.canPublish) {
-      toast.error("Please resolve validation errors before publishing.");
+      if (validationChecks.scheduleError) {
+        toast.error(validationChecks.scheduleError);
+      } else {
+        toast.error("Please resolve validation errors before publishing.");
+      }
       return;
     }
 
@@ -757,6 +818,7 @@ export function FacultyGeneratePaper() {
         show_result_immediately: showResultImmediately,
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
         ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+        display_timezone: "Asia/Kolkata",
       });
 
       const published = await facultyExamApi.publishExam(examId);
@@ -911,7 +973,7 @@ export function FacultyGeneratePaper() {
 
               {/* Starts At */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Available From (Start Time)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Available From (Start Time) *</label>
                 <div className="relative">
                   <input
                     type="datetime-local"
@@ -924,7 +986,7 @@ export function FacultyGeneratePaper() {
 
               {/* Ends At */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Deadline (End Time)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Deadline (End Time) *</label>
                 <div className="relative">
                   <input
                     type="datetime-local"
@@ -933,6 +995,30 @@ export function FacultyGeneratePaper() {
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
                   />
                 </div>
+              </div>
+
+              {/* Schedule Feedback & Timezone Notice */}
+              <div className="sm:col-span-2 -mt-1 mb-1">
+                <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1.5">
+                  <span>Server & Exam Timezone: <strong>India Standard Time (IST, UTC+5:30)</strong></span>
+                  <span className="text-slate-400">Enforced strictly by server</span>
+                </div>
+                {scheduleAnalysis.status !== "empty" && (
+                  <div
+                    className={`rounded-xl px-3.5 py-2 text-xs font-medium flex items-center gap-2 border ${
+                      scheduleAnalysis.status === "valid"
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                        : "bg-rose-50 text-rose-800 border-rose-200"
+                    }`}
+                  >
+                    {scheduleAnalysis.status === "valid" ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                    )}
+                    <span>{scheduleAnalysis.message}</span>
+                  </div>
+                )}
               </div>
 
               {/* Topics */}
@@ -2003,7 +2089,18 @@ export function FacultyGeneratePaper() {
                   ) : (
                     <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
                   )}
-                  <span>Schedule Window: {startsAt && endsAt ? "Valid Window" : "Open Schedule"}</span>
+                  <span>
+                    Schedule:{" "}
+                    {startsAt && endsAt ? (
+                      validationChecks.scheduleValid ? (
+                        <strong>Valid Exam Window</strong>
+                      ) : (
+                        <strong className="text-rose-600">{validationChecks.scheduleError || "Invalid Window"}</strong>
+                      )
+                    ) : (
+                      <strong className="text-rose-600">Start & Deadline required to publish</strong>
+                    )}
+                  </span>
                 </div>
               </div>
             </div>

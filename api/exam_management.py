@@ -82,15 +82,91 @@ class ExamDetailView(FacultyExamViewMixin, APIView):
         if not exam:
             return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        from api.utils.schedule import normalize_to_utc, validate_exam_schedule, compute_attempt_expiry
+        display_tz = str(request.data.get('display_timezone') or getattr(exam, 'display_timezone', 'Asia/Kolkata')).strip()
+
+        # Handle published exam: only allow deadline (ends_at) extension
         if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
+            disallowed_keys = set(request.data.keys()) - {'ends_at', 'display_timezone'}
+            if disallowed_keys:
+                return Response(
+                    {'detail': 'Published exams are immutable. Only the deadline (ends_at) may be extended.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if 'ends_at' in request.data:
+                raw_new_ends = request.data.get('ends_at')
+                if not raw_new_ends:
+                    return Response({'detail': 'Published exams must have a valid deadline (ends_at).'}, status=status.HTTP_400_BAD_REQUEST)
+                new_ends_at = normalize_to_utc(raw_new_ends, display_tz)
+                now = timezone.now()
+
+                if new_ends_at < now:
+                    return Response({'detail': 'New deadline cannot be in the past.'}, status=status.HTTP_400_BAD_REQUEST)
+
+                if exam.ends_at and new_ends_at < exam.ends_at and exam.attempts.exists():
+                    return Response(
+                        {'detail': 'Cannot shorten deadline on an active exam with student attempts. You can only extend it.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                exam.ends_at = new_ends_at
+                update_fields = ['ends_at', 'updated_at']
+                if 'display_timezone' in request.data:
+                    exam.display_timezone = display_tz
+                    update_fields.append('display_timezone')
+                exam.save(update_fields=update_fields)
+
+                # Recompute expires_at for any in-progress attempts
+                in_progress_attempts = exam.attempts.filter(status=StudentAttempt.Status.IN_PROGRESS)
+                for att in in_progress_attempts:
+                    att.expires_at = compute_attempt_expiry(exam, att.started_at, now)
+                    att.save(update_fields=['expires_at'])
+
+                from api.paper_engine.cache import PaperCacheService
+                PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+
+                from api.utils.departments import get_exam_visibility_status_for_faculty
+                data = ExamDetailSerializer(exam).data
+                data['visibility'] = get_exam_visibility_status_for_faculty(exam)
+                return Response(data)
+
+            if 'display_timezone' in request.data:
+                exam.display_timezone = display_tz
+                exam.save(update_fields=['display_timezone', 'updated_at'])
+                from api.utils.departments import get_exam_visibility_status_for_faculty
+                data = ExamDetailSerializer(exam).data
+                data['visibility'] = get_exam_visibility_status_for_faculty(exam)
+                return Response(data)
+
             return Response(
-                {'detail': 'Published exams are immutable and cannot be modified.'},
+                {'detail': 'No updates provided.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = ExamUpdateSerializer(exam, data=request.data, partial=True)
+        # Draft exam update
+        data = request.data.copy()
+        if 'starts_at' in data and data['starts_at']:
+            data['starts_at'] = normalize_to_utc(data['starts_at'], display_tz)
+        if 'ends_at' in data and data['ends_at']:
+            data['ends_at'] = normalize_to_utc(data['ends_at'], display_tz)
+
+        # Validate schedule if provided
+        test_starts = data.get('starts_at', exam.starts_at)
+        test_ends = data.get('ends_at', exam.ends_at)
+        test_dur = data.get('duration_minutes', exam.duration_minutes)
+        if test_starts or test_ends:
+            is_valid, err_msg = validate_exam_schedule(test_starts, test_ends, test_dur, is_publishing=False)
+            if not is_valid:
+                return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ExamUpdateSerializer(exam, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+
+        if 'display_timezone' in request.data:
+            exam.display_timezone = display_tz
+            exam.save(update_fields=['display_timezone'])
 
         from api.paper_engine.cache import PaperCacheService
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
@@ -365,6 +441,14 @@ class PublishExamView(FacultyExamViewMixin, APIView):
                 {'detail': 'This generated draft must be reviewed and confirmed before it can be published.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Enforce strict schedule window on publish
+        from api.utils.schedule import validate_exam_schedule
+        sched_ok, sched_err = validate_exam_schedule(
+            exam.starts_at, exam.ends_at, exam.duration_minutes, is_publishing=True
+        )
+        if not sched_ok:
+            return Response({'detail': sched_err}, status=status.HTTP_400_BAD_REQUEST)
 
         questions = list(exam.questions.all())
         if not questions:

@@ -29,27 +29,33 @@ const menuItems = [
 ];
 
 function formatWindow(exam: StudentExam) {
+  if (exam.schedule_display?.summary) {
+    return exam.schedule_display.summary;
+  }
   const now = new Date();
   if (exam.ends_at && new Date(exam.ends_at) < now) {
     return "Window closed";
   }
   if (exam.starts_at && new Date(exam.starts_at) > now) {
-    return `Opens ${new Date(exam.starts_at).toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })}`;
+    const diffMs = new Date(exam.starts_at).getTime() - now.getTime();
+    const diffHours = Math.floor(diffMs / (3600 * 1000));
+    const diffMins = Math.floor((diffMs % (3600 * 1000)) / (60 * 1000));
+    const rel = diffHours > 24
+      ? `${Math.floor(diffHours / 24)}d ${diffHours % 24}h`
+      : diffHours > 0
+      ? `${diffHours}h ${diffMins}m`
+      : `${diffMins}m`;
+    return `Opens in ${rel}`;
   }
   if (exam.ends_at) {
-    return `Closes ${new Date(exam.ends_at).toLocaleDateString([], {
+    return `Closes ${new Date(exam.ends_at).toLocaleTimeString([], {
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     })}`;
   }
-  return "Open now";
+  return "Live (Open Schedule)";
 }
 
 export function StudentExamsPage() {
@@ -191,29 +197,45 @@ export function StudentExamsPage() {
                       </div>
 
                       {/* Status Badge */}
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                          completed
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : available
-                            ? "bg-sky-50 text-sky-700 border-sky-200 animate-pulse"
-                            : "bg-slate-100 text-slate-600 border-slate-200"
-                        }`}
-                      >
-                        {completed ? (
-                          <>
-                            <CheckCircle2 className="h-3 w-3" /> Completed
-                          </>
-                        ) : available ? (
-                          <>
-                            <Shield className="h-3 w-3 text-sky-600" /> Ready to Start
-                          </>
-                        ) : (
-                          <>
+                      {(() => {
+                        const now = new Date();
+                        const isUpcoming = exam.schedule_phase === "upcoming" || (Boolean(exam.starts_at) && new Date(exam.starts_at!) > now);
+                        const isEnded = exam.schedule_phase === "ended" || (Boolean(exam.ends_at) && new Date(exam.ends_at!) < now);
+
+                        if (completed) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-emerald-50 text-emerald-700 border-emerald-200">
+                              <CheckCircle2 className="h-3 w-3" /> Completed
+                            </span>
+                          );
+                        }
+                        if (available) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-emerald-50 text-emerald-700 border-emerald-200 animate-pulse">
+                              <Shield className="h-3 w-3 text-emerald-600" /> Live Now
+                            </span>
+                          );
+                        }
+                        if (isUpcoming) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-amber-50 text-amber-700 border-amber-200">
+                              <Clock className="h-3 w-3 text-amber-600" /> Upcoming
+                            </span>
+                          );
+                        }
+                        if (isEnded) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-slate-100 text-slate-500 border-slate-200">
+                              <Lock className="h-3 w-3 text-slate-400" /> Window Closed
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-slate-100 text-slate-600 border-slate-200">
                             <Lock className="h-3 w-3" /> Scheduled
-                          </>
-                        )}
-                      </span>
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     {/* Title */}
@@ -282,33 +304,55 @@ export function StudentExamsPage() {
 
                   {/* Footer & Action Button */}
                   <div className="flex items-center justify-between gap-3 pt-3 border-t border-border/60">
-                    <span className="text-xs text-muted-foreground">
-                      {completed
-                        ? "Exam submitted & evaluated."
-                        : available
-                        ? "Exam is currently open for submission."
-                        : "Assessment not currently unlocked."}
-                    </span>
+                    {(() => {
+                      const now = new Date();
+                      const isUpcoming = exam.schedule_phase === "upcoming" || (Boolean(exam.starts_at) && new Date(exam.starts_at!) > now);
+                      const isEnded = exam.schedule_phase === "ended" || (Boolean(exam.ends_at) && new Date(exam.ends_at!) < now);
 
-                    {completed && attemptId ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/student/results/${attemptId}`)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold text-foreground hover:bg-slate-50 transition-all shadow-2xs"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        View Result
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={!available}
-                        onClick={() => navigate(`/student/exams/${exam.id}/take`)}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-primary to-secondary px-5 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-all disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Start Exam <ArrowRight className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+                      let footerText = "Assessment not currently unlocked.";
+                      if (completed) footerText = "Exam submitted & evaluated.";
+                      else if (available) footerText = "Exam is live. Start now to complete before deadline.";
+                      else if (isUpcoming) footerText = `Opens at ${exam.starts_at ? new Date(exam.starts_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "scheduled time"}.`;
+                      else if (isEnded) footerText = "Exam window has closed.";
+
+                      return (
+                        <>
+                          <span className="text-xs text-muted-foreground">{footerText}</span>
+
+                          {completed && attemptId ? (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/student/results/${attemptId}`)}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold text-foreground hover:bg-slate-50 transition-all shadow-2xs"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                              View Result
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!available}
+                              onClick={() => navigate(`/student/exams/${exam.id}/take`)}
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-primary to-secondary px-5 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-all disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {available ? (
+                                <>
+                                  Start Exam <ArrowRight className="h-3.5 w-3.5" />
+                                </>
+                              ) : isUpcoming ? (
+                                <>
+                                  <Lock className="h-3.5 w-3.5" /> Upcoming
+                                </>
+                              ) : (
+                                <>
+                                  <Lock className="h-3.5 w-3.5" /> Window Closed
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </article>
               );

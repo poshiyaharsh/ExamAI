@@ -112,12 +112,25 @@ function getStatusBadge(status: string) {
 function formatExamWindow(startsAt: string | null, endsAt: string | null, isOpen: boolean) {
   if (isOpen) {
     if (endsAt) {
-      return `Open now · Closes ${new Date(endsAt).toLocaleDateString()} ${new Date(endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+      return `Open now · Closes ${new Date(endsAt).toLocaleDateString([], { month: "short", day: "numeric" })} ${new Date(endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
     }
     return "Open now · Available anytime";
   }
   if (startsAt) {
-    return `Opens ${new Date(startsAt).toLocaleDateString()} ${new Date(startsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    const now = new Date();
+    const start = new Date(startsAt);
+    if (start > now) {
+      const diffMs = start.getTime() - now.getTime();
+      const diffHours = Math.floor(diffMs / (3600 * 1000));
+      const diffMins = Math.floor((diffMs % (3600 * 1000)) / (60 * 1000));
+      const rel = diffHours > 24
+        ? `${Math.floor(diffHours / 24)}d ${diffHours % 24}h`
+        : diffHours > 0
+        ? `${diffHours}h ${diffMins}m`
+        : `${diffMins}m`;
+      return `Opens in ${rel} · ${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    }
+    return `Opens ${start.toLocaleDateString([], { month: "short", day: "numeric" })} ${start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   }
   return "Scheduled";
 }

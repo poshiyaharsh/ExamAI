@@ -84,6 +84,7 @@ export function TakeExamPage() {
   const [blankAnswers, setBlankAnswers] = useState<Record<number, string[]>>({});
   const [flagged, setFlagged] = useState<Record<number, boolean>>({});
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const [clockDriftMs, setClockDriftMs] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -116,6 +117,8 @@ export function TakeExamPage() {
   const retryTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const unmountedRef = useRef(false);
+  const warned10mRef = useRef(false);
+  const warned2mRef = useRef(false);
 
   // Load Exam Session
   useEffect(() => {
@@ -123,8 +126,14 @@ export function TakeExamPage() {
     studentExamApi.startExam(Number(id))
       .then((response) => {
         setSession(response);
+        const serverNowMs = response.server_now ? new Date(response.server_now).getTime() : Date.now();
+        const drift = serverNowMs - Date.now();
+        setClockDriftMs(drift);
+
         const deadlineMs = new Date(response.deadline).getTime();
-        const initialSeconds = Math.max(0, Math.floor((deadlineMs - Date.now()) / 1000));
+        const initialSeconds = response.duration_seconds !== undefined
+          ? response.duration_seconds
+          : Math.max(0, Math.floor((deadlineMs - (Date.now() + drift)) / 1000));
         setSecondsLeft(initialSeconds);
 
         // Check fullscreen support
@@ -175,10 +184,23 @@ export function TakeExamPage() {
     if (!session || !examStarted) return;
     const timer = window.setInterval(() => {
       setSecondsLeft((current) => {
+        // Warning alerts at 10m and 2m thresholds
+        if (current <= 600 && current > 598 && !warned10mRef.current) {
+          warned10mRef.current = true;
+          toast.warning("10 minutes remaining in this exam.");
+        }
+        if (current <= 120 && current > 118 && !warned2mRef.current) {
+          warned2mRef.current = true;
+          toast.error("2 minutes remaining! Finalize and verify your answers.");
+        }
+
         if (current <= 1) {
           window.clearInterval(timer);
           if (!submitLock.current) {
-            void submitAttempt("time_up");
+            const isWindowClosed = session.exam.ends_at
+              ? (Date.now() + clockDriftMs >= new Date(session.exam.ends_at).getTime())
+              : false;
+            void submitAttempt(isWindowClosed ? "window_closed" : "time_up");
           }
           return 0;
         }
@@ -186,7 +208,7 @@ export function TakeExamPage() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [session, examStarted]);
+  }, [session, examStarted, clockDriftMs]);
 
   // Periodic Heartbeat
   useEffect(() => {
@@ -200,14 +222,20 @@ export function TakeExamPage() {
           submitLock.current = true;
           return;
         }
+        if (hb.server_now) {
+          const drift = new Date(hb.server_now).getTime() - Date.now();
+          setClockDriftMs(drift);
+        }
         if (hb.expired || hb.auto_submitted) {
           submitLock.current = true;
-          toast.warning("Exam time expired on server.");
+          const msg = hb.submit_reason === "window_closed"
+            ? "The exam window has closed on the server."
+            : "Exam time expired on server.";
+          toast.warning(msg);
           navigate(`/student/results/${session.attempt_id}`);
           return;
         }
         if (typeof hb.seconds_left === "number") {
-          // Adjust timer drift
           setSecondsLeft(hb.seconds_left);
         }
       } catch {
@@ -254,8 +282,14 @@ export function TakeExamPage() {
         return flushPendingAnswers();
       }
       return true;
-    } catch {
+    } catch (err: any) {
       isSavingRef.current = false;
+      if (axios.isAxiosError(err) && (err.response?.status === 403 || err.response?.data?.error_code === "EXAM_EXPIRED")) {
+        submitLock.current = true;
+        toast.warning(err.response?.data?.detail || "The exam deadline has passed. Your attempt has been finalized.");
+        navigate(`/student/results/${session.attempt_id}`);
+        return false;
+      }
       const retryCount = retryCountRef.current;
       if (retryCount < 5) {
         retryCountRef.current += 1;
@@ -635,6 +669,24 @@ export function TakeExamPage() {
           </div>
         </div>
       </header>
+
+      {session.is_window_capped && (
+        <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50/95 p-4 text-amber-900 shadow-xs">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            <div className="text-xs sm:text-sm">
+              <span className="font-bold">Window-Capped Attempt:</span>{" "}
+              This exam window closes at{" "}
+              <strong>
+                {session.exam.ends_at
+                  ? new Date(session.exam.ends_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  : "the scheduled deadline"}
+              </strong>
+              . Your personal timer is capped by the exam end time to ensure all answers are submitted before the exam closes.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Container: Question Palette Sidebar + Active Question Canvas */}
       <main className="mx-auto grid max-w-7xl gap-6 p-4 sm:p-6 lg:grid-cols-[260px_minmax(0,1fr)]">
