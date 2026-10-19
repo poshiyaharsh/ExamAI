@@ -250,17 +250,17 @@ ExamAI/
 │   ├── views.py / urls.py        # Institute settings, student/faculty rosters, exam audit
 ├── api/                          # Core examination & question bank domain
 │   ├── admin_dashboard.py        # KPI calculations & Active Live Exams top-6 widget
-│   ├── models.py                 # Question (with active_hash), Exam, Attempt, Answer
+│   ├── models.py                 # Question, Exam, StudentAttempt, StudentAnswer
 │   ├── tenant.py                 # TenantJWTAuthentication & TenantScopedMixin
 │   ├── views_question_bank.py    # CRUD, CSV/JSON/XLSX bulk import & export
 │   ├── paper_engine/             # Reusable zero-duplicate automated paper generator
-│   │   ├── dedupe.py             # 7-tier deduplication engine
+│   │   ├── dedupe.py             # Deduplication engine
 │   │   ├── validator.py          # Exact marks, time & difficulty validator
 │   │   ├── cache.py              # Tenant-isolated caching service
 │   │   ├── generator.py          # Paper generation coordinator
 │   │   └── pool.py               # Candidate question pool builder
-│   ├── utils/db_retry.py         # MySQL deadlock & lock timeout retry handler
-│   └── test_*.py                 # Automated test suites
+│   ├── utils/                    # Schedule, analytics, evaluation, scoring, prompts
+│   └── tests/                    # Centralized Django test suites (19 test suites)
 ├── faculty/                      # Faculty portal & syllabus ingestion
 │   ├── models.py                 # FacultyProfile, Paper, SyllabusUpload
 │   └── views.py / urls.py        # Profile, paper history, and export endpoints
@@ -269,18 +269,16 @@ ExamAI/
 │   └── views.py / urls.py        # Student registration, profile, exam portal
 ├── Front-End/                    # React 18 + TypeScript + Vite frontend
 │   ├── src/app/
-│   │   ├── routes.tsx            # React Router v7 route definitions
+│   │   ├── routes.tsx            # React Router route definitions
 │   │   ├── pages/                # Admin, Faculty, and Student UI pages
 │   │   ├── components/           # UI library, layout components, ProtectedRoute
 │   │   └── context/AuthContext   # Global JWT authentication state
 │   ├── src/services/api.ts       # Axios client with automatic 401 token refresh queue
-│   ├── vite.config.ts            # Vite configuration (port 3000)
+│   ├── vite.config.ts            # Vite configuration
 │   └── package.json              # Frontend dependencies
 ├── scripts/                      # Operational & database maintenance utilities
-│   ├── check_db_health.py        # Database connectivity & status inspector
-│   ├── verify_mysql_migration.py # 100% data integrity verification script
-│   ├── reset_auto_increment.py   # AUTO_INCREMENT sequence synchronizer
-│   └── explain_queries.py        # MySQL EXPLAIN query plan analyzer
+│   ├── db/                       # check_db_health, reset_auto_increment, explain_queries
+│   └── migration/                # verify_mysql_migration, backfill scripts
 ├── docs/                         # Extended documentation & guides
 │   ├── ARCHITECTURE.md           # Deep architectural dive & flowcharts
 │   ├── API.md                    # Complete REST API reference table
@@ -364,7 +362,7 @@ DB_PORT=3306
 python manage.py migrate
 
 # Reset auto-increment counters to ensure smooth sequences
-python scripts/reset_auto_increment.py
+python scripts/db/reset_auto_increment.py
 
 # Create a Django superuser (optional, for Django admin)
 python manage.py createsuperuser
