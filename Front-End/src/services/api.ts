@@ -516,6 +516,7 @@ export type AdminStudentListResponse = {
   status: string;
   message: string;
   data: AdminStudentRow[];
+  results?: AdminStudentRow[];
   pagination?: {
     page: number;
     page_size: number;
@@ -1925,9 +1926,9 @@ export type AdminFacultyDetailResponse = {
 };
 
 export type AdminFacultyUpdatePayload = {
-  first_name: string;
-  last_name: string;
-  email: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
   employee_id?: string;
   department?: string;
   designation?: string;

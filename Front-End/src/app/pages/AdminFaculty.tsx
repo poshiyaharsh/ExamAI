@@ -1681,8 +1681,8 @@ export function AdminFaculty() {
                     searchPlaceholder="Filter departments..."
                     emptyText="No departments found"
                     options={departments.map((dept) => ({
-                      value: dept.department_name,
-                      label: dept.department_name,
+                      value: dept,
+                      label: dept,
                     }))}
                   />
                 </div>
