@@ -25,9 +25,17 @@ import {
   User,
   Users,
   GraduationCap,
+  MoreHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Combobox } from "../components/ui/combobox";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "../components/ui/dropdown-menu";
 import {
   adminStudentsApi,
   departmentsApi,
@@ -886,12 +894,14 @@ export function AdminStudents() {
                         </td>
 
                         {/* Actions */}
-                        <td className="px-3 py-3 text-right">
-                          <div className="inline-flex items-center justify-end gap-1.5 shrink-0">
+                        <td className="px-2 py-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1 min-w-0">
                             {/* View Results Button */}
                             <button
+                              type="button"
                               className="p-1 rounded-md hover:bg-primary/10 text-primary transition-colors shrink-0"
                               title="View Exam Results & Breakdown"
+                              aria-label={`View exam results for ${student.full_name}`}
                               onClick={() => void handleOpenResults(student.id)}
                             >
                               <BarChart3 className="w-3.5 h-3.5" />
@@ -899,8 +909,10 @@ export function AdminStudents() {
 
                             {/* View Profile */}
                             <button
+                              type="button"
                               className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
                               title="View Student Profile"
+                              aria-label={`View profile of ${student.full_name}`}
                               onClick={() => void handleViewStudent(student.id)}
                             >
                               <Eye className="w-3.5 h-3.5" />
@@ -908,31 +920,69 @@ export function AdminStudents() {
 
                             {/* Edit */}
                             <button
+                              type="button"
                               className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
                               title="Edit Student"
+                              aria-label={`Edit ${student.full_name}`}
                               onClick={() => void handleEditStudent(student.id)}
                             >
                               <Edit className="w-3.5 h-3.5" />
                             </button>
 
-                            {/* Email */}
-                            <a
-                              className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
-                              title="Send Email"
-                              href={`mailto:${student.email}`}
-                            >
-                              <Mail className="w-3.5 h-3.5" />
-                            </a>
-
-                            {/* Delete */}
-                            <button
-                              className="p-1 rounded-md hover:bg-rose-50 text-rose-600 transition-colors disabled:opacity-50 shrink-0"
-                              title="Delete Student"
-                              onClick={() => void handleDeleteStudent(student)}
-                              disabled={deletingId === student.id}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {/* More Actions Dropdown */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                  title="More actions"
+                                  aria-label={`More actions for ${student.full_name}`}
+                                >
+                                  <MoreHorizontal className="w-3.5 h-3.5" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-44 z-50">
+                                <DropdownMenuItem
+                                  onClick={() => void handleOpenResults(student.id)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <BarChart3 className="w-3.5 h-3.5 mr-2 text-primary" />
+                                  <span>Exam Results</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => void handleViewStudent(student.id)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Eye className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>View Profile</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => void handleEditStudent(student.id)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Edit className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>Edit Student</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    window.location.href = `mailto:${student.email}`;
+                                  }}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Mail className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>Send Email</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => void handleDeleteStudent(student)}
+                                  disabled={deletingId === student.id}
+                                  className="cursor-pointer text-xs text-destructive focus:text-destructive focus:bg-destructive/10"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                  <span>Delete Student</span>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </td>
                       </tr>

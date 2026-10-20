@@ -13,9 +13,22 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Combobox } from "../components/ui/combobox";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "../components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "../components/ui/dropdown-menu";
 import {
   adminInstitutionApi,
   adminFacultyApi,
@@ -671,35 +684,35 @@ export function AdminFaculty() {
 
         {/* Table & Cards Container */}
         <div className="bg-white rounded-xl shadow-xs border border-border overflow-hidden min-w-0 max-w-full">
-          {/* Desktop Table View (>= 768px) with table-fixed & colgroup */}
-          <div className="hidden md:block overflow-x-auto min-w-0 max-w-full">
+          {/* Desktop Table View (>= 768px) with table-fixed & pure percentage columns */}
+          <div className="hidden md:block w-full min-w-0 max-w-full">
             <table className="w-full table-fixed divide-y divide-border">
-              <colgroup>
-                <col className="w-[30%]" />
-                <col className="w-[16%]" />
-                <col className="w-[24%]" />
-                <col className="w-[18%]" />
+              <colgroup className="hidden xl:table-column-group">
+                <col className="w-[26%]" />
                 <col className="w-[12%]" />
-                <col className="w-[110px]" />
+                <col className="w-[22%]" />
+                <col className="w-[16%]" />
+                <col className="w-[10%]" />
+                <col className="w-[14%]" />
               </colgroup>
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <th className="w-[36%] lg:w-[28%] xl:w-[26%] text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Faculty Member
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <th className="hidden xl:table-cell xl:w-[12%] text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Employee ID
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <th className="w-[34%] lg:w-[28%] xl:w-[22%] text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Department
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <th className="hidden lg:table-cell lg:w-[18%] xl:w-[16%] text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Designation
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <th className="w-[14%] lg:w-[12%] xl:w-[10%] text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="text-right px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <th className="w-[16%] lg:w-[14%] xl:w-[14%] text-right px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -728,41 +741,81 @@ export function AdminFaculty() {
 
                     return (
                       <tr key={facultyItem.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-5 py-3.5 min-w-0">
+                        {/* Faculty Name & Email (with responsive fallback for hidden fields) */}
+                        <td className="px-4 py-3 min-w-0">
                           <div className="min-w-0 max-w-full">
-                            <p
-                              className="font-semibold text-foreground text-sm truncate"
-                              title={facultyItem.full_name}
-                            >
-                              {facultyItem.full_name}
-                            </p>
-                            <p
-                              className="text-xs text-muted-foreground truncate"
-                              title={facultyItem.email}
-                            >
-                              {facultyItem.email}
-                            </p>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="font-semibold text-foreground text-sm truncate cursor-default block">
+                                  {facultyItem.full_name}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" align="start">
+                                {facultyItem.full_name}
+                              </TooltipContent>
+                            </Tooltip>
+
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-xs text-muted-foreground truncate cursor-default block">
+                                  {facultyItem.email}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" align="start">
+                                {facultyItem.email}
+                              </TooltipContent>
+                            </Tooltip>
+
+                            {/* Responsive fallback when Employee ID is hidden (< xl) */}
+                            <div className="xl:hidden mt-0.5 text-[11px] font-mono text-muted-foreground truncate">
+                              ID: {facultyItem.employee_id || "-"}
+                            </div>
+
+                            {/* Responsive fallback when Designation is hidden (< lg) */}
+                            <div className="lg:hidden text-[11px] text-muted-foreground truncate">
+                              {facultyItem.designation || "-"}
+                            </div>
                           </div>
                         </td>
+
+                        {/* Employee ID (Hidden on < xl) */}
                         <td
-                          className="px-4 py-3.5 text-xs text-foreground font-mono truncate"
+                          className="hidden xl:table-cell px-3 py-3 text-xs text-foreground font-mono truncate"
                           title={facultyItem.employee_id || "-"}
                         >
                           {facultyItem.employee_id || "-"}
                         </td>
-                        <td
-                          className="px-4 py-3.5 text-xs text-foreground truncate"
-                          title={facultyItem.department || "-"}
-                        >
-                          {facultyItem.department || "-"}
+
+                        {/* Department (wraps up to 2 lines with Tooltip) */}
+                        <td className="px-3 py-3 min-w-0">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="text-xs text-foreground line-clamp-2 cursor-default break-words">
+                                {facultyItem.department || "-"}
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" align="start">
+                              {facultyItem.department || "-"}
+                            </TooltipContent>
+                          </Tooltip>
                         </td>
-                        <td
-                          className="px-4 py-3.5 text-xs text-muted-foreground truncate"
-                          title={facultyItem.designation || "-"}
-                        >
-                          {facultyItem.designation || "-"}
+
+                        {/* Designation (Hidden on < lg, wraps up to 2 lines with Tooltip) */}
+                        <td className="hidden lg:table-cell px-3 py-3 min-w-0">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="text-xs text-muted-foreground line-clamp-2 cursor-default break-words">
+                                {facultyItem.designation || "-"}
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" align="start">
+                              {facultyItem.designation || "-"}
+                            </TooltipContent>
+                          </Tooltip>
                         </td>
-                        <td className="px-4 py-3.5">
+
+                        {/* Status Badge */}
+                        <td className="px-3 py-3 min-w-0">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                               isActive
@@ -773,45 +826,102 @@ export function AdminFaculty() {
                             {status}
                           </span>
                         </td>
-                        <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center justify-end gap-1">
-                            <button
-                              className="p-1.5 rounded hover:bg-muted transition-colors"
-                              title="View Details"
-                              aria-label={`View ${facultyItem.full_name}`}
-                              onClick={() => void handleViewFaculty(facultyItem.id)}
-                            >
-                              <Eye className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-                            </button>
-                            <button
-                              className="p-1.5 rounded hover:bg-muted transition-colors"
-                              title="Edit Faculty"
-                              aria-label={`Edit ${facultyItem.full_name}`}
-                              onClick={() => void handleEditFaculty(facultyItem.id)}
-                            >
-                              <Edit className="w-4 h-4 text-muted-foreground hover:text-primary" />
-                            </button>
-                            <a
-                              className="p-1.5 rounded hover:bg-muted transition-colors"
-                              title="Send Email"
-                              aria-label={`Email ${facultyItem.full_name}`}
-                              href={`mailto:${facultyItem.email}`}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                handleSendEmail(facultyItem);
-                              }}
-                            >
-                              <Mail className="w-4 h-4 text-muted-foreground hover:text-blue-600" />
-                            </a>
-                            <button
-                              className="p-1.5 rounded hover:bg-red-50 transition-colors disabled:opacity-60"
-                              title="Delete Faculty"
-                              aria-label={`Delete ${facultyItem.full_name}`}
-                              disabled={deletingId === facultyItem.id}
-                              onClick={() => void handleDeleteFaculty(facultyItem)}
-                            >
-                              <Trash2 className="w-4 h-4 text-muted-foreground hover:text-red-600" />
-                            </button>
+
+                        {/* Actions Column (Compact flex row fitting inside bounding box) */}
+                        <td className="px-3 py-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1 min-w-0">
+                            {/* View Details */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                  aria-label={`View ${facultyItem.full_name}`}
+                                  onClick={() => void handleViewFaculty(facultyItem.id)}
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">View Details</TooltipContent>
+                            </Tooltip>
+
+                            {/* Edit Faculty */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-primary transition-colors shrink-0"
+                                  aria-label={`Edit ${facultyItem.full_name}`}
+                                  onClick={() => void handleEditFaculty(facultyItem.id)}
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">Edit Faculty</TooltipContent>
+                            </Tooltip>
+
+                            {/* Send Email */}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <a
+                                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-blue-600 transition-colors shrink-0"
+                                  aria-label={`Email ${facultyItem.full_name}`}
+                                  href={`mailto:${facultyItem.email}`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    handleSendEmail(facultyItem);
+                                  }}
+                                >
+                                  <Mail className="w-4 h-4" />
+                                </a>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">Send Email</TooltipContent>
+                            </Tooltip>
+
+                            {/* More Actions Dropdown */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                  aria-label={`More actions for ${facultyItem.full_name}`}
+                                >
+                                  <MoreHorizontal className="w-4 h-4" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-44 z-50">
+                                <DropdownMenuItem
+                                  onClick={() => void handleViewFaculty(facultyItem.id)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Eye className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>View Profile</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => void handleEditFaculty(facultyItem.id)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Edit className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>Edit Credentials</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleSendEmail(facultyItem)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Mail className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>Send Email</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => void handleDeleteFaculty(facultyItem)}
+                                  disabled={deletingId === facultyItem.id}
+                                  className="cursor-pointer text-xs text-destructive focus:text-destructive focus:bg-destructive/10"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                  <span>Delete Faculty</span>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </td>
                       </tr>
