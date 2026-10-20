@@ -13,6 +13,8 @@ from .views import (
     AdminExamAuditAPIView,
     AdminStudentResultsAPIView,
     AdminUserDepartmentChangeAPIView,
+    AdminFacultyResetPasswordAPIView,
+    AdminStudentResetPasswordAPIView,
 )
 from api.admin_dashboard import AdminDashboardView, LiveRosterView
 
@@ -27,12 +29,16 @@ urlpatterns = [
     path('students/', AdminStudentsAPIView.as_view(), name='admin-students'),
     path('students/<int:student_id>', AdminStudentDetailAPIView.as_view(), name='admin-student-detail-no-slash'),
     path('students/<int:student_id>/', AdminStudentDetailAPIView.as_view(), name='admin-student-detail'),
+    path('students/<int:student_id>/reset-password', AdminStudentResetPasswordAPIView.as_view(), name='admin-student-reset-password-no-slash'),
+    path('students/<int:student_id>/reset-password/', AdminStudentResetPasswordAPIView.as_view(), name='admin-student-reset-password'),
     path('students/<int:student_id>/results', AdminStudentResultsAPIView.as_view(), name='admin-student-results-no-slash'),
     path('students/<int:student_id>/results/', AdminStudentResultsAPIView.as_view(), name='admin-student-results'),
     path('faculty', AdminFacultyAPIView.as_view(), name='admin-faculty-no-slash'),
     path('faculty/', AdminFacultyAPIView.as_view(), name='admin-faculty'),
     path('faculty/<int:faculty_id>', AdminFacultyDetailAPIView.as_view(), name='admin-faculty-detail-no-slash'),
     path('faculty/<int:faculty_id>/', AdminFacultyDetailAPIView.as_view(), name='admin-faculty-detail'),
+    path('faculty/<int:faculty_id>/reset-password', AdminFacultyResetPasswordAPIView.as_view(), name='admin-faculty-reset-password-no-slash'),
+    path('faculty/<int:faculty_id>/reset-password/', AdminFacultyResetPasswordAPIView.as_view(), name='admin-faculty-reset-password'),
     path('exams', AdminExamsAPIView.as_view(), name='admin-exams-no-slash'),
     path('exams/', AdminExamsAPIView.as_view(), name='admin-exams'),
     path('exams/audit', AdminExamAuditAPIView.as_view(), name='admin-exams-audit-no-slash'),

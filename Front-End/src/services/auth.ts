@@ -98,9 +98,20 @@ export const authStorage = {
   },
 
   clearSession() {
+    const user = this.getUser();
     const storage = getSessionStorage();
     if (storage) {
       storage.removeItem(AUTH_STORAGE_KEY);
+    }
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem("examai_faculty_wizard_draft");
+        if (user?.id) {
+          window.localStorage.removeItem(`wizard:draft:${user.id}`);
+        }
+      }
+    } catch {
+      // Ignore storage restrictions
     }
     emitAuthSessionChanged();
   },

@@ -26,6 +26,10 @@ import {
   Users,
   GraduationCap,
   MoreHorizontal,
+  Building2,
+  KeyRound,
+  Copy,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Combobox } from "../components/ui/combobox";
@@ -180,6 +184,42 @@ export function AdminStudents() {
   // Delete
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
+  const [changeDeptModal, setChangeDeptModal] = useState<{
+    open: boolean;
+    student: AdminStudentRow | null;
+    department: string;
+    reason: string;
+    loading: boolean;
+    error: string;
+  }>({
+    open: false,
+    student: null,
+    department: "",
+    reason: "",
+    loading: false,
+    error: "",
+  });
+
+  const [resetPasswordModal, setResetPasswordModal] = useState<{
+    open: boolean;
+    student: AdminStudentRow | null;
+    newPassword: string;
+    reason: string;
+    loading: boolean;
+    error: string;
+    temporaryPasswordResult: string | null;
+    copied: boolean;
+  }>({
+    open: false,
+    student: null,
+    newPassword: "",
+    reason: "",
+    loading: false,
+    error: "",
+    temporaryPasswordResult: null,
+    copied: false,
+  });
+
   // Create Student Modal
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [creatingStudent, setCreatingStudent] = useState(false);
@@ -224,14 +264,19 @@ export function AdminStudents() {
       if (sortBy !== "default") params.sort = sortBy;
 
       const response = await adminStudentsApi.getStudents(params);
-      setStudents(response.data);
+      const studentRows = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response?.results)
+        ? response.results
+        : [];
+      setStudents(studentRows);
 
       if (response.pagination) {
         setTotalPages(response.pagination.total_pages);
         setTotalCount(response.pagination.total_count);
       } else {
         setTotalPages(1);
-        setTotalCount(response.data.length);
+        setTotalCount(studentRows.length);
       }
 
       if (response.stats) {
@@ -455,6 +500,100 @@ export function AdminStudents() {
       }
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  // Change Department Handlers
+  const handleOpenChangeDept = (studentItem: AdminStudentRow) => {
+    setChangeDeptModal({
+      open: true,
+      student: studentItem,
+      department: studentItem.department || "",
+      reason: "",
+      loading: false,
+      error: "",
+    });
+  };
+
+  const handleSubmitChangeDept = async () => {
+    if (!changeDeptModal.student) return;
+    const targetUserId = changeDeptModal.student.user_id || changeDeptModal.student.id;
+    if (!changeDeptModal.department.trim()) {
+      setChangeDeptModal((prev) => ({ ...prev, error: "Please select a department." }));
+      return;
+    }
+    if (!changeDeptModal.reason.trim()) {
+      setChangeDeptModal((prev) => ({ ...prev, error: "A reason is required for administrative audit logs." }));
+      return;
+    }
+
+    setChangeDeptModal((prev) => ({ ...prev, loading: true, error: "" }));
+    try {
+      await adminStudentsApi.changeDepartment(targetUserId, {
+        department: changeDeptModal.department.trim(),
+        reason: changeDeptModal.reason.trim(),
+      });
+      toast.success(`Department updated to ${changeDeptModal.department}.`);
+      setChangeDeptModal((prev) => ({ ...prev, open: false, loading: false }));
+      await fetchStudents();
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.response?.data?.detail || "Failed to change department.";
+      setChangeDeptModal((prev) => ({ ...prev, error: msg, loading: false }));
+    }
+  };
+
+  // Reset Password Handlers
+  const handleOpenResetPassword = (studentItem: AdminStudentRow) => {
+    setResetPasswordModal({
+      open: true,
+      student: studentItem,
+      newPassword: "",
+      reason: "",
+      loading: false,
+      error: "",
+      temporaryPasswordResult: null,
+      copied: false,
+    });
+  };
+
+  const handleGeneratePassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+    let pwd = "";
+    for (let i = 0; i < 12; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setResetPasswordModal((prev) => ({ ...prev, newPassword: pwd }));
+  };
+
+  const handleSubmitResetPassword = async () => {
+    if (!resetPasswordModal.student) return;
+    setResetPasswordModal((prev) => ({ ...prev, loading: true, error: "" }));
+    try {
+      const res = await adminStudentsApi.resetPassword(resetPasswordModal.student.id, {
+        new_password: resetPasswordModal.newPassword.trim() || undefined,
+        reason: resetPasswordModal.reason.trim() || undefined,
+      });
+      const generated = res.data?.new_password || resetPasswordModal.newPassword;
+      setResetPasswordModal((prev) => ({
+        ...prev,
+        loading: false,
+        temporaryPasswordResult: generated,
+      }));
+      toast.success("Password reset successfully.");
+    } catch (err: any) {
+      const msg = err.response?.data?.message || err.response?.data?.detail || "Failed to reset password.";
+      setResetPasswordModal((prev) => ({ ...prev, error: msg, loading: false }));
+    }
+  };
+
+  const handleCopyPassword = () => {
+    if (resetPasswordModal.temporaryPasswordResult) {
+      navigator.clipboard.writeText(resetPasswordModal.temporaryPasswordResult);
+      setResetPasswordModal((prev) => ({ ...prev, copied: true }));
+      toast.success("Password copied to clipboard.");
+      setTimeout(() => {
+        setResetPasswordModal((prev) => ({ ...prev, copied: false }));
+      }, 2000);
     }
   };
 
@@ -893,75 +1032,45 @@ export function AdminStudents() {
                           </span>
                         </td>
 
-                        {/* Actions */}
-                        <td className="px-2 py-3 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1 min-w-0">
-                            {/* View Results Button */}
+                        {/* Actions Column (Clean hybrid pattern) */}
+                        <td className="px-3 py-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5 min-w-0">
+                            {/* Primary View Details Button */}
                             <button
                               type="button"
-                              className="p-1 rounded-md hover:bg-primary/10 text-primary transition-colors shrink-0"
-                              title="View Exam Results & Breakdown"
-                              aria-label={`View exam results for ${student.full_name}`}
-                              onClick={() => void handleOpenResults(student.id)}
-                            >
-                              <BarChart3 className="w-3.5 h-3.5" />
-                            </button>
-
-                            {/* View Profile */}
-                            <button
-                              type="button"
-                              className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
-                              title="View Student Profile"
-                              aria-label={`View profile of ${student.full_name}`}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-xs font-semibold text-foreground shadow-2xs hover:shadow-xs transition-all shrink-0 cursor-pointer"
+                              aria-label={`View ${student.full_name}`}
                               onClick={() => void handleViewStudent(student.id)}
                             >
-                              <Eye className="w-3.5 h-3.5" />
+                              <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span>View</span>
                             </button>
 
-                            {/* Edit */}
-                            <button
-                              type="button"
-                              className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors shrink-0"
-                              title="Edit Student"
-                              aria-label={`Edit ${student.full_name}`}
-                              onClick={() => void handleEditStudent(student.id)}
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-
-                            {/* More Actions Dropdown */}
+                            {/* Single More Actions Dropdown */}
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <button
                                   type="button"
-                                  className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                                  title="More actions"
+                                  className="p-1.5 rounded-lg border border-transparent hover:border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0 cursor-pointer"
                                   aria-label={`More actions for ${student.full_name}`}
                                 >
-                                  <MoreHorizontal className="w-3.5 h-3.5" />
+                                  <MoreHorizontal className="w-4 h-4" />
                                 </button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-44 z-50">
+                              <DropdownMenuContent align="end" className="w-52 z-50 p-1.5">
                                 <DropdownMenuItem
                                   onClick={() => void handleOpenResults(student.id)}
                                   className="cursor-pointer text-xs"
                                 >
                                   <BarChart3 className="w-3.5 h-3.5 mr-2 text-primary" />
-                                  <span>Exam Results</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => void handleViewStudent(student.id)}
-                                  className="cursor-pointer text-xs"
-                                >
-                                  <Eye className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-                                  <span>View Profile</span>
+                                  <span>Exam Results & Breakdown</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => void handleEditStudent(student.id)}
                                   className="cursor-pointer text-xs"
                                 >
                                   <Edit className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-                                  <span>Edit Student</span>
+                                  <span>Edit Details</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => {
@@ -970,7 +1079,22 @@ export function AdminStudents() {
                                   className="cursor-pointer text-xs"
                                 >
                                   <Mail className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-                                  <span>Send Email</span>
+                                  <span>Email Student</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => handleOpenChangeDept(student)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>Change Department</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleOpenResetPassword(student)}
+                                  className="cursor-pointer text-xs"
+                                >
+                                  <KeyRound className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                                  <span>Reset Password</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
@@ -1064,45 +1188,78 @@ export function AdminStudents() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/40">
                         <button
-                          onClick={() => void handleOpenResults(student.id)}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+                          type="button"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-xs font-semibold text-foreground shadow-2xs cursor-pointer"
+                          onClick={() => void handleViewStudent(student.id)}
+                          aria-label={`View details for ${student.full_name}`}
                         >
-                          <BarChart3 className="w-3.5 h-3.5" />
-                          View Results
+                          <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span>View Profile</span>
                         </button>
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
-                            title="View Profile"
-                            onClick={() => void handleViewStudent(student.id)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                          <button
-                            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
-                            title="Edit Student"
-                            onClick={() => void handleEditStudent(student.id)}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <a
-                            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors"
-                            title="Send Email"
-                            href={`mailto:${student.email}`}
-                          >
-                            <Mail className="w-4 h-4" />
-                          </a>
-                          <button
-                            className="p-1.5 rounded-md hover:bg-rose-50 text-rose-600 transition-colors disabled:opacity-50"
-                            title="Delete Student"
-                            onClick={() => void handleDeleteStudent(student)}
-                            disabled={deletingId === student.id}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="p-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground text-xs flex items-center gap-1 cursor-pointer"
+                              aria-label={`More actions for ${student.full_name}`}
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                              <span className="text-xs">Actions</span>
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52 z-50 p-1.5">
+                            <DropdownMenuItem
+                              onClick={() => void handleOpenResults(student.id)}
+                              className="cursor-pointer text-xs"
+                            >
+                              <BarChart3 className="w-3.5 h-3.5 mr-2 text-primary" />
+                              <span>Exam Results</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => void handleEditStudent(student.id)}
+                              className="cursor-pointer text-xs"
+                            >
+                              <Edit className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                              <span>Edit Details</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                window.location.href = `mailto:${student.email}`;
+                              }}
+                              className="cursor-pointer text-xs"
+                            >
+                              <Mail className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                              <span>Email Student</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleOpenChangeDept(student)}
+                              className="cursor-pointer text-xs"
+                            >
+                              <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                              <span>Change Department</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleOpenResetPassword(student)}
+                              className="cursor-pointer text-xs"
+                            >
+                              <KeyRound className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                              <span>Reset Password</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => void handleDeleteStudent(student)}
+                              disabled={deletingId === student.id}
+                              className="cursor-pointer text-xs text-destructive focus:text-destructive focus:bg-destructive/10"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 mr-2" />
+                              <span>Delete Student</span>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
                   );
@@ -1609,6 +1766,221 @@ export function AdminStudents() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Department Modal */}
+      {changeDeptModal.open && changeDeptModal.student && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-border overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-border bg-muted/20">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Change Department</h3>
+                  <p className="text-xs text-muted-foreground">Admin scope reassignment with audit log</p>
+                </div>
+              </div>
+              <button
+                className="p-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground text-xs cursor-pointer"
+                onClick={() => setChangeDeptModal((prev) => ({ ...prev, open: false }))}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="rounded-xl bg-muted/30 p-3 border border-border/60 text-xs space-y-1">
+                <p className="text-muted-foreground">
+                  Student: <strong className="text-foreground">{changeDeptModal.student.full_name}</strong>
+                </p>
+                <p className="text-muted-foreground">
+                  Email: <span className="font-mono text-foreground">{changeDeptModal.student.email}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Current Department: <span className="font-semibold text-primary">{changeDeptModal.student.department || "Unassigned"}</span>
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">New Department *</label>
+                <Combobox
+                  value={changeDeptModal.department}
+                  onValueChange={(val) => setChangeDeptModal((prev) => ({ ...prev, department: val }))}
+                  placeholder="Select new department"
+                  searchPlaceholder="Filter departments..."
+                  emptyText="No departments found"
+                  options={departments.map((dept) => ({
+                    value: dept,
+                    label: dept,
+                  }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Reason for Department Transfer *</label>
+                <textarea
+                  rows={3}
+                  value={changeDeptModal.reason}
+                  onChange={(e) => setChangeDeptModal((prev) => ({ ...prev, reason: e.target.value }))}
+                  placeholder="Provide justification for administrative audit trail..."
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">This reason is permanently logged in the department transfer audit records.</p>
+              </div>
+
+              {changeDeptModal.error && (
+                <p className="text-xs text-destructive font-medium">{changeDeptModal.error}</p>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setChangeDeptModal((prev) => ({ ...prev, open: false }))}
+                  className="px-4 py-2 rounded-xl border border-border text-xs font-semibold hover:bg-muted cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={changeDeptModal.loading}
+                  onClick={handleSubmitChangeDept}
+                  className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 disabled:opacity-60 cursor-pointer"
+                >
+                  {changeDeptModal.loading ? "Transferring..." : "Confirm Transfer"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetPasswordModal.open && resetPasswordModal.student && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-border overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-border bg-muted/20">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Reset Password</h3>
+                  <p className="text-xs text-muted-foreground">Admin credential update with audit log</p>
+                </div>
+              </div>
+              <button
+                className="p-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground text-xs cursor-pointer"
+                onClick={() => setResetPasswordModal((prev) => ({ ...prev, open: false }))}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="rounded-xl bg-muted/30 p-3 border border-border/60 text-xs space-y-1">
+                <p className="text-muted-foreground">
+                  Target: <strong className="text-foreground">{resetPasswordModal.student.full_name}</strong>
+                </p>
+                <p className="text-muted-foreground">
+                  Email: <span className="font-mono text-foreground">{resetPasswordModal.student.email}</span>
+                </p>
+              </div>
+
+              {!resetPasswordModal.temporaryPasswordResult ? (
+                <>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-foreground">New Password (Optional)</label>
+                      <button
+                        type="button"
+                        onClick={handleGeneratePassword}
+                        className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                      >
+                        Generate Random
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={resetPasswordModal.newPassword}
+                      onChange={(e) => setResetPasswordModal((prev) => ({ ...prev, newPassword: e.target.value }))}
+                      placeholder="Leave blank to auto-generate a secure password"
+                      className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-foreground mb-1.5">Reason for Password Reset</label>
+                    <input
+                      type="text"
+                      value={resetPasswordModal.reason}
+                      onChange={(e) => setResetPasswordModal((prev) => ({ ...prev, reason: e.target.value }))}
+                      placeholder="e.g. Student requested password assistance"
+                      className="w-full px-3 py-2 text-xs rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  {resetPasswordModal.error && (
+                    <p className="text-xs text-destructive font-medium">{resetPasswordModal.error}</p>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                    <button
+                      type="button"
+                      onClick={() => setResetPasswordModal((prev) => ({ ...prev, open: false }))}
+                      className="px-4 py-2 rounded-xl border border-border text-xs font-semibold hover:bg-muted cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={resetPasswordModal.loading}
+                      onClick={handleSubmitResetPassword}
+                      className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 disabled:opacity-60 cursor-pointer"
+                    >
+                      {resetPasswordModal.loading ? "Resetting..." : "Reset Password"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4 py-2">
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 space-y-2">
+                    <p className="text-xs font-bold text-emerald-900">
+                      Password Reset Successfully!
+                    </p>
+                    <p className="text-xs text-emerald-800">
+                      Please copy this temporary password and securely convey it to the student.
+                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <code className="flex-1 bg-white px-3 py-2 rounded-lg border border-emerald-300 font-mono text-sm text-foreground font-bold select-all">
+                        {resetPasswordModal.temporaryPasswordResult}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={handleCopyPassword}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-all shadow-xs cursor-pointer"
+                      >
+                        {resetPasswordModal.copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                        {resetPasswordModal.copied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2 border-t border-border">
+                    <button
+                      type="button"
+                      onClick={() => setResetPasswordModal((prev) => ({ ...prev, open: false }))}
+                      className="px-5 py-2 rounded-xl bg-foreground text-background text-xs font-bold hover:opacity-90 cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

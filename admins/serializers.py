@@ -10,7 +10,7 @@ from django.core.validators import RegexValidator
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import AdminDepartment, AdminInstitution, AdminProfile
+from .models import AdminActionAuditLog, AdminDepartment, AdminInstitution, AdminProfile
 from students.models import StudentProfile
 from faculty.models import FacultyProfile
 from api.models import Exam, Question, StudentAttempt
@@ -131,6 +131,7 @@ class AdminInstitutionUpdateSerializer(serializers.ModelSerializer):
 
 
 class AdminStudentListSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     full_name = serializers.SerializerMethodField()
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
@@ -148,6 +149,7 @@ class AdminStudentListSerializer(serializers.ModelSerializer):
         model = StudentProfile
         fields = (
             'id',
+            'user_id',
             'full_name',
             'first_name',
             'last_name',
@@ -212,6 +214,7 @@ class AdminStudentListSerializer(serializers.ModelSerializer):
 
 
 class AdminStudentDetailSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     full_name = serializers.SerializerMethodField()
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
@@ -230,6 +233,7 @@ class AdminStudentDetailSerializer(serializers.ModelSerializer):
         model = StudentProfile
         fields = (
             'id',
+            'user_id',
             'full_name',
             'first_name',
             'last_name',
@@ -396,6 +400,7 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
     student_id = serializers.CharField(max_length=13, required=False)
     department = serializers.CharField(max_length=120, allow_blank=False, trim_whitespace=True, required=False)
     department_id = serializers.IntegerField(required=False)
+    is_active = serializers.BooleanField(required=False)
 
     def validate_email(self, value):
         normalized = value.lower().strip()
@@ -444,7 +449,28 @@ class AdminStudentUpdateSerializer(serializers.Serializer):
         user.last_name = validated_data['last_name'].strip()
         user.email = validated_data['email']
         user.username = validated_data['email']
-        user.save(update_fields=['first_name', 'last_name', 'email', 'username'])
+        user_update_fields = ['first_name', 'last_name', 'email', 'username']
+
+        if 'is_active' in validated_data:
+            old_active = user.is_active
+            new_active = validated_data['is_active']
+            if old_active != new_active:
+                user.is_active = new_active
+                user_update_fields.append('is_active')
+                request_user = self.context.get('request').user if self.context.get('request') else None
+                try:
+                    AdminActionAuditLog.objects.create(
+                        admin=request_user,
+                        target_user=user,
+                        institution=instance.institution,
+                        action=AdminActionAuditLog.ACTION_ACTIVATE if new_active else AdminActionAuditLog.ACTION_DEACTIVATE,
+                        reason=self.context.get('reason', 'Administrative status toggle'),
+                        details={'previous_status': old_active, 'new_status': new_active},
+                    )
+                except Exception:
+                    pass
+
+        user.save(update_fields=user_update_fields)
 
         update_fields = []
         if 'student_id' in validated_data:
@@ -623,6 +649,7 @@ class AdminFacultyCreateSerializer(serializers.Serializer):
 
 
 class AdminFacultyListSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)
     employee_id = serializers.CharField(read_only=True)
@@ -636,6 +663,7 @@ class AdminFacultyListSerializer(serializers.ModelSerializer):
         model = FacultyProfile
         fields = (
             'id',
+            'user_id',
             'full_name',
             'email',
             'employee_id',
@@ -656,6 +684,7 @@ class AdminFacultyListSerializer(serializers.ModelSerializer):
 
 
 class AdminFacultyDetailSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
     full_name = serializers.SerializerMethodField()
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
@@ -672,6 +701,7 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
         model = FacultyProfile
         fields = (
             'id',
+            'user_id',
             'full_name',
             'first_name',
             'last_name',
@@ -737,7 +767,22 @@ class AdminFacultyUpdateSerializer(serializers.Serializer):
         user.username = validated_data['email']
 
         if 'is_active' in validated_data:
-            user.is_active = validated_data['is_active']
+            old_active = user.is_active
+            new_active = validated_data['is_active']
+            if old_active != new_active:
+                user.is_active = new_active
+                request_user = self.context.get('request').user if self.context.get('request') else None
+                try:
+                    AdminActionAuditLog.objects.create(
+                        admin=request_user,
+                        target_user=user,
+                        institution=instance.institution,
+                        action=AdminActionAuditLog.ACTION_ACTIVATE if new_active else AdminActionAuditLog.ACTION_DEACTIVATE,
+                        reason=self.context.get('reason', 'Administrative status toggle'),
+                        details={'previous_status': old_active, 'new_status': new_active},
+                    )
+                except Exception:
+                    pass
 
         user.save(update_fields=['first_name', 'last_name', 'email', 'username', 'is_active'])
 

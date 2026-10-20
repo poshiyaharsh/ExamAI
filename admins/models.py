@@ -125,3 +125,45 @@ class DepartmentChangeAuditLog(models.Model):
 
     def __str__(self):
         return f'{self.user.username}: {self.previous_department} -> {self.new_department}'
+
+
+class AdminActionAuditLog(models.Model):
+    ACTION_RESET_PASSWORD = 'reset_password'
+    ACTION_DEACTIVATE = 'deactivate'
+    ACTION_ACTIVATE = 'activate'
+    ACTION_DELETE = 'delete'
+    ACTION_CHOICES = (
+        (ACTION_RESET_PASSWORD, 'Reset Password'),
+        (ACTION_DEACTIVATE, 'Deactivate User'),
+        (ACTION_ACTIVATE, 'Activate User'),
+        (ACTION_DELETE, 'Delete User'),
+    )
+    admin = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='admin_actions_performed',
+    )
+    target_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='admin_actions_received',
+    )
+    institution = models.ForeignKey(
+        AdminInstitution,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='admin_action_audit_logs',
+    )
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES, db_index=True)
+    reason = models.TextField(blank=True, default='')
+    details = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f'Admin {self.admin_id} performed {self.action} on user {self.target_user_id}'

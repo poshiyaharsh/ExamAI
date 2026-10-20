@@ -495,6 +495,7 @@ export type ProctoringHeartbeatResponse = {
 
 export type AdminStudentRow = {
   id: number;
+  user_id?: number;
   full_name: string;
   first_name?: string;
   last_name?: string;
@@ -508,6 +509,7 @@ export type AdminStudentRow = {
   lowest_score?: number | null;
   last_exam_date?: string | null;
   performance_status?: "Excellent" | "Good" | "Average" | "Needs Improvement" | "N/A";
+  is_active?: boolean;
 };
 
 export type AdminStudentListResponse = {
@@ -1438,14 +1440,29 @@ export const adminStudentsApi = {
   updateStudent: async (
     studentId: number,
     payload: {
-      first_name: string;
-      last_name: string;
-      email: string;
-      student_id: string;
-      department_id: number;
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+      student_id?: string;
+      department_id?: number;
+      is_active?: boolean;
     }
   ): Promise<AdminStudentDetailResponse> => {
     const response = await apiClient.put<AdminStudentDetailResponse>(`/api/admin/students/${studentId}`, payload);
+    return response.data;
+  },
+  resetPassword: async (
+    studentId: number,
+    payload?: { new_password?: string; reason?: string }
+  ): Promise<{ status: string; message: string; data?: { user_id: number; email: string; new_password: string } }> => {
+    const response = await apiClient.post(`/api/admin/students/${studentId}/reset-password/`, payload || {});
+    return response.data;
+  },
+  changeDepartment: async (
+    userId: number,
+    payload: { department: string; reason: string }
+  ): Promise<{ status: string; message: string; data?: any }> => {
+    const response = await apiClient.post(`/api/admin/users/${userId}/change-department/`, payload);
     return response.data;
   },
   deleteStudent: async (studentId: number): Promise<{ status: string; message: string }> => {
@@ -1456,6 +1473,7 @@ export const adminStudentsApi = {
 
 export type AdminFacultyRow = {
   id: number;
+  user_id?: number;
   full_name: string;
   email: string;
   employee_id?: string;
@@ -1953,6 +1971,20 @@ export const adminFacultyApi = {
   },
   deleteFaculty: async (facultyId: number): Promise<{ status: string; message: string }> => {
     const response = await apiClient.delete<{ status: string; message: string }>(`/api/admin/faculty/${facultyId}`);
+    return response.data;
+  },
+  resetPassword: async (
+    facultyId: number,
+    payload?: { new_password?: string; reason?: string }
+  ): Promise<{ status: string; message: string; data?: { user_id: number; email: string; new_password: string } }> => {
+    const response = await apiClient.post(`/api/admin/faculty/${facultyId}/reset-password/`, payload || {});
+    return response.data;
+  },
+  changeDepartment: async (
+    userId: number,
+    payload: { department: string; reason: string }
+  ): Promise<{ status: string; message: string; data?: any }> => {
+    const response = await apiClient.post(`/api/admin/users/${userId}/change-department/`, payload);
     return response.data;
   },
 };
