@@ -25,12 +25,54 @@ from rest_framework.views import APIView
 
 from admins.models import AdminDepartment, AdminInstitution, AdminProfile, DepartmentChangeAuditLog
 from api.models import Exam, PaperGenerationJob, Question, StudentAttempt
+from api.utils.departments import DEFAULT_DEPARTMENT_NAMES
 from faculty.models import FacultyProfile
 from students.models import StudentProfile
 from superadmin.alerts import send_super_admin_security_alert
 from superadmin.audit import get_client_ip, log_super_admin_action
 from superadmin.authentication import SuperAdminAuthentication, generate_super_admin_token
-from superadmin.models import SuperAdminAuditLog, SuperAdminProfile, SystemSetting
+from superadmin.backups import (
+    create_database_backup,
+    prune_backups,
+    restore_backup_on_live_database,
+    test_restore_backup,
+)
+from superadmin.announcements_service import create_and_dispatch_announcement
+from superadmin.bulk_import import get_bulk_import_template, validate_and_process_bulk_import
+from superadmin.impersonation import create_impersonation_session
+from superadmin.institute_service import (
+    calculate_institute_usage,
+    get_or_create_institute_policy,
+    validate_and_save_logo,
+)
+from superadmin.jobs_service import (
+    cancel_paper_generation_job,
+    detect_and_cleanup_stuck_jobs,
+    get_jobs_summary,
+    list_background_jobs,
+    retry_paper_generation_job,
+)
+from superadmin.analytics_service import get_cross_institute_analytics
+from superadmin.dpdp_service import (
+    dry_run_anonymize_user,
+    execute_anonymize_user,
+    export_user_data,
+    get_data_inventory,
+)
+from superadmin.exports_service import export_entities_to_csv
+from superadmin.logs_service import get_error_summary_grouped, get_system_logs
+from superadmin.models import (
+    DatabaseBackupRecord,
+    DataSubjectRequest,
+    InstitutePolicy,
+    MaintenanceWindow,
+    SuperAdminAuditLog,
+    SuperAdminProfile,
+    SystemAnnouncement,
+    SystemSetting,
+)
+from superadmin.monitoring import check_system_health, send_deduplicated_alert
+from superadmin.permissions_matrix import generate_permissions_matrix
 from superadmin.permissions import IsEnrolledSuperAdmin, IsSuperAdmin, RequiresReauth
 from superadmin.totp import (
     generate_recovery_codes,
@@ -149,9 +191,12 @@ class SuperAdminLoginAPIView(APIView):
 
         totp_success = False
         recovery_used = False
+        matched_step = None
 
         if totp_code:
-            totp_success = verify_totp(profile.totp_secret, totp_code, window=1)
+            totp_success, matched_step = verify_totp(
+                profile.totp_secret, totp_code, window=1, last_used_step=profile.last_totp_step
+            )
 
         if not totp_success and recovery_code:
             valid_rec, updated_hashes = verify_and_consume_recovery_code(
@@ -190,19 +235,28 @@ class SuperAdminLoginAPIView(APIView):
                 description=f'Failed 2FA verification attempt from {client_ip}',
             )
             return Response(
-                {'status': 'error', 'message': 'Invalid two-factor authentication code.'},
+                {'status': 'error', 'message': 'Invalid two-factor authentication code or code already used.'},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
         # Successful Login
+        session_id = secrets.token_hex(16)
         profile.failed_login_attempts = 0
         profile.locked_until = None
         profile.last_login_at = timezone.now()
         profile.last_login_ip = client_ip
         profile.last_reauth_at = timezone.now()  # Fresh login counts as re-authenticated
-        profile.save(update_fields=['failed_login_attempts', 'locked_until', 'last_login_at', 'last_login_ip', 'last_reauth_at'])
+        profile.last_activity_at = timezone.now()
+        profile.active_session_id = session_id
+        if matched_step:
+            profile.last_totp_step = matched_step
 
-        token = generate_super_admin_token(user)
+        profile.save(update_fields=[
+            'failed_login_attempts', 'locked_until', 'last_login_at', 'last_login_ip',
+            'last_reauth_at', 'last_activity_at', 'active_session_id', 'last_totp_step',
+        ])
+
+        token = generate_super_admin_token(user, session_id=session_id)
 
         log_super_admin_action(
             request,
@@ -269,7 +323,10 @@ class SuperAdmin2FAEnrollAPIView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        if not verify_totp(profile.totp_secret, code, window=1):
+        valid_totp, matched_step = verify_totp(
+            profile.totp_secret, code, window=1, last_used_step=profile.last_totp_step
+        )
+        if not valid_totp:
             return Response(
                 {'status': 'error', 'message': 'Verification code does not match. Check your authenticator app time.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -277,7 +334,10 @@ class SuperAdmin2FAEnrollAPIView(APIView):
 
         profile.is_totp_enrolled = True
         profile.last_reauth_at = timezone.now()
-        profile.save(update_fields=['is_totp_enrolled', 'last_reauth_at'])
+        profile.last_activity_at = timezone.now()
+        if matched_step:
+            profile.last_totp_step = matched_step
+        profile.save(update_fields=['is_totp_enrolled', 'last_reauth_at', 'last_activity_at', 'last_totp_step'])
 
         log_super_admin_action(
             request,
@@ -318,18 +378,24 @@ class SuperAdminReauthAPIView(APIView):
             )
             return Response({'status': 'error', 'message': 'Password verification failed.'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        if not verify_totp(profile.totp_secret, totp_code, window=1):
+        valid_totp, matched_step = verify_totp(
+            profile.totp_secret, totp_code, window=1, last_used_step=profile.last_totp_step
+        )
+        if not valid_totp:
             log_super_admin_action(
                 request,
                 action='reauth_failed_totp',
                 target_entity='SuperAdminProfile',
                 target_id=str(profile.id),
-                description='Re-authentication rejected: invalid TOTP.',
+                description='Re-authentication rejected: invalid TOTP or code already used.',
             )
-            return Response({'status': 'error', 'message': '2FA verification code invalid.'}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'status': 'error', 'message': '2FA verification code invalid or already used.'}, status=status.HTTP_401_UNAUTHORIZED)
 
         profile.last_reauth_at = timezone.now()
-        profile.save(update_fields=['last_reauth_at'])
+        profile.last_activity_at = timezone.now()
+        if matched_step:
+            profile.last_totp_step = matched_step
+        profile.save(update_fields=['last_reauth_at', 'last_activity_at', 'last_totp_step'])
 
         log_super_admin_action(
             request,
@@ -343,11 +409,15 @@ class SuperAdminReauthAPIView(APIView):
 
 
 class SuperAdminLogoutAPIView(APIView):
-    """Log out super admin and invalidate session cookie."""
+    """Log out super admin and invalidate session cookie and active JWT session."""
     authentication_classes = [SuperAdminAuthentication]
     permission_classes = [IsSuperAdmin]
 
     def post(self, request):
+        profile = getattr(request.user, 'super_admin_profile', None)
+        if profile:
+            profile.active_session_id = ''
+            profile.save(update_fields=['active_session_id'])
         log_super_admin_action(request, action='super_admin_logout', description='Super admin logged out.')
         res = Response({'status': 'success', 'message': 'Successfully logged out.'}, status=status.HTTP_200_OK)
         for cookie_name in ['__Host-examai_sa_session', 'examai_sa_session']:
@@ -567,6 +637,10 @@ class SuperAdminInstituteListCreateAPIView(APIView):
         )
 
     def post(self, request):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
         name = str(request.data.get('institution_name', '')).strip()
         admin_email = str(request.data.get('admin_email', '')).strip().lower()
         admin_first_name = str(request.data.get('admin_first_name', '')).strip()
@@ -599,7 +673,6 @@ class SuperAdminInstituteListCreateAPIView(APIView):
             )
 
             # Auto-seed standard departments
-            from api.constants import DEFAULT_DEPARTMENT_NAMES
             AdminDepartment.objects.bulk_create([
                 AdminDepartment(institution=inst, department_name=dname)
                 for dname in DEFAULT_DEPARTMENT_NAMES
@@ -1188,22 +1261,30 @@ class SuperAdminAuditLogAPIView(APIView):
                 | Q(ip_address__icontains=search)
             )
 
-        # Export as CSV
+        # Export as CSV with formula injection defense
         if export:
             response = HttpResponse(content_type='text/csv')
             response['Content-Disposition'] = f'attachment; filename="superadmin_audit_{int(time.time())}.csv"'
             writer = csv.writer(response)
-            writer.writerow(['ID', 'Timestamp (UTC)', 'Actor', 'Action', 'Target Entity', 'Target ID', 'IP Address', 'Description'])
+            writer.writerow(['ID', 'Timestamp (UTC)', 'Actor', 'Action', 'Target Entity', 'Target ID', 'IP Address', 'Prev Hash', 'Entry Hash', 'Description'])
             for log in qs[:5000]:
+                def sanitize_cell(v):
+                    s = str(v)
+                    if s.startswith(('=', '+', '-', '@', '\t', '\r')):
+                        return f"'{s}"
+                    return s
+
                 writer.writerow([
                     log.id,
                     log.created_at.isoformat(),
-                    log.actor_username,
-                    log.action,
-                    log.target_entity,
-                    log.target_id,
-                    log.ip_address,
-                    log.description,
+                    sanitize_cell(log.actor_username),
+                    sanitize_cell(log.action),
+                    sanitize_cell(log.target_entity),
+                    sanitize_cell(log.target_id),
+                    sanitize_cell(log.ip_address),
+                    log.prev_hash,
+                    log.entry_hash,
+                    sanitize_cell(log.description),
                 ])
             return response
 
@@ -1217,7 +1298,7 @@ class SuperAdminAuditLogAPIView(APIView):
 
         items = list(page_obj.object_list.values(
             'id', 'actor_username', 'action', 'target_entity', 'target_id',
-            'description', 'before_state', 'after_state', 'ip_address', 'created_at'
+            'description', 'before_state', 'after_state', 'ip_address', 'prev_hash', 'entry_hash', 'created_at'
         ))
 
         return Response(
@@ -1244,81 +1325,360 @@ class SuperAdminAuditLogAPIView(APIView):
 class SuperAdminBackupAPIView(APIView):
     """
     List backups and trigger fresh database backups outside the workspace.
+    Includes SHA-256 checksums, retention policies, and scratch restore status.
     """
     authentication_classes = [SuperAdminAuthentication]
     permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
 
-    def get_backup_dir(self):
-        backup_dir = os.path.abspath(os.path.join(settings.BASE_DIR, '..', 'backups'))
-        os.makedirs(backup_dir, exist_ok=True)
-        return backup_dir
-
     def get(self, request):
-        backup_dir = self.get_backup_dir()
-        files = []
-        for fname in os.listdir(backup_dir):
-            if fname.endswith('.sql'):
-                fpath = os.path.join(backup_dir, fname)
-                st = os.stat(fpath)
-                files.append({
-                    'filename': fname,
-                    'size_mb': round(st.st_size / (1024 * 1024), 2),
-                    'created_at': datetime.datetime.fromtimestamp(st.st_ctime).isoformat(),
+        records = DatabaseBackupRecord.objects.all().order_by('-created_at')
+        backups_data = []
+
+        if records.exists():
+            for rec in records:
+                backups_data.append({
+                    'id': rec.id,
+                    'filename': rec.filename,
+                    'file_path': rec.file_path,
+                    'size_mb': round(rec.file_size_bytes / (1024 * 1024), 2),
+                    'checksum_sha256': rec.checksum_sha256,
+                    'backup_type': rec.backup_type,
+                    'status': rec.status,
+                    'restore_test_status': rec.restore_test_status,
+                    'restore_test_details': rec.restore_test_details,
+                    'restore_test_at': rec.restore_test_at.isoformat() if rec.restore_test_at else None,
+                    'created_by': rec.created_by,
+                    'created_at': rec.created_at.isoformat(),
                 })
-        files.sort(key=lambda x: x['created_at'], reverse=True)
-        return Response({'status': 'success', 'backups': files}, status=status.HTTP_200_OK)
+        else:
+            # Fallback to disk scan if no DB records yet
+            backup_dir = os.path.abspath(os.path.join(settings.BASE_DIR, '..', 'backups'))
+            if os.path.exists(backup_dir):
+                for fname in os.listdir(backup_dir):
+                    if fname.endswith('.sql'):
+                        fpath = os.path.join(backup_dir, fname)
+                        st = os.stat(fpath)
+                        backups_data.append({
+                            'id': None,
+                            'filename': fname,
+                            'file_path': fpath,
+                            'size_mb': round(st.st_size / (1024 * 1024), 2),
+                            'checksum_sha256': '',
+                            'backup_type': 'manual',
+                            'status': 'completed',
+                            'restore_test_status': 'not_tested',
+                            'restore_test_details': '',
+                            'restore_test_at': None,
+                            'created_by': 'system',
+                            'created_at': datetime.datetime.fromtimestamp(st.st_ctime).isoformat(),
+                        })
+
+        return Response({'status': 'success', 'backups': backups_data}, status=status.HTTP_200_OK)
 
     def post(self, request):
         profile = request.user.super_admin_profile
         if not profile.is_reauth_valid():
             raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
 
-        backup_dir = self.get_backup_dir()
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        dump_filename = f'examai_backup_{timestamp}.sql'
-        dump_path = os.path.join(backup_dir, dump_filename)
-
-        mysqldump_bin = r'C:\Program Files\MySQL\MySQL Server 8.4\bin\mysqldump.exe'
-        if not os.path.exists(mysqldump_bin):
-            mysqldump_bin = 'mysqldump'
-
-        db = settings.DATABASES['default']
-        env = os.environ.copy()
-        env['MYSQL_PWD'] = db['PASSWORD']
-        cmd = [
-            mysqldump_bin,
-            '-h', db['HOST'],
-            '-P', str(db['PORT']),
-            '-u', db['USER'],
-            db['NAME'],
-        ]
+        backup_type = request.data.get('type', 'manual')
+        if backup_type not in ['manual', 'daily', 'weekly']:
+            backup_type = 'manual'
 
         try:
-            with open(dump_path, 'wb') as outfile:
-                res = subprocess.run(cmd, env=env, stdout=outfile, stderr=subprocess.PIPE, timeout=60)
-            if res.returncode != 0:
-                raise Exception(res.stderr.decode('utf-8', errors='ignore'))
+            record = create_database_backup(backup_type=backup_type, created_by=request.user.username)
         except Exception as exc:
             logger.error('Database backup failed: %s', exc)
-            return Response({'status': 'error', 'message': f'Backup failed: {str(exc)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'status': 'error', 'message': f'Backup failed: {str(exc)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        size_mb = round(os.path.getsize(dump_path) / (1024 * 1024), 2)
+        size_mb = round(record.file_size_bytes / (1024 * 1024), 2)
         log_super_admin_action(
             request,
             action='database_backup_created',
-            target_entity='Backup',
-            target_id=dump_filename,
-            description=f'Created database backup "{dump_filename}" ({size_mb} MB).',
-            after_state={'filename': dump_filename, 'size_mb': size_mb},
+            target_entity='DatabaseBackupRecord',
+            target_id=str(record.id),
+            description=f'Created database backup "{record.filename}" ({size_mb} MB) [SHA256: {record.checksum_sha256[:16]}...].',
+            after_state={'filename': record.filename, 'size_mb': size_mb, 'checksum': record.checksum_sha256},
         )
 
         return Response(
             {
                 'status': 'success',
-                'message': f'Backup "{dump_filename}" created successfully.',
-                'backup': {'filename': dump_filename, 'size_mb': size_mb},
+                'message': f'Backup "{record.filename}" created successfully.',
+                'backup': {
+                    'id': record.id,
+                    'filename': record.filename,
+                    'size_mb': size_mb,
+                    'checksum_sha256': record.checksum_sha256,
+                    'backup_type': record.backup_type,
+                    'created_at': record.created_at.isoformat(),
+                },
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class SuperAdminBackupTestRestoreAPIView(APIView):
+    """
+    Test restoring a database backup into a temporary scratch schema.
+    Verifies SQL file integrity, syntax, table structure, and reports result.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, backup_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        result = test_restore_backup(backup_id)
+
+        log_super_admin_action(
+            request,
+            action='backup_restore_test',
+            target_entity='DatabaseBackupRecord',
+            target_id=str(backup_id),
+            description=f'Tested restore for backup #{backup_id}: {result.get("message")}',
+            after_state=result,
+        )
+
+        resp_status = status.HTTP_200_OK if result.get('success') else status.HTTP_400_BAD_REQUEST
+        return Response(result, status=resp_status)
+
+
+class SuperAdminBackupLiveRestoreAPIView(APIView):
+    """
+    Restore a backup onto the active primary database.
+    Requires re-authentication, dry-run preview, and active Maintenance Mode.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, backup_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        dry_run = request.data.get('dry_run', True)
+        confirm_maintenance = request.data.get('confirm_maintenance', False)
+
+        result = restore_backup_on_live_database(
+            backup_id=backup_id,
+            dry_run=dry_run,
+            confirm_maintenance=confirm_maintenance,
+        )
+
+        if not dry_run and result.get('success'):
+            log_super_admin_action(
+                request,
+                action='database_live_restore_executed',
+                target_entity='DatabaseBackupRecord',
+                target_id=str(backup_id),
+                description=f'LIVE database restore executed from backup #{backup_id}.',
+                after_state=result,
+            )
+
+        resp_status = status.HTTP_200_OK if result.get('success') else status.HTTP_400_BAD_REQUEST
+        return Response(result, status=resp_status)
+
+
+class SuperAdminMonitoringHealthAPIView(APIView):
+    """
+    Retrieve aggregated platform health status:
+    Database latency, Ollama engine status/models, disk space, background jobs, and latest backup status.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        health_data = check_system_health()
+        return Response({'status': 'success', 'health': health_data}, status=status.HTTP_200_OK)
+
+
+class SuperAdminLogsAPIView(APIView):
+    """
+    Read-only system log viewer.
+    Filters by level, search keyword, and limits results.
+    Strictly masks passwords, Bearer tokens, recovery codes, and secret slugs.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        level = request.GET.get('level')
+        query = request.GET.get('q')
+        limit = min(int(request.GET.get('limit', 150)), 500)
+
+        logs = get_system_logs(level=level, query=query, limit=limit)
+        return Response({'status': 'success', 'count': len(logs), 'logs': logs}, status=status.HTTP_200_OK)
+
+
+class SuperAdminErrorSummaryAPIView(APIView):
+    """
+    Error summary grouped by cause and exception pattern.
+    Reports occurrence count, first seen, last seen, and representative sample.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        days = min(int(request.GET.get('days', 7)), 30)
+        summary = get_error_summary_grouped(days=days)
+        return Response({'status': 'success', 'summary': summary}, status=status.HTTP_200_OK)
+
+
+class SuperAdminJobCenterAPIView(APIView):
+    """
+    Central background job controller.
+    Monitors generation jobs, durations, failure rates, and stuck tasks.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        status_filter = request.GET.get('status')
+        limit = min(int(request.GET.get('limit', 50)), 100)
+
+        summary = get_jobs_summary()
+        jobs = list_background_jobs(status_filter=status_filter, limit=limit)
+
+        return Response({'status': 'success', 'summary': summary, 'jobs': jobs}, status=status.HTTP_200_OK)
+
+
+class SuperAdminJobActionAPIView(APIView):
+    """
+    Perform administrative actions on background jobs (retry, cancel).
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, job_id, action):
+        if action == 'retry':
+            res = retry_paper_generation_job(job_id)
+        elif action == 'cancel':
+            res = cancel_paper_generation_job(job_id)
+        else:
+            return Response({'status': 'error', 'message': f'Unknown action "{action}".'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if res.get('success'):
+            log_super_admin_action(
+                request,
+                action=f'job_{action}',
+                target_entity='PaperGenerationJob',
+                target_id=str(job_id),
+                description=f'Super admin executed {action} on job #{job_id}.',
+            )
+            return Response(res, status=status.HTTP_200_OK)
+        return Response(res, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SuperAdminStuckJobDetectorAPIView(APIView):
+    """
+    Scan for stuck jobs (>15 minutes in pending/running) with optional auto-cleanup.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request):
+        timeout = int(request.data.get('timeout', 15))
+        auto_fail = bool(request.data.get('auto_fail', False))
+
+        stuck_ids = detect_and_cleanup_stuck_jobs(threshold_minutes=timeout, auto_fail=auto_fail)
+
+        if auto_fail and stuck_ids:
+            log_super_admin_action(
+                request,
+                action='stuck_jobs_cleaned',
+                target_entity='PaperGenerationJob',
+                target_id=','.join(map(str, stuck_ids)),
+                description=f'Cleaned up {len(stuck_ids)} stuck jobs: {stuck_ids}',
+            )
+
+        return Response(
+            {
+                'status': 'success',
+                'stuck_count': len(stuck_ids),
+                'stuck_ids': stuck_ids,
+                'cleaned': auto_fail,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SuperAdminMaintenanceWindowAPIView(APIView):
+    """
+    Schedule platform-wide maintenance windows with super-admin bypass.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        is_active, msg = MaintenanceWindow.is_currently_active()
+        record = MaintenanceWindow.objects.first()
+        return Response(
+            {
+                'status': 'success',
+                'is_currently_active': is_active,
+                'active_message': msg,
+                'configuration': {
+                    'is_enabled': record.is_enabled if record else False,
+                    'start_time': record.start_time.isoformat() if (record and record.start_time) else None,
+                    'end_time': record.end_time.isoformat() if (record and record.end_time) else None,
+                    'custom_message': record.custom_message if record else 'System is temporarily undergoing scheduled maintenance.',
+                    'bypass_superadmin': record.bypass_superadmin if record else True,
+                    'updated_at': record.updated_at.isoformat() if record else None,
+                    'updated_by': record.updated_by if record else '',
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        is_enabled = bool(request.data.get('is_enabled', False))
+        custom_message = request.data.get('custom_message', '').strip() or 'System is temporarily undergoing scheduled maintenance. Please check back shortly.'
+        start_time = request.data.get('start_time')
+        end_time = request.data.get('end_time')
+        bypass_superadmin = bool(request.data.get('bypass_superadmin', True))
+
+        record = MaintenanceWindow.objects.first()
+        if not record:
+            record = MaintenanceWindow()
+
+        record.is_enabled = is_enabled
+        record.custom_message = custom_message
+        record.start_time = start_time if start_time else None
+        record.end_time = end_time if end_time else None
+        record.bypass_superadmin = bypass_superadmin
+        record.updated_by = request.user.username
+        record.save()
+
+        log_super_admin_action(
+            request,
+            action='maintenance_window_configured',
+            target_entity='MaintenanceWindow',
+            target_id=str(record.id),
+            description=f'Configured maintenance mode: enabled={is_enabled}, bypass={bypass_superadmin}.',
+            after_state={
+                'is_enabled': is_enabled,
+                'start_time': str(start_time),
+                'end_time': str(end_time),
+                'custom_message': custom_message,
+            },
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Maintenance window updated successfully.',
+                'is_currently_active': MaintenanceWindow.is_currently_active()[0],
+            },
+            status=status.HTTP_200_OK,
         )
 
 
@@ -1376,3 +1736,449 @@ class SuperAdminCleanupReportAPIView(APIView):
         )
 
         return Response({'status': 'success', 'message': f'Cleaned up {deleted_count} record(s).'}, status=status.HTTP_200_OK)
+
+
+# ==============================================================================
+# 8. INSTITUTE CONTROL, BULK ONBOARDING & IMPERSONATION
+# ==============================================================================
+
+class SuperAdminInstitutePolicyAPIView(APIView):
+    """
+    Manage institute-specific policies, quotas, operational overrides, and feature flags.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request, institute_id):
+        inst = AdminInstitution.objects.filter(pk=institute_id).first()
+        if not inst:
+            raise Http404()
+
+        usage = calculate_institute_usage(inst)
+        return Response({'status': 'success', 'usage_and_policy': usage}, status=status.HTTP_200_OK)
+
+    def post(self, request, institute_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        inst = AdminInstitution.objects.filter(pk=institute_id).first()
+        if not inst:
+            raise Http404()
+
+        policy = get_or_create_institute_policy(inst)
+        data = request.data
+
+        if 'timezone' in data:
+            policy.timezone_name = str(data['timezone']).strip()
+        if 'academic_year' in data:
+            policy.academic_year = str(data['academic_year']).strip()
+        if 'max_students' in data:
+            policy.max_students = int(data['max_students'])
+        if 'max_faculty' in data:
+            policy.max_faculty = int(data['max_faculty'])
+        if 'max_ai_generations_per_month' in data:
+            policy.max_ai_generations_per_month = int(data['max_ai_generations_per_month'])
+        if 'max_storage_mb' in data:
+            policy.max_storage_mb = int(data['max_storage_mb'])
+        if 'exam_window_buffer_minutes' in data:
+            policy.exam_window_buffer_minutes = int(data['exam_window_buffer_minutes'])
+        if 'violation_limit_override' in data:
+            policy.violation_limit_override = int(data['violation_limit_override'])
+        if 'faculty_can_publish_without_review' in data:
+            policy.faculty_can_publish_without_review = bool(data['faculty_can_publish_without_review'])
+        if 'allowed_departments' in data and isinstance(data['allowed_departments'], list):
+            policy.allowed_departments = [str(d).strip() for d in data['allowed_departments'] if str(d).strip()]
+        if 'feature_flags' in data and isinstance(data['feature_flags'], dict):
+            policy.feature_flags = data['feature_flags']
+
+        policy.updated_by = request.user.username
+        policy.save()
+
+        log_super_admin_action(
+            request,
+            action='institute_policy_updated',
+            target_entity='InstitutePolicy',
+            target_id=str(policy.id),
+            description=f'Updated policy & quotas for institute "{inst.institution_name}".',
+            after_state=data,
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Institute policy updated successfully.',
+                'usage_and_policy': calculate_institute_usage(inst),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SuperAdminInstituteLogoAPIView(APIView):
+    """
+    Safely upload and store institution logo with format/size validation.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, institute_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        inst = AdminInstitution.objects.filter(pk=institute_id).first()
+        if not inst:
+            raise Http404()
+
+        logo_file = request.FILES.get('logo')
+        if not logo_file:
+            return Response({'status': 'error', 'message': 'No image file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rel_url = validate_and_save_logo(inst, logo_file)
+        except ValueError as err:
+            return Response({'status': 'error', 'message': str(err)}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_super_admin_action(
+            request,
+            action='institute_logo_updated',
+            target_entity='AdminInstitution',
+            target_id=str(inst.id),
+            description=f'Uploaded new logo for "{inst.institution_name}".',
+        )
+
+        return Response(
+            {'status': 'success', 'message': 'Logo uploaded successfully.', 'logo_url': rel_url},
+            status=status.HTTP_200_OK,
+        )
+
+
+class SuperAdminBulkImportTemplateAPIView(APIView):
+    """
+    Download CSV templates for student or faculty bulk onboarding.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        role = request.GET.get('role', 'student').lower()
+        if role not in ['student', 'faculty']:
+            role = 'student'
+
+        csv_content = get_bulk_import_template(role=role)
+        resp = HttpResponse(csv_content, content_type='text/csv')
+        resp['Content-Disposition'] = f'attachment; filename="bulk_{role}_template.csv"'
+        return resp
+
+
+class SuperAdminBulkImportAPIView(APIView):
+    """
+    Atomic bulk onboarding of students/faculty with dry-run preview and secure one-time credentials.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, institute_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        inst = AdminInstitution.objects.filter(pk=institute_id).first()
+        if not inst:
+            raise Http404()
+
+        role = str(request.data.get('role', 'student')).lower()
+        if role not in ['student', 'faculty']:
+            role = 'student'
+
+        dry_run = str(request.data.get('dry_run', 'true')).lower() == 'true'
+
+        content = ''
+        if 'file' in request.FILES:
+            content = request.FILES['file'].read().decode('utf-8', errors='ignore')
+        elif 'content' in request.data:
+            content = str(request.data['content'])
+
+        if not content.strip():
+            return Response({'status': 'error', 'message': 'Empty file or content received.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        summary = validate_and_process_bulk_import(
+            institution=inst,
+            file_content=content,
+            role=role,
+            dry_run=dry_run,
+        )
+
+        if not dry_run and summary.get('imported_count'):
+            log_super_admin_action(
+                request,
+                action=f'bulk_{role}_import_executed',
+                target_entity='AdminInstitution',
+                target_id=str(inst.id),
+                description=f'Bulk imported {summary["imported_count"]} {role}(s) into "{inst.institution_name}".',
+                after_state={'imported_count': summary['imported_count'], 'role': role},
+            )
+
+        resp_status = status.HTTP_200_OK if not summary.get('errors') else status.HTTP_400_BAD_REQUEST
+        return Response(summary, status=resp_status)
+
+
+class SuperAdminAnnouncementsAPIView(APIView):
+    """
+    Post targeted system announcements with XSS sanitization across institutes, departments, or roles.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        qs = SystemAnnouncement.objects.select_related('target_institute').order_by('-created_at')[:50]
+        items = []
+        for a in qs:
+            items.append({
+                'id': a.id,
+                'title': a.title,
+                'message': a.message,
+                'target_type': a.target_type,
+                'target_institute_name': a.target_institute.institution_name if a.target_institute else 'All',
+                'target_department': a.target_department or 'All',
+                'target_role': a.target_role or 'All',
+                'is_active': a.is_active,
+                'created_at': a.created_at.isoformat(),
+            })
+        return Response({'status': 'success', 'announcements': items}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        title = str(request.data.get('title', '')).strip()
+        message = str(request.data.get('message', '')).strip()
+        if not title or not message:
+            return Response({'status': 'error', 'message': 'Title and message are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_type = request.data.get('target_type', 'all')
+        target_institute_id = request.data.get('target_institute_id')
+        target_department = str(request.data.get('target_department', '')).strip()
+        target_role = str(request.data.get('target_role', '')).strip()
+
+        announcement = create_and_dispatch_announcement(
+            title=title,
+            message=message,
+            target_type=target_type,
+            target_institute_id=target_institute_id,
+            target_department=target_department,
+            target_role=target_role,
+            created_by=request.user.username,
+        )
+
+        log_super_admin_action(
+            request,
+            action='announcement_published',
+            target_entity='SystemAnnouncement',
+            target_id=str(announcement.id),
+            description=f'Published announcement "{announcement.title}" ({target_type}).',
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'Announcement published successfully.',
+                'announcement_id': announcement.id,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class SuperAdminPermissionsMatrixAPIView(APIView):
+    """
+    Introspect real permission classes and return live capabilities matrix.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        matrix_data = generate_permissions_matrix()
+        return Response({'status': 'success', 'permissions_matrix': matrix_data}, status=status.HTTP_200_OK)
+
+
+class SuperAdminImpersonateAPIView(APIView):
+    """
+    Time-limited (15 minutes), audited impersonation of any user for operational support.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, user_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        reason = str(request.data.get('reason', '')).strip()
+        if not reason or len(reason) < 5:
+            return Response(
+                {'status': 'error', 'message': 'A valid operational reason (at least 5 characters) is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        client_ip = get_client_ip(request)
+        try:
+            impersonation = create_impersonation_session(
+                super_admin_user=request.user,
+                target_user_id=user_id,
+                reason=reason,
+                client_ip=client_ip,
+            )
+        except Exception as exc:
+            return Response({'status': 'error', 'message': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_super_admin_action(
+            request,
+            action='user_impersonated',
+            target_entity='User',
+            target_id=str(user_id),
+            description=f'Impersonated user #{user_id} ({impersonation["target_user"]["username"]}). Reason: {reason}',
+            after_state={'reason': reason, 'expires_in_minutes': 15},
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': f'Impersonation session established for {impersonation["target_user"]["username"]}.',
+                'impersonation': impersonation,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ==============================================================================
+# 9. REPORTS, ANALYTICS & DATA PRIVACY (DPDP)
+# ==============================================================================
+
+class SuperAdminCrossInstituteAnalyticsAPIView(APIView):
+    """
+    Platform-wide aggregate analytics across all tenant institutions.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        force_refresh = str(request.GET.get('refresh', 'false')).lower() == 'true'
+        analytics = get_cross_institute_analytics(force_refresh=force_refresh)
+        return Response({'status': 'success', 'analytics': analytics}, status=status.HTTP_200_OK)
+
+
+class SuperAdminExportsAPIView(APIView):
+    """
+    Download sanitized CSV reports for users, exams, attempts, or audit logs.
+    Guards against Formula Injection (CWE-1236) and requires recent step-up re-authentication.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        entity = request.GET.get('entity', 'users').lower()
+        inst_id = request.GET.get('institution_id')
+        filters = {'institution_id': int(inst_id)} if inst_id and inst_id.isdigit() else {}
+
+        try:
+            csv_data, filename = export_entities_to_csv(entity_type=entity, filters=filters)
+        except ValueError as err:
+            return Response({'status': 'error', 'message': str(err)}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_super_admin_action(
+            request,
+            action=f'export_{entity}_downloaded',
+            target_entity=entity,
+            description=f'Exported {entity} CSV data with formula sanitization.',
+        )
+
+        resp = HttpResponse(csv_data, content_type='text/csv; charset=utf-8')
+        resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return resp
+
+
+class SuperAdminDPDPDataExportAPIView(APIView):
+    """
+    DPDP Right to Data Portability: export personal data for a specific user.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request, user_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        try:
+            data = export_user_data(user_id)
+        except ValueError as err:
+            return Response({'status': 'error', 'message': str(err)}, status=status.HTTP_404_NOT_FOUND)
+
+        log_super_admin_action(
+            request,
+            action='dpdp_user_data_exported',
+            target_entity='User',
+            target_id=str(user_id),
+            description=f'Exported DPDP personal data package for user #{user_id}.',
+        )
+
+        return Response({'status': 'success', 'data_package': data}, status=status.HTTP_200_OK)
+
+
+class SuperAdminDPDPAnonymizeAPIView(APIView):
+    """
+    DPDP Right to Erasure / Anonymization with regulatory academic record preservation.
+    POST with dry_run=true returns impact report.
+    POST with dry_run=false executes irreversible personal data scrubbing.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, user_id):
+        profile = request.user.super_admin_profile
+        if not profile.is_reauth_valid():
+            raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required.'})
+
+        dry_run = str(request.data.get('dry_run', 'true')).lower() == 'true'
+        reason = str(request.data.get('reason', '')).strip()
+
+        try:
+            if dry_run:
+                summary = dry_run_anonymize_user(user_id)
+                return Response({'status': 'success', 'dry_run_summary': summary}, status=status.HTTP_200_OK)
+            else:
+                if not reason or len(reason) < 5:
+                    return Response(
+                        {'status': 'error', 'message': 'A valid justification reason is required for permanent anonymization.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                result = execute_anonymize_user(user_id=user_id, executed_by=request.user.username, reason=reason)
+                log_super_admin_action(
+                    request,
+                    action='dpdp_user_anonymized',
+                    target_entity='User',
+                    target_id=str(user_id),
+                    description=f'Permanently anonymized personal data for user #{user_id}. Reason: {reason}',
+                )
+                return Response(result, status=status.HTTP_200_OK)
+        except ValueError as err:
+            return Response({'status': 'error', 'message': str(err)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SuperAdminDPDPDataInventoryAPIView(APIView):
+    """
+    Comprehensive personal data inventory mapping categories, storage entities, retention schedules, and legal bases.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        inventory = get_data_inventory()
+        return Response({'status': 'success', 'data_inventory': inventory}, status=status.HTTP_200_OK)
+
+

@@ -43,25 +43,31 @@ def get_totp_code(secret: str, time_step: int | None = None) -> str:
     return f'{code:06d}'
 
 
-def verify_totp(secret: str, code: str, window: int = 1) -> bool:
+def verify_totp(secret: str, code: str, window: int = 1, last_used_step: int | None = None) -> tuple[bool, int | None]:
     """
     Verify a 6-digit TOTP code against the secret within a drift window (+/- 30s).
     Uses constant-time comparison to prevent timing attacks.
+    Enforces RFC 6238 Section 5.2 replay protection: rejects if step <= last_used_step.
+    Returns:
+        (is_valid, matched_step)
     """
     if not secret or not code:
-        return False
+        return False, None
 
     code = str(code).strip()
     if len(code) != 6 or not code.isdigit():
-        return False
+        return False, None
 
     current_step = int(time.time() // 30)
     for offset in range(-window, window + 1):
-        candidate = get_totp_code(secret, current_step + offset)
+        step = current_step + offset
+        if last_used_step is not None and step <= last_used_step:
+            continue
+        candidate = get_totp_code(secret, step)
         if hmac.compare_digest(candidate, code):
-            return True
+            return True, step
 
-    return False
+    return False, None
 
 
 def get_totp_uri(secret: str, username: str, issuer: str = 'ExamAI') -> str:

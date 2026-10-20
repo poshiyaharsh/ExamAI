@@ -174,8 +174,8 @@ class ForgotPasswordAPIView(APIView):
         email = serializer.validated_data['email']
 
         user = User.objects.filter(username=email).first()
-        if not user:
-            # Generic response to prevent user enumeration
+        if not user or hasattr(user, 'super_admin_profile') or user.is_superuser:
+            # Generic response to prevent user enumeration; superadmin password reset via email is strictly blocked
             return Response(
                 {
                     'status': 'success',

@@ -8,9 +8,20 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from admins.models import AdminInstitution
-from api.models import Exam
+from api.models import Exam, PaperGenerationJob
 from superadmin.authentication import generate_super_admin_token
-from superadmin.models import SuperAdminAuditLog, SuperAdminProfile, SystemSetting
+from superadmin.backups import compute_file_sha256, prune_backups
+from superadmin.jobs_service import detect_and_cleanup_stuck_jobs, get_jobs_summary
+from superadmin.logs_service import mask_sensitive_data
+from superadmin.models import (
+    AlertNotificationRecord,
+    DatabaseBackupRecord,
+    MaintenanceWindow,
+    SuperAdminAuditLog,
+    SuperAdminProfile,
+    SystemSetting,
+)
+from superadmin.monitoring import check_system_health, send_deduplicated_alert
 from superadmin.totp import (
     generate_recovery_codes,
     generate_totp_secret,
@@ -42,15 +53,21 @@ class SuperAdminSecurityUnitTests(TestCase):
         valid_code = get_totp_code(self.secret, current_step)
 
         self.assertEqual(len(valid_code), 6)
-        self.assertTrue(verify_totp(self.secret, valid_code, window=1))
+        valid, step = verify_totp(self.secret, valid_code, window=1)
+        self.assertTrue(valid)
+        self.assertEqual(step, current_step)
+
+        # Rejection of replay with same or older step
+        replayed, _ = verify_totp(self.secret, valid_code, window=1, last_used_step=step)
+        self.assertFalse(replayed)
 
         # Rejection of invalid code
-        self.assertFalse(verify_totp(self.secret, '000000', window=1))
-        self.assertFalse(verify_totp(self.secret, 'invalid', window=1))
+        self.assertFalse(verify_totp(self.secret, '000000', window=1)[0])
+        self.assertFalse(verify_totp(self.secret, 'invalid', window=1)[0])
 
         # Rejection of expired code (5 minutes in past)
         expired_code = get_totp_code(self.secret, current_step - 10)
-        self.assertFalse(verify_totp(self.secret, expired_code, window=1))
+        self.assertFalse(verify_totp(self.secret, expired_code, window=1)[0])
 
     def test_recovery_codes_generation_and_single_use(self):
         """Test recovery codes generation, validation, and single-use consumption."""
@@ -147,7 +164,115 @@ class SuperAdminApiIntegrationTests(TestCase):
             is_totp_enrolled=True,
             recovery_codes_hash=self.hashed_codes,
         )
-        self.token = generate_super_admin_token(self.user)
+        self.session_id = 'test_session_id_123'
+        self.profile.active_session_id = self.session_id
+        self.profile.last_activity_at = timezone.now()
+        self.profile.save()
+        self.token = generate_super_admin_token(self.user, session_id=self.session_id)
+
+    def test_totp_replay_protection_enforced(self):
+        """Ensure a TOTP code cannot be replayed within the same time window."""
+        url = f'/{self.slug}/api/auth/login/'
+        current_step = int(time.time() // 30)
+        totp_code = get_totp_code(self.secret, current_step)
+
+        # 1st attempt with code succeeds
+        res1 = self.client.post(
+            url,
+            data={'username': 'harshposhiya', 'password': 'StrongPassword@2026!', 'totp_code': totp_code},
+            content_type='application/json',
+        )
+        self.assertEqual(res1.status_code, 200)
+
+        # 2nd attempt with exact same code within same window MUST be rejected (replay attack)
+        res2 = self.client.post(
+            url,
+            data={'username': 'harshposhiya', 'password': 'StrongPassword@2026!', 'totp_code': totp_code},
+            content_type='application/json',
+        )
+        self.assertEqual(res2.status_code, 401)
+        self.assertIn('already used', res2.json().get('message', ''))
+
+    def test_audit_log_cryptographic_hash_chain_and_tampering_detection(self):
+        """Test HMAC hash chaining and verify that manual tampering is detected."""
+        from superadmin.audit import log_super_admin_action, verify_audit_log_integrity
+
+        # Create two chained audit entries
+        entry1 = log_super_admin_action(None, action='event_1', description='First event')
+        entry2 = log_super_admin_action(None, action='event_2', description='Second event')
+
+        self.assertIsNotNone(entry1)
+        self.assertIsNotNone(entry2)
+        self.assertEqual(entry2.prev_hash, entry1.entry_hash)
+
+        # Whole chain verification passes
+        is_valid, corrupted_id = verify_audit_log_integrity()
+        self.assertTrue(is_valid)
+        self.assertIsNone(corrupted_id)
+
+        # Simulate direct DB tampering (bypassing model save)
+        SuperAdminAuditLog.objects.filter(id=entry1.id).update(description='Attacker modified this directly in SQL')
+        is_valid_after_tamper, corrupted_id_after_tamper = verify_audit_log_integrity()
+        self.assertFalse(is_valid_after_tamper)
+        self.assertEqual(corrupted_id_after_tamper, entry1.id)
+
+    def test_token_revocation_on_logout(self):
+        """Ensure that logging out invalidates the active session and revokes the JWT token."""
+        dashboard_url = f'/{self.slug}/api/dashboard/'
+        logout_url = f'/{self.slug}/api/auth/logout/'
+
+        # Valid before logout
+        res_before = self.client.get(dashboard_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_before.status_code, 200)
+
+        # Perform logout
+        res_logout = self.client.post(logout_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_logout.status_code, 200)
+
+        # Token must now be rejected
+        res_after = self.client.get(dashboard_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_after.status_code, 403)
+        self.assertIn('ended or been revoked', str(res_after.content))
+
+    def test_super_admin_blocked_from_public_forgot_password(self):
+        """Ensure public forgot-password API cannot initiate reset for super admin accounts."""
+        from api.models import PasswordResetOTP
+
+        res = self.client.post(
+            '/api/auth/forgot-password/',
+            data={'email': 'harshposhiya92@gmail.com'},
+            content_type='application/json',
+        )
+        self.assertEqual(res.status_code, 200)
+        # Verify no OTP was created for the super admin
+        self.assertFalse(PasswordResetOTP.objects.filter(user=self.user).exists())
+        self.assertNotIn('debug_otp', res.json())
+
+    def test_institute_creation_requires_reauth(self):
+        """Ensure POST /institutes/ enforces step-up re-authentication."""
+        url = f'/{self.slug}/api/institutes/'
+        payload = {
+            'institution_name': 'New Testing Institute',
+            'admin_email': 'test_admin_new@example.com',
+            'admin_first_name': 'Admin',
+            'admin_last_name': 'User',
+            'admin_password': 'SecureAdminPassword@2026!',
+            'city': 'Ahmedabad',
+            'state': 'Gujarat',
+        }
+
+        # Blocked without recent re-auth
+        self.profile.last_reauth_at = None
+        self.profile.save()
+        res_blocked = self.client.post(url, data=payload, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_blocked.status_code, 403)
+        self.assertIn('reauth_required', str(res_blocked.content))
+
+        # Allowed after re-auth
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+        res_ok = self.client.post(url, data=payload, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_ok.status_code, 201)
 
     def test_uniform_404_on_unauthenticated_or_invalid_probes(self):
         """Unauthenticated or unauthorized access to protected superadmin APIs returns 404."""
@@ -306,3 +431,523 @@ class SuperAdminApiIntegrationTests(TestCase):
         SystemSetting.set_setting('maintenance_mode', {'enabled': False})
         reg_res_restored = self.client.get('/api/departments/')
         self.assertEqual(reg_res_restored.status_code, 200)
+
+    def test_monitoring_health_endpoint(self):
+        """Test monitoring health API reports DB, Ollama, disk, and jobs status."""
+        url = f'/{self.slug}/api/monitoring/health/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['status'], 'success')
+        self.assertIn('database', data['health'])
+        self.assertIn('ollama', data['health'])
+        self.assertIn('disk', data['health'])
+        self.assertIn('jobs', data['health'])
+        self.assertIn('backup', data['health'])
+
+    def test_logs_secrets_masking(self):
+        """Test log viewer masks passwords, Bearer tokens, JWTs, and recovery codes."""
+        raw_log = 'User login failed with password="SecretPassword123!" using Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.fake token code=ABCD-1234'
+        masked = mask_sensitive_data(raw_log)
+        self.assertNotIn('SecretPassword123!', masked)
+        self.assertNotIn('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', masked)
+        self.assertIn('[MASKED_PASSWORD]', masked)
+        self.assertIn('[MASKED_TOKEN]', masked)
+        self.assertIn('[MASKED_CODE]', masked)
+
+        # API check
+        url = f'/{self.slug}/api/monitoring/logs/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('logs', res.json())
+
+        # Error summary API check
+        err_url = f'/{self.slug}/api/monitoring/error-summary/'
+        err_res = self.client.get(err_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(err_res.status_code, 200)
+        self.assertIn('summary', err_res.json())
+
+    def test_alert_deduplication(self):
+        """Test email alerts suppress duplicates within cooldown window and track sent count."""
+        key = 'disk_space_warning_test'
+        # 1st alert triggers send
+        sent1 = send_deduplicated_alert(
+            alert_key=key,
+            subject='Disk Space Warning',
+            message='Disk usage reached 85%',
+            severity='warning',
+            cooldown_minutes=60,
+        )
+        self.assertTrue(sent1)
+
+        # 2nd alert immediately after is throttled/suppressed
+        sent2 = send_deduplicated_alert(
+            alert_key=key,
+            subject='Disk Space Warning',
+            message='Disk usage reached 86%',
+            severity='warning',
+            cooldown_minutes=60,
+        )
+        self.assertFalse(sent2)
+
+        # Record counts two occurrences
+        rec = AlertNotificationRecord.objects.get(alert_key=key)
+        self.assertEqual(rec.sent_count, 2)
+
+    def test_jobs_center_stuck_job_detector_and_actions(self):
+        """Test job center detects stuck jobs (>15m) and enables retry and cancel actions."""
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='Jobs Test Institute',
+            institution_code='INST-2026-099',
+        )
+        old_time = timezone.now() - timedelta(minutes=25)
+        job = PaperGenerationJob.objects.create(
+            institution=admin_inst,
+            faculty=self.user,
+            department='Computer Science',
+            model='qwen2.5:3b',
+            status=PaperGenerationJob.Status.RUNNING,
+        )
+        # Manually backdate created_at to simulate stuck state
+        PaperGenerationJob.objects.filter(pk=job.id).update(created_at=old_time)
+
+        # List jobs: should be flagged as is_stuck
+        jobs_url = f'/{self.slug}/api/jobs/'
+        res_list = self.client.get(jobs_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_list.status_code, 200)
+        job_item = next(j for j in res_list.json()['jobs'] if j['id'] == job.id)
+        self.assertTrue(job_item['is_stuck'])
+
+        # Stuck detector auto-fail
+        detect_url = f'/{self.slug}/api/jobs/stuck-detector/'
+        res_detect = self.client.post(
+            detect_url,
+            data={'timeout': 15, 'auto_fail': True},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_detect.status_code, 200)
+        self.assertIn(job.id, res_detect.json()['stuck_ids'])
+        job.refresh_from_db()
+        self.assertEqual(job.status, PaperGenerationJob.Status.FAILED)
+
+        # Retry action
+        retry_url = f'/{self.slug}/api/jobs/{job.id}/retry/'
+        res_retry = self.client.post(retry_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_retry.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, PaperGenerationJob.Status.QUEUED)
+
+        # Cancel action
+        cancel_url = f'/{self.slug}/api/jobs/{job.id}/cancel/'
+        res_cancel = self.client.post(cancel_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_cancel.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, PaperGenerationJob.Status.CANCELLED)
+
+    def test_maintenance_window_configuration_and_reauth(self):
+        """Test configuring MaintenanceWindow via API enforces re-auth and activates correctly."""
+        url = f'/{self.slug}/api/operations/maintenance/'
+
+        # Blocked without recent re-auth
+        self.profile.last_reauth_at = None
+        self.profile.save()
+        res_blocked = self.client.post(
+            url,
+            data={'is_enabled': True, 'custom_message': 'Scheduled Maintenance v2'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_blocked.status_code, 403)
+
+        # Allowed after re-auth
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+        res_ok = self.client.post(
+            url,
+            data={'is_enabled': True, 'custom_message': 'Scheduled Maintenance v2'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_ok.status_code, 200)
+
+        # Verify active maintenance window returns 503 for non-superadmin
+        reg_res = self.client.get('/api/departments/')
+        self.assertEqual(reg_res.status_code, 503)
+        self.assertIn('Scheduled Maintenance v2', reg_res.json()['message'])
+
+        # Turn off maintenance
+        self.client.post(
+            url,
+            data={'is_enabled': False},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        reg_res_off = self.client.get('/api/departments/')
+        self.assertEqual(reg_res_off.status_code, 200)
+
+    def test_backup_retention_pruning(self):
+        """Test backup retention pruning deletes records and files exceeding thresholds."""
+        old_time = timezone.now() - timedelta(days=20)
+        old_rec = DatabaseBackupRecord.objects.create(
+            filename='examai_backup_old_test.sql',
+            file_path='e:/03 Study/Django/backups/examai_backup_old_test.sql',
+            file_size_bytes=1000,
+            backup_type='daily',
+            status='completed',
+        )
+        DatabaseBackupRecord.objects.filter(pk=old_rec.id).update(created_at=old_time)
+
+        fresh_rec = DatabaseBackupRecord.objects.create(
+            filename='examai_backup_fresh_test.sql',
+            file_path='e:/03 Study/Django/backups/examai_backup_fresh_test.sql',
+            file_size_bytes=1000,
+            backup_type='daily',
+            status='completed',
+        )
+
+        pruned = prune_backups(daily_retention_days=14)
+        self.assertGreaterEqual(pruned, 1)
+        self.assertFalse(DatabaseBackupRecord.objects.filter(pk=old_rec.id).exists())
+        self.assertTrue(DatabaseBackupRecord.objects.filter(pk=fresh_rec.id).exists())
+        fresh_rec.delete()
+
+    def test_institute_policy_and_quotas_update(self):
+        """Test configuring institute quotas, policy overrides, and feature flags."""
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='Policy Test Institute',
+            institution_code='INST-2026-088',
+        )
+        url = f'/{self.slug}/api/institutes/{admin_inst.id}/policy/'
+
+        # Get initial usage
+        res_get = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_get.status_code, 200)
+        self.assertIn('usage_and_policy', res_get.json())
+
+        # Update policy with re-auth
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+        payload = {
+            'max_students': 8000,
+            'max_faculty': 350,
+            'max_ai_generations_per_month': 1200,
+            'faculty_can_publish_without_review': False,
+            'feature_flags': {'camera_required': True, 'audio_monitoring': True},
+        }
+        res_post = self.client.post(url, data=payload, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_post.status_code, 200)
+        updated_data = res_post.json()['usage_and_policy']
+        self.assertEqual(updated_data['students']['quota'], 8000)
+        self.assertEqual(updated_data['faculty']['quota'], 350)
+        self.assertEqual(updated_data['policy']['faculty_can_publish_without_review'], False)
+
+    def test_bulk_import_template_and_dry_run_validation(self):
+        """Test bulk import template download and dry-run row-by-row error detection."""
+        # 1. Download template
+        tpl_url = f'/{self.slug}/api/institutes/bulk-import/template/?role=student'
+        res_tpl = self.client.get(tpl_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_tpl.status_code, 200)
+        self.assertIn('email,first_name,last_name,department,roll_number', str(res_tpl.content))
+
+        # 2. Dry-run with an invalid row (bad email and unauthorized department)
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='Bulk Test Institute',
+            institution_code='INST-2026-077',
+        )
+        from admins.models import AdminDepartment
+        AdminDepartment.objects.create(institution=admin_inst, department_name='Computer Science')
+
+        csv_content = (
+            "email,first_name,last_name,department,roll_number\n"
+            "valid.student@college.edu,Valid,Student,Computer Science,CS101\n"
+            "bad-email-format,Invalid,Student,NonExistentDept,CS102\n"
+        )
+
+        import_url = f'/{self.slug}/api/institutes/{admin_inst.id}/bulk-import/'
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        res_dry = self.client.post(
+            import_url,
+            data={'role': 'student', 'dry_run': 'true', 'content': csv_content},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_dry.status_code, 400)
+        summary = res_dry.json()
+        self.assertEqual(summary['error_count'], 1)
+        self.assertEqual(summary['valid_count'], 1)
+        # Verify no student was created during dry run
+        self.assertFalse(User.objects.filter(email='valid.student@college.edu').exists())
+
+    def test_bulk_import_atomic_execution(self):
+        """Test atomic bulk import creates users and student profiles with random credentials."""
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='Atomic Test Institute',
+            institution_code='INST-2026-066',
+        )
+        from admins.models import AdminDepartment
+        AdminDepartment.objects.create(institution=admin_inst, department_name='Information Technology')
+
+        csv_content = (
+            "email,first_name,last_name,department,roll_number\n"
+            "onboard1@college.edu,Onboard1,User,Information Technology,IT001\n"
+            "onboard2@college.edu,Onboard2,User,Information Technology,IT002\n"
+        )
+
+        import_url = f'/{self.slug}/api/institutes/{admin_inst.id}/bulk-import/'
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        res = self.client.post(
+            import_url,
+            data={'role': 'student', 'dry_run': 'false', 'content': csv_content},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data['imported_count'], 2)
+        self.assertEqual(len(data['credentials']), 2)
+
+        # Verify users exist in database with correct immutable department
+        from students.models import StudentProfile
+        p1 = StudentProfile.objects.filter(user__email='onboard1@college.edu').first()
+        self.assertIsNotNone(p1)
+        self.assertEqual(p1.department, 'Information Technology')
+
+    def test_announcements_creation_and_xss_sanitization(self):
+        """Test announcement creation escapes raw HTML tags to prevent XSS attacks."""
+        url = f'/{self.slug}/api/announcements/'
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        xss_title = '<script>alert("hack")</script>Urgent Server Maintenance'
+        xss_message = '<img src=x onerror=alert(1)>Scheduled downtime tonight.'
+
+        res = self.client.post(
+            url,
+            data={'title': xss_title, 'message': xss_message, 'target_type': 'all'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res.status_code, 201)
+
+        # Retrieve and verify sanitized
+        from superadmin.models import SystemAnnouncement
+        ann = SystemAnnouncement.objects.get(pk=res.json()['announcement_id'])
+        self.assertNotIn('<script>', ann.title)
+        self.assertIn('&lt;script&gt;', ann.title)
+        self.assertNotIn('<img', ann.message)
+
+    def test_permissions_matrix_generation(self):
+        """Test permissions matrix endpoint returns capabilities across all 4 system roles."""
+        url = f'/{self.slug}/api/permissions/matrix/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        matrix_data = res.json()['permissions_matrix']
+        self.assertIn('roles', matrix_data)
+        self.assertIn('matrix', matrix_data)
+        self.assertIn('detected_permission_classes', matrix_data)
+        self.assertGreater(len(matrix_data['matrix']), 5)
+
+    def test_impersonation_session_and_superadmin_block(self):
+        """Test time-limited impersonation token creation and ensure super admins cannot be impersonated."""
+        target_student = User.objects.create_user(
+            username='student_support_test',
+            email='support.student@college.edu',
+            password='SupportTestPassword123!',
+        )
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='Support Institute',
+            institution_code='INST-2026-055',
+        )
+        from students.models import StudentProfile
+        StudentProfile.objects.create(user=target_student, institution=admin_inst, department='Civil')
+
+        imp_url = f'/{self.slug}/api/users/{target_student.id}/impersonate/'
+
+        # Blocked without re-auth
+        self.profile.last_reauth_at = None
+        self.profile.save()
+        res_blocked = self.client.post(
+            imp_url,
+            data={'reason': 'Resolving proctoring camera issue'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_blocked.status_code, 403)
+
+        # Success with re-auth
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+        res_ok = self.client.post(
+            imp_url,
+            data={'reason': 'Resolving proctoring camera issue'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_ok.status_code, 200)
+        data = res_ok.json()
+        self.assertTrue(data['impersonation']['is_impersonated'])
+        self.assertEqual(data['impersonation']['target_user']['role'], 'student')
+        self.assertIn('access_token', data['impersonation'])
+
+        # Prohibit impersonation of Super Admin
+        res_sa_block = self.client.post(
+            f'/{self.slug}/api/users/{self.user.id}/impersonate/',
+            data={'reason': 'Illegal admin impersonation attempt'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_sa_block.status_code, 400)
+        self.assertIn('strictly prohibited', str(res_sa_block.content))
+
+    def test_cross_institute_analytics(self):
+        """Test platform-wide aggregate analytics returns summary metrics."""
+        url = f'/{self.slug}/api/analytics/cross-institute/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()['analytics']
+        self.assertIn('institutions', data)
+        self.assertIn('users', data)
+        self.assertIn('exams_and_results', data)
+        self.assertIn('ai_generation', data)
+        self.assertIn('growth_trend_30d', data)
+
+    def test_exports_csv_formula_injection_defense(self):
+        """Test CSV export escapes dangerous formula injection characters (=, +, -, @)."""
+        from superadmin.exports_service import sanitize_csv_cell
+        self.assertEqual(sanitize_csv_cell('=1+1'), "'=1+1")
+        self.assertEqual(sanitize_csv_cell('@SUM(A1:A10)'), "'@SUM(A1:A10)")
+        self.assertEqual(sanitize_csv_cell('+cmd|"/C calc"'), "'+cmd|\"/C calc\"")
+        self.assertEqual(sanitize_csv_cell('-2+3'), "'-2+3")
+        self.assertEqual(sanitize_csv_cell('NormalText'), 'NormalText')
+
+        # API export with re-auth
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+        exp_url = f'/{self.slug}/api/data/exports/?entity=users'
+        res = self.client.get(exp_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res['Content-Type'], 'text/csv; charset=utf-8')
+        self.assertIn('attachment;', res['Content-Disposition'])
+
+    def test_dpdp_user_data_portability_export(self):
+        """Test DPDP data portability export generates machine-readable JSON package."""
+        target_student = User.objects.create_user(
+            username='dpdp_export_student',
+            email='dpdp.student@college.edu',
+            password='TestPassword123!',
+        )
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='DPDP Test Institute',
+            institution_code='INST-2026-044',
+        )
+        from students.models import StudentProfile
+        StudentProfile.objects.create(user=target_student, institution=admin_inst, department='IT')
+
+        url = f'/{self.slug}/api/privacy/dpdp/export/{target_student.id}/'
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        pkg = res.json()['data_package']
+        self.assertIn('personal_identity', pkg)
+        self.assertIn('academic_profile', pkg)
+        self.assertIn('disclaimer', pkg)
+        self.assertEqual(pkg['personal_identity']['username'], 'dpdp_export_student')
+
+    def test_dpdp_dry_run_and_execution_anonymization(self):
+        """Test DPDP anonymization dry-run impact report and atomic personal data scrubbing."""
+        target_student = User.objects.create_user(
+            username='anonymize_student_test',
+            email='to_anonymize@college.edu',
+            first_name='RealFirstName',
+            last_name='RealLastName',
+            password='TestPassword123!',
+        )
+        admin_inst = AdminInstitution.objects.create(
+            admin=self.user,
+            institution_name='Anonymize Institute',
+            institution_code='INST-2026-033',
+        )
+        from students.models import StudentProfile
+        StudentProfile.objects.create(user=target_student, institution=admin_inst, department='Civil')
+
+        # Create academic attempt
+        exam = Exam.objects.create(
+            institution=admin_inst,
+            department='Civil',
+            title='Hydraulics Exam',
+            created_by=self.user,
+            status=Exam.Status.PUBLISHED,
+            duration_minutes=60,
+            starts_at=timezone.now() - timedelta(hours=2),
+            ends_at=timezone.now() + timedelta(hours=2),
+        )
+        from api.models import StudentAttempt
+        attempt = StudentAttempt.objects.create(
+            exam=exam,
+            institution=admin_inst,
+            student=target_student,
+            status=StudentAttempt.Status.EVALUATED,
+            total_score=85.0,
+            max_score=100.0,
+        )
+
+        anon_url = f'/{self.slug}/api/privacy/dpdp/anonymize/{target_student.id}/'
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        # 1. Dry run: verifies preview without altering user
+        res_dry = self.client.post(
+            anon_url,
+            data={'dry_run': 'true'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_dry.status_code, 200)
+        self.assertIn('personal_data_to_scrub', res_dry.json()['dry_run_summary'])
+        target_student.refresh_from_db()
+        self.assertEqual(target_student.first_name, 'RealFirstName')
+
+        # 2. Execution: scrubs personal data, preserves academic attempt
+        res_exec = self.client.post(
+            anon_url,
+            data={'dry_run': 'false', 'reason': 'Data Principal requested erasure under DPDP Section 12'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_exec.status_code, 200)
+        target_student.refresh_from_db()
+        self.assertEqual(target_student.username, f'anon_user_{target_student.id}')
+        self.assertEqual(target_student.first_name, 'Anonymized')
+        self.assertEqual(target_student.last_name, 'User')
+        self.assertFalse(target_student.has_usable_password())
+
+        # Academic attempt remains intact in the database for institutional audits!
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.student_id, target_student.id)
+        self.assertEqual(attempt.total_score, 85.0)
+
+    def test_dpdp_data_inventory(self):
+        """Test DPDP data inventory endpoint returns complete personal data catalog."""
+        url = f'/{self.slug}/api/privacy/dpdp/inventory/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        inv = res.json()['data_inventory']
+        self.assertIn('inventory', inv)
+        self.assertIn('disclaimer', inv)
+        self.assertGreater(len(inv['inventory']), 3)
+
+
+

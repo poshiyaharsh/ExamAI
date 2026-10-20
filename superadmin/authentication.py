@@ -33,11 +33,13 @@ def generate_super_admin_token(user: User, session_id: str | None = None) -> str
 class SuperAdminAuthentication(authentication.BaseAuthentication):
     """
     Dedicated, isolated authentication backend for Super Admin portal.
-    Enforces IP allowlisting, token role verification, and uniform 404 response on probing.
+    Enforces IP allowlisting, active session validation, sliding idle timeout,
+    and uniform 404 response on probing.
     """
 
     def authenticate(self, request):
         token = None
+        is_cookie_auth = False
 
         # Check Authorization header
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
@@ -47,9 +49,17 @@ class SuperAdminAuthentication(authentication.BaseAuthentication):
         # Check Cookie fallback
         if not token:
             token = request.COOKIES.get('__Host-examai_sa_session') or request.COOKIES.get('examai_sa_session')
+            if token:
+                is_cookie_auth = True
 
         if not token:
             return None
+
+        # Cookie fallback CSRF defense: require custom header
+        if is_cookie_auth:
+            custom_header = request.META.get('HTTP_X_SUPER_ADMIN_REQUEST') or request.META.get('HTTP_X_CSRFTOKEN')
+            if not custom_header:
+                raise Http404()
 
         # Verify IP Allowlist if configured
         allowed_ips = getattr(settings, 'SUPER_ADMIN_ALLOWED_IPS', [])
@@ -77,6 +87,24 @@ class SuperAdminAuthentication(authentication.BaseAuthentication):
         profile = user.super_admin_profile
         if profile.is_locked():
             raise exceptions.AuthenticationFailed('Account is temporarily locked. Try again later.')
+
+        # Active Session ID check (server-side token revocation on logout)
+        token_session_id = payload.get('session_id')
+        if not profile.active_session_id or token_session_id != profile.active_session_id:
+            raise exceptions.AuthenticationFailed('Super Admin session has ended or been revoked. Please log in again.')
+
+        # Sliding idle timeout (15 minutes of inactivity)
+        idle_timeout = getattr(settings, 'SUPER_ADMIN_IDLE_TIMEOUT', 900)
+        if profile.last_activity_at:
+            idle_seconds = (timezone.now() - profile.last_activity_at).total_seconds()
+            if idle_seconds > idle_timeout:
+                profile.active_session_id = ''
+                profile.save(update_fields=['active_session_id'])
+                raise exceptions.AuthenticationFailed('Session expired due to inactivity. Please log in again.')
+
+        # Update last activity timestamp
+        profile.last_activity_at = timezone.now()
+        profile.save(update_fields=['last_activity_at'])
 
         request.is_super_admin = True
         request.super_admin_profile = profile

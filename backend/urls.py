@@ -16,10 +16,45 @@ Including another URLconf
 """
 from django.conf import settings
 from django.contrib import admin
-from django.urls import include, path
+from django.db import connection
+from django.http import HttpResponseNotFound, JsonResponse
+from django.urls import include, path, re_path
+from django.utils import timezone
 from rest_framework_simplejwt.views import TokenRefreshView
 
+
+def health_check_view(request):
+    """Public lightweight health check endpoint for load balancers and deployment smoke tests."""
+    db_ok = True
+    try:
+        connection.ensure_connection()
+    except Exception:
+        db_ok = False
+
+    resp_status = 200 if db_ok else 503
+    return JsonResponse(
+        {
+            'status': 'healthy' if db_ok else 'degraded',
+            'database': 'connected' if db_ok else 'disconnected',
+            'timestamp': timezone.now().isoformat(),
+        },
+        status=resp_status,
+    )
+
+
+def custom_404_view(request, exception=None):
+    """Uniform plain HTML 404 response across all non-existent and unauthenticated routes."""
+    return HttpResponseNotFound(
+        '<!DOCTYPE html><html lang="en"><head><title>Not Found</title></head>'
+        '<body><h1>Not Found</h1><p>The requested resource was not found on this server.</p></body></html>',
+        content_type='text/html; charset=utf-8',
+    )
+
+
+handler404 = 'backend.urls.custom_404_view'
+
 urlpatterns = [
+    path('health/', health_check_view, name='public-health-check'),
     path('api/', include('api.urls')),
     path('api/students/', include('students.urls')),
     path('api/student/', include('students.urls')),
@@ -29,11 +64,12 @@ urlpatterns = [
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
 ]
 
-# Cloaked Super Admin mount under secret path
+# Cloaked Super Admin mount using dynamic regex pattern to avoid leaking secret slug in debug dumps
 super_admin_path = getattr(settings, 'SUPER_ADMIN_PATH', '').strip()
 if super_admin_path:
     urlpatterns.extend([
-        path(f'{super_admin_path}/django-admin/', admin.site.urls),
-        path(f'{super_admin_path}/api/', include('superadmin.urls')),
+        re_path(r'^[a-f0-9]{32,64}/django-admin/', admin.site.urls),
+        re_path(r'^[a-f0-9]{32,64}/api/', include('superadmin.urls')),
     ])
+
 
