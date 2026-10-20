@@ -74,7 +74,7 @@ def normalize_to_utc(value: Any, client_timezone: str = DEFAULT_TIMEZONE) -> Opt
     return aware_dt.astimezone(zoneinfo.ZoneInfo('UTC'))
 
 
-def validate_exam_schedule(
+def get_exam_schedule_errors(
     starts_at: Optional[datetime],
     ends_at: Optional[datetime],
     duration_minutes: int,
@@ -82,15 +82,13 @@ def validate_exam_schedule(
     allow_past_grace_minutes: int = PUBLISH_PAST_GRACE_MINUTES,
     max_window_days: int = MAX_WINDOW_DAYS,
     now: Optional[datetime] = None,
-    raise_exception: bool = False,
-) -> Tuple[bool, Optional[str]]:
+) -> Dict[str, str]:
     """
-    Validates exam schedule boundaries.
-    If raise_exception=True, raises ValidationError with field-specific errors.
-    Otherwise returns (is_valid, error_message_or_None).
+    Evaluates exam schedule boundaries and returns a dictionary of field -> error message.
+    Empty dict means valid.
     """
     current_time = now or timezone.now()
-    errors = {}
+    errors: Dict[str, str] = {}
 
     if is_publishing:
         if not starts_at:
@@ -118,6 +116,34 @@ def validate_exam_schedule(
             errors['starts_at'] = (
                 f"Start time cannot be in the past (allowed grace: {allow_past_grace_minutes} minutes)."
             )
+
+    return errors
+
+
+def validate_exam_schedule(
+    starts_at: Optional[datetime],
+    ends_at: Optional[datetime],
+    duration_minutes: int,
+    is_publishing: bool = False,
+    allow_past_grace_minutes: int = PUBLISH_PAST_GRACE_MINUTES,
+    max_window_days: int = MAX_WINDOW_DAYS,
+    now: Optional[datetime] = None,
+    raise_exception: bool = False,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Validates exam schedule boundaries.
+    If raise_exception=True, raises ValidationError with field-specific errors.
+    Otherwise returns (is_valid, error_message_or_None).
+    """
+    errors = get_exam_schedule_errors(
+        starts_at=starts_at,
+        ends_at=ends_at,
+        duration_minutes=duration_minutes,
+        is_publishing=is_publishing,
+        allow_past_grace_minutes=allow_past_grace_minutes,
+        max_window_days=max_window_days,
+        now=now,
+    )
 
     if errors:
         if raise_exception:

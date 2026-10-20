@@ -873,15 +873,19 @@ class GeneratePaperView(APIView):
         display_tz = str(request.data.get('display_timezone') or 'Asia/Kolkata').strip()
 
         from api.utils.schedule import normalize_to_utc, validate_exam_schedule
-        norm_starts_at = normalize_to_utc(raw_starts_at, display_tz) if raw_starts_at else None
-        norm_ends_at = normalize_to_utc(raw_ends_at, display_tz) if raw_ends_at else None
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            norm_starts_at = normalize_to_utc(raw_starts_at, display_tz) if raw_starts_at else None
+            norm_ends_at = normalize_to_utc(raw_ends_at, display_tz) if raw_ends_at else None
+        except DjangoValidationError as val_err:
+            return Response({'detail': str(val_err), 'code': 'INVALID_SCHEDULE'}, status=status.HTTP_400_BAD_REQUEST)
 
         if norm_starts_at or norm_ends_at:
             is_valid, err_msg = validate_exam_schedule(
                 norm_starts_at, norm_ends_at, duration_minutes, is_publishing=False
             )
             if not is_valid:
-                return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'detail': err_msg, 'code': 'INVALID_SCHEDULE'}, status=status.HTTP_400_BAD_REQUEST)
 
         engine_payload = {
             'title': title,
@@ -974,6 +978,10 @@ class GeneratePaperView(APIView):
                 display_timezone=display_tz,
                 is_reviewed=False,
             )
+            if not norm_starts_at or not norm_ends_at:
+                logger.warning("Exam %s created without full schedule (starts_at=%s, ends_at=%s)", exam.id, norm_starts_at is not None, norm_ends_at is not None)
+            else:
+                logger.info("Exam %s created with schedule (starts_at=%s, ends_at=%s, tz=%s)", exam.id, norm_starts_at.isoformat(), norm_ends_at.isoformat(), display_tz)
             from api.paper_engine.cache import PaperCacheService
             PaperCacheService.invalidate_tenant_pools_and_papers(tenant_inst.id)
 

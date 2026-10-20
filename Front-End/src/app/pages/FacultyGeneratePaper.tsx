@@ -30,6 +30,7 @@ import {
   Settings,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Sliders,
   Sparkles,
   Square,
@@ -132,24 +133,37 @@ function extractApiErrorMessage(error: unknown, fallback: string) {
 export function FacultyGeneratePaper() {
   const navigate = useNavigate();
 
+  // Load persisted wizard draft from localStorage if available
+  const savedWizardDraft = useMemo(() => {
+    try {
+      const raw = localStorage.getItem("examai_faculty_wizard_draft");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Wizard Step (1: Details, 2: Questions, 3: Settings, 4: Preview & Publish)
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(() => {
+    const s = savedWizardDraft?.currentStep;
+    return s && s >= 1 && s <= 4 ? (s as 1 | 2 | 3 | 4) : 1;
+  });
 
   // Profile
   const [facultyDept, setFacultyDept] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
 
   // Step 1: Details
-  const [examTitle, setExamTitle] = useState("");
-  const [subjectName, setSubjectName] = useState("");
-  const [duration, setDuration] = useState("60");
-  const [totalMarks, setTotalMarks] = useState("100");
-  const [startsAt, setStartsAt] = useState("");
-  const [endsAt, setEndsAt] = useState("");
-  const [topics, setTopics] = useState<string[]>([""]);
+  const [examTitle, setExamTitle] = useState(() => savedWizardDraft?.examTitle || "");
+  const [subjectName, setSubjectName] = useState(() => savedWizardDraft?.subjectName || "");
+  const [duration, setDuration] = useState(() => savedWizardDraft?.duration || "60");
+  const [totalMarks, setTotalMarks] = useState(() => savedWizardDraft?.totalMarks || "100");
+  const [startsAt, setStartsAt] = useState(() => savedWizardDraft?.startsAt || "");
+  const [endsAt, setEndsAt] = useState(() => savedWizardDraft?.endsAt || "");
+  const [topics, setTopics] = useState<string[]>(() => savedWizardDraft?.topics || [""]);
 
   // Step 2: Question Blueprint Studio & Syllabus
-  const [examId, setExamId] = useState<number | null>(null);
+  const [examId, setExamId] = useState<number | null>(() => savedWizardDraft?.examId || null);
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
   const [blueprint, setBlueprint] = useState<BlueprintState>(() => {
     try {
@@ -257,6 +271,26 @@ export function FacultyGeneratePaper() {
       })
       .catch(() => {});
   }, []);
+
+  // Autosave wizard inputs to localStorage so refresh or back/forward does not lose schedule
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "examai_faculty_wizard_draft",
+        JSON.stringify({
+          currentStep,
+          examTitle,
+          subjectName,
+          duration,
+          totalMarks,
+          startsAt,
+          endsAt,
+          topics,
+          examId,
+        })
+      );
+    } catch {}
+  }, [currentStep, examTitle, subjectName, duration, totalMarks, startsAt, endsAt, topics, examId]);
 
   // Fetch Faculty Profile to Lock Department
   useEffect(() => {
@@ -822,6 +856,9 @@ export function FacultyGeneratePaper() {
       });
 
       const published = await facultyExamApi.publishExam(examId);
+      try {
+        localStorage.removeItem("examai_faculty_wizard_draft");
+      } catch {}
       toast.success(published.visibility?.status_summary || "Exam published successfully!");
       navigate("/faculty/history");
     } catch (err) {
@@ -2384,6 +2421,9 @@ export function FacultyGeneratePaper() {
           onClose={() => setShowProgressModal(false)}
           onSuccess={handleGenerationSuccess}
           onReset={() => {
+            try {
+              localStorage.removeItem("examai_faculty_wizard_draft");
+            } catch {}
             setQuestions([]);
             setExamId(null);
             setActiveJobId(null);

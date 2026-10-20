@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  Calendar,
   Check,
   CheckCircle2,
   Clock,
@@ -30,6 +31,40 @@ const menuItems = [
   { icon: Save, label: "Generate Paper", path: "/faculty/generate" },
   { icon: Check, label: "Exam History", path: "/faculty/history" },
 ];
+
+function toDatetimeLocal(isoStr: string | null | undefined): string {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const hours = pad(d.getHours());
+    const mins = pad(d.getMinutes());
+    return `${year}-${month}-${day}T${hours}:${mins}`;
+  } catch {
+    return "";
+  }
+}
+
+function formatScheduleSummary(startStr: string, endStr: string, durationMin: number): string {
+  if (!startStr || !endStr) return "";
+  const s = new Date(startStr);
+  const e = new Date(endStr);
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return "";
+  const dateOpts: Intl.DateTimeFormatOptions = {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "numeric",
+  };
+  const sFmt = s.toLocaleDateString("en-US", dateOpts);
+  const eFmt = e.toLocaleDateString("en-US", dateOpts);
+  return `Opens ${sFmt} and closes ${eFmt}. Each student gets ${durationMin} minutes.`;
+}
 
 function questionPayload(question: ExamQuestion) {
   const correctAnswer =
@@ -96,9 +131,15 @@ export function EditPaperPage() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterDifficulty, setFilterDifficulty] = useState<string>("all");
 
-  // Publish Confirmation Modal
+  // Publish Confirmation Modal & Schedule State
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [scheduleStartsAt, setScheduleStartsAt] = useState("");
+  const [scheduleEndsAt, setScheduleEndsAt] = useState("");
+  const [scheduleTimezone, setScheduleTimezone] = useState("Asia/Kolkata");
+  const [showScheduleEditor, setShowScheduleEditor] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ starts_at?: string; ends_at?: string }>({});
+  const isPublishingRef = useRef(false);
 
   // Add Question Modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -114,6 +155,59 @@ export function EditPaperPage() {
   const [newQWordLimit, setNewQWordLimit] = useState("");
   const [newQAcceptedAnswers, setNewQAcceptedAnswers] = useState("");
   const [addingQuestion, setAddingQuestion] = useState(false);
+
+  // Live client-side validation for schedule inputs
+  const scheduleValidation = useMemo(() => {
+    const sStr = scheduleStartsAt;
+    const eStr = scheduleEndsAt;
+    const durMin = exam?.duration_minutes || 60;
+
+    if (!sStr && !eStr) {
+      return { valid: false, message: "Start time ('Available From') and deadline ('Deadline') are required to publish." };
+    }
+    if (!sStr) {
+      return { valid: false, message: "Start time ('Available From') is required to publish an exam." };
+    }
+    if (!eStr) {
+      return { valid: false, message: "End time ('Deadline') is required to publish an exam." };
+    }
+
+    const s = new Date(sStr).getTime();
+    const e = new Date(eStr).getTime();
+    if (isNaN(s) || isNaN(e)) {
+      return { valid: false, message: "Please enter valid date and time values." };
+    }
+    if (e <= s) {
+      return { valid: false, message: "Deadline (end time) must be after the start time." };
+    }
+
+    const windowMin = Math.floor((e - s) / 60000);
+    if (windowMin < durMin) {
+      return { valid: false, message: `Exam window (${windowMin} minutes) must be at least as long as exam duration (${durMin} minutes).` };
+    }
+    if (windowMin > 30 * 24 * 60) {
+      return { valid: false, message: "Exam window cannot exceed 30 days." };
+    }
+
+    const now = Date.now();
+    const graceMs = 5 * 60 * 1000;
+    if (s < now - graceMs) {
+      return { valid: false, message: "Start time cannot be in the past (allowed grace: 5 minutes)." };
+    }
+
+    return { valid: true, message: "" };
+  }, [scheduleStartsAt, scheduleEndsAt, exam?.duration_minutes]);
+
+  const handleOpenPublishModal = () => {
+    setFieldErrors({});
+    const existingStart = toDatetimeLocal(exam?.starts_at);
+    const existingEnd = toDatetimeLocal(exam?.ends_at);
+    setScheduleStartsAt(existingStart);
+    setScheduleEndsAt(existingEnd);
+    setScheduleTimezone(exam?.display_timezone || "Asia/Kolkata");
+    setShowScheduleEditor(!existingStart || !existingEnd);
+    setShowPublishModal(true);
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -261,21 +355,57 @@ export function EditPaperPage() {
   };
 
   const handlePublishConfirmed = async () => {
-    if (!id) return;
+    if (!id || isPublishingRef.current) return;
+
+    if (!scheduleValidation.valid) {
+      toast.error(scheduleValidation.message || "Please provide a valid exam schedule.", {
+        id: "publish-schedule-error",
+      });
+      setShowScheduleEditor(true);
+      return;
+    }
+
+    isPublishingRef.current = true;
     setPublishing(true);
+    setFieldErrors({});
+
     try {
       const target = exam?.target_total_marks || exam?.total_marks || 0;
       const shortfallAmt = exam?.marks_shortfall || Math.max(0, target - computedTotalMarks);
       const isShortfall = shortfallAmt > 0;
-      const published = await facultyExamApi.publishExam(Number(id), isShortfall);
+
+      const schedulePayload = {
+        starts_at: scheduleStartsAt ? new Date(scheduleStartsAt).toISOString() : null,
+        ends_at: scheduleEndsAt ? new Date(scheduleEndsAt).toISOString() : null,
+        display_timezone: scheduleTimezone || "Asia/Kolkata",
+      };
+
+      const published = await facultyExamApi.publishExam(Number(id), isShortfall, schedulePayload);
       setExam(published);
       setShowPublishModal(false);
       toast.success("Exam published successfully! Students can now access it during the scheduled window.");
       navigate("/faculty/history");
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Publishing failed.");
+      const respData = err?.response?.data;
+      if (respData?.errors && Array.isArray(respData.errors)) {
+        const errMap: Record<string, string> = {};
+        for (const e of respData.errors) {
+          if (e.field && e.message) {
+            errMap[e.field] = e.message;
+          }
+        }
+        setFieldErrors(errMap);
+        setShowScheduleEditor(true);
+        const firstMsg = respData.errors[0]?.message || respData.detail || "Please fix schedule errors.";
+        toast.error(firstMsg, { id: "publish-schedule-error" });
+      } else {
+        const detail = respData?.detail || "Publishing failed.";
+        const cleanMsg = detail.includes("; ") ? detail.split("; ")[0] : detail;
+        toast.error(cleanMsg, { id: "publish-schedule-error" });
+      }
     } finally {
       setPublishing(false);
+      isPublishingRef.current = false;
     }
   };
 
@@ -544,14 +674,32 @@ export function EditPaperPage() {
                       {isPublished ? <Check className="h-3 w-3" /> : isReviewed ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
                       {isPublished ? "Published" : isReviewed ? "Draft · Reviewed" : "Draft · Review Required"}
                     </span>
+                    {!isPublished && (!exam.starts_at || !exam.ends_at) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-0.5 text-xs font-bold">
+                        <Clock className="h-3 w-3 text-amber-600" /> Schedule Missing
+                      </span>
+                    )}
                     {isPublished && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 text-xs font-medium">
                         <ShieldCheck className="h-3 w-3" /> Immutable
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap">
                     Department: <strong className="text-slate-800">{exam.department || "General"}</strong> · Created {new Date(exam.created_at).toLocaleDateString()}
+                    {!isPublished && (!exam.starts_at || !exam.ends_at) ? (
+                      <button
+                        type="button"
+                        onClick={handleOpenPublishModal}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 underline underline-offset-2 ml-1"
+                      >
+                        Add schedule
+                      </button>
+                    ) : exam.starts_at && exam.ends_at ? (
+                      <span className="text-slate-600 ml-1">
+                        · Schedule: <strong>{typeof exam.schedule_display === "object" && exam.schedule_display !== null ? (exam.schedule_display as any).summary : (typeof exam.schedule_display === "string" ? exam.schedule_display : "Configured")}</strong>
+                      </span>
+                    ) : null}
                   </p>
                 </div>
 
@@ -598,7 +746,7 @@ export function EditPaperPage() {
                           });
                           return;
                         }
-                        setShowPublishModal(true);
+                        handleOpenPublishModal();
                       }}
                       className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-all"
                     >
@@ -1095,9 +1243,9 @@ export function EditPaperPage() {
                                 Grading Rubric / Criteria
                               </label>
                               <textarea
-                                value={question.rubric || ""}
+                                value={typeof question.rubric === "string" ? question.rubric : Array.isArray(question.rubric) ? JSON.stringify(question.rubric, null, 2) : ""}
                                 disabled={isPublished}
-                                onChange={(e) => updateQuestion(question.id, { rubric: e.target.value })}
+                                onChange={(e) => updateQuestion(question.id, { rubric: e.target.value as any })}
                                 rows={3}
                                 className="w-full rounded-xl border border-border bg-muted/15 p-2.5 text-xs focus:outline-hidden focus:border-primary disabled:opacity-75"
                                 placeholder="Marks allocation guidelines for faculty / AI suggestion..."
@@ -1416,14 +1564,14 @@ export function EditPaperPage() {
         {/* Publish Confirmation Modal */}
         {showPublishModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-            <div className="bg-white rounded-2xl border border-border shadow-2xl w-full max-w-md p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="bg-white rounded-2xl border border-border shadow-2xl w-full max-w-lg p-6 space-y-4 animate-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 shrink-0">
                   <CheckCircle2 className="h-6 w-6" />
                 </div>
                 <div>
                   <h3 className="font-bold text-foreground text-base">Publish Exam Paper</h3>
-                  <p className="text-xs text-muted-foreground">Confirm publishing to students.</p>
+                  <p className="text-xs text-muted-foreground">Confirm schedule & publish to students.</p>
                 </div>
               </div>
 
@@ -1441,6 +1589,115 @@ export function EditPaperPage() {
                   </p>
                 </div>
               )}
+
+              {/* Schedule Section */}
+              <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-primary" />
+                    <span className="text-xs font-bold text-foreground uppercase tracking-wider">Exam Schedule</span>
+                  </div>
+                  {exam.starts_at && exam.ends_at && !showScheduleEditor && (
+                    <button
+                      type="button"
+                      onClick={() => setShowScheduleEditor(true)}
+                      className="text-xs text-primary font-medium hover:underline"
+                    >
+                      Change Schedule
+                    </button>
+                  )}
+                </div>
+
+                {exam.starts_at && exam.ends_at && !showScheduleEditor ? (
+                  <div className="space-y-1 text-xs">
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span>Available Window:</span>
+                      <span className="font-medium text-foreground">
+                        {formatScheduleSummary(exam.starts_at, exam.ends_at, exam.duration_minutes)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-muted-foreground">
+                      <span>Timezone:</span>
+                      <span className="font-medium text-foreground">{scheduleTimezone}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {(!exam.starts_at || !exam.ends_at) && (
+                      <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                        <span>Schedule is missing. Please set the exam window before publishing.</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-foreground mb-1">
+                          Available From (Start Time) <span className="text-destructive">*</span>
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleStartsAt}
+                          onChange={(e) => {
+                            setScheduleStartsAt(e.target.value);
+                            setFieldErrors((prev) => ({ ...prev, starts_at: undefined }));
+                          }}
+                          className={`w-full text-xs rounded-xl border ${
+                            fieldErrors.starts_at ? "border-destructive bg-destructive/5" : "border-border"
+                          } px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary`}
+                        />
+                        {fieldErrors.starts_at && (
+                          <p role="alert" className="text-[11px] text-destructive mt-1">
+                            {fieldErrors.starts_at}
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium text-foreground mb-1">
+                          Deadline (End Time) <span className="text-destructive">*</span>
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleEndsAt}
+                          onChange={(e) => {
+                            setScheduleEndsAt(e.target.value);
+                            setFieldErrors((prev) => ({ ...prev, ends_at: undefined }));
+                          }}
+                          className={`w-full text-xs rounded-xl border ${
+                            fieldErrors.ends_at ? "border-destructive bg-destructive/5" : "border-border"
+                          } px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary`}
+                        />
+                        {fieldErrors.ends_at && (
+                          <p role="alert" className="text-[11px] text-destructive mt-1">
+                            {fieldErrors.ends_at}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Exam Duration: <strong className="text-foreground">{exam.duration_minutes} mins</strong>
+                      </span>
+                      <span>Timezone: <strong>{scheduleTimezone}</strong></span>
+                    </div>
+
+                    {/* Live validation feedback banner */}
+                    {!scheduleValidation.valid && (
+                      <div
+                        role="alert"
+                        aria-live="polite"
+                        className="rounded-lg bg-amber-50 border border-amber-200/80 p-2.5 text-xs text-amber-800 flex items-start gap-2"
+                      >
+                        <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                        <span>{scheduleValidation.message}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="rounded-xl bg-muted/40 p-3 text-xs space-y-1.5">
                 <p className="font-semibold text-foreground">{exam.title}</p>
@@ -1463,12 +1720,16 @@ export function EditPaperPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={publishing}
+                  disabled={publishing || !scheduleValidation.valid}
                   onClick={handlePublishConfirmed}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                  {hasShortfall ? `Confirm & Publish (${computedTotalMarks} Marks)` : "Confirm & Publish"}
+                  {publishing
+                    ? "Publishing..."
+                    : hasShortfall
+                    ? `Confirm & Publish (${computedTotalMarks} Marks)`
+                    : "Confirm & Publish"}
                 </button>
               </div>
             </div>

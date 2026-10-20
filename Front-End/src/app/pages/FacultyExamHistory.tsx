@@ -146,13 +146,38 @@ export function FacultyExamHistory() {
       return;
     }
 
+    // Check if schedule is missing
+    if (!exam.starts_at || !exam.ends_at) {
+      toast.error("Schedule Required: Exam start time and deadline must be set before publishing.", {
+        action: {
+          label: "Set Schedule",
+          onClick: () => handleOpenEdit(exam.id),
+        },
+      });
+      return;
+    }
+
     setPublishingId(exam.id);
     try {
       const published = await facultyExamApi.publishExam(exam.id);
       setExams((current) => current.map((e) => (e.id === exam.id ? published : e)));
       toast.success("Exam published successfully! Students in your department can now access it.");
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Publishing failed. Check question marks and review status.");
+      const data = err?.response?.data;
+      const detailMsg =
+        data?.detail ||
+        (Array.isArray(data?.errors) ? data.errors.map((e: any) => e.message).join(". ") : null) ||
+        "Publishing failed. Check question marks and review status.";
+      toast.error(detailMsg, {
+        ...(data?.code === "SCHEDULE_REQUIRED"
+          ? {
+              action: {
+                label: "Set Schedule",
+                onClick: () => handleOpenEdit(exam.id),
+              },
+            }
+          : {}),
+      });
     } finally {
       setPublishingId(null);
     }
@@ -525,6 +550,13 @@ export function FacultyExamHistory() {
                         ) : (
                           <span className="rounded-full bg-muted text-muted-foreground border border-border px-2.5 py-0.5 text-xs font-medium">
                             {exam.status}
+                          </span>
+                        )}
+
+                        {/* Schedule Missing Badge */}
+                        {isDraft && (!exam.starts_at || !exam.ends_at) && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 text-[11px] font-medium">
+                            <Calendar className="h-3 w-3 text-amber-600" /> Schedule Missing
                           </span>
                         )}
                       </div>

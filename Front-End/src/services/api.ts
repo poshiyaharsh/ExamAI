@@ -1560,6 +1560,9 @@ export const facultyPaperApi = {
     subjectId?: number;
     subject?: string;
     selectedTopics?: string[];
+    starts_at?: string | null;
+    ends_at?: string | null;
+    display_timezone?: string;
   }): Promise<GenerateExamResponse> => {
     const formData = new FormData();
     formData.append("title", payload.title);
@@ -1578,6 +1581,9 @@ export const facultyPaperApi = {
     if (payload.selectedTopics && payload.selectedTopics.length) {
       formData.append("selected_topics", JSON.stringify(payload.selectedTopics));
     }
+    if (payload.starts_at) formData.append("starts_at", payload.starts_at);
+    if (payload.ends_at) formData.append("ends_at", payload.ends_at);
+    if (payload.display_timezone) formData.append("display_timezone", payload.display_timezone);
 
     const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -1632,16 +1638,29 @@ export const facultyExamApi = {
       questionTypes: exam.question_types?.length ? exam.question_types : ["mcq", "subjective"],
       difficultyDistribution: exam.difficulty_distribution || { easy: 30, medium: 50, hard: 20 },
       aiModel: (exam.ai_model_used as any) || "phi3-mini",
+      starts_at: exam.starts_at,
+      ends_at: exam.ends_at,
+      display_timezone: exam.display_timezone,
     });
   },
   updateQuestion: async (examId: number, questionId: number, question: Partial<ExamQuestion>): Promise<ExamQuestion> => {
     const response = await apiClient.put<ExamQuestion>(`/api/faculty/exams/${examId}/questions/${questionId}/`, question);
     return response.data;
   },
-  publishExam: async (examId: number, confirmShortfall: boolean = false): Promise<FacultyExam> => {
-    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/publish/`, {
+  publishExam: async (
+    examId: number,
+    confirmShortfall: boolean = false,
+    schedule?: { starts_at?: string | null; ends_at?: string | null; display_timezone?: string }
+  ): Promise<FacultyExam> => {
+    const payload: any = {
       confirm_shortfall: confirmShortfall,
-    });
+    };
+    if (schedule) {
+      if (schedule.starts_at !== undefined) payload.starts_at = schedule.starts_at;
+      if (schedule.ends_at !== undefined) payload.ends_at = schedule.ends_at;
+      if (schedule.display_timezone !== undefined) payload.display_timezone = schedule.display_timezone;
+    }
+    const response = await apiClient.post<FacultyExam>(`/api/faculty/exams/${examId}/publish/`, payload);
     return response.data;
   },
   checkScope: async (

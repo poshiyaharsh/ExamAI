@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Count
 from django.utils import timezone
 import logging
@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Exam, Question
+from .models import Exam, Question, StudentAttempt
 from .permissions import IsFacultyUser
 from .serializers import (
     ExamDetailSerializer,
@@ -440,110 +440,176 @@ class ClearFacultyPaperCacheView(FacultyExamViewMixin, APIView):
 
 class PublishExamView(FacultyExamViewMixin, APIView):
     def post(self, request, exam_id):
-        exam = self.get_exam(request, exam_id)
-        if not exam:
+        initial_exam = self.get_exam(request, exam_id)
+        if not initial_exam:
             return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         from api.utils.departments import get_exam_visibility_status_for_faculty, get_faculty_department
+        from api.utils.schedule import get_exam_schedule_errors, get_valid_timezone, normalize_to_utc
+        from django.core.exceptions import ValidationError as DjangoValidationError
 
-        # Validate department
-        if not (exam.department or '').strip():
-            faculty_dept = get_faculty_department(exam.created_by)
-            if faculty_dept:
-                exam.department = faculty_dept
-                exam.save(update_fields=['department'])
-            else:
+        with transaction.atomic():
+            exam = Exam.objects.select_for_update().filter(id=initial_exam.id).first()
+            if not exam:
+                return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            # Idempotency: if already published, return immediately without re-publishing or duplicating notifications/counts
+            if exam.status == Exam.Status.PUBLISHED:
+                visibility = get_exam_visibility_status_for_faculty(exam)
+                data = ExamDetailSerializer(exam).data
+                data['visibility'] = visibility
+                data['already_published'] = True
+                data['message'] = f"Exam is already published. {visibility.get('status_summary', '')}"
+                return Response(data, status=status.HTTP_200_OK)
+
+            # Allow publish request to carry schedule (starts_at, ends_at, display_timezone/timezone)
+            # If provided, validate and update atomically before publishing
+            has_starts = 'starts_at' in request.data or 'available_from' in request.data
+            has_ends = 'ends_at' in request.data or 'deadline' in request.data
+            has_tz = 'display_timezone' in request.data or 'timezone' in request.data
+
+            if has_starts or has_ends or has_tz:
+                raw_starts = request.data.get('starts_at') if 'starts_at' in request.data else request.data.get('available_from')
+                raw_ends = request.data.get('ends_at') if 'ends_at' in request.data else request.data.get('deadline')
+                raw_tz = request.data.get('display_timezone') if 'display_timezone' in request.data else request.data.get('timezone')
+
+                client_tz = str(raw_tz or exam.display_timezone or 'Asia/Kolkata').strip()
+                valid_tz = get_valid_timezone(client_tz)
+
+                update_fields = []
+                try:
+                    if has_starts:
+                        exam.starts_at = normalize_to_utc(raw_starts, valid_tz) if raw_starts else None
+                        update_fields.append('starts_at')
+                    if has_ends:
+                        exam.ends_at = normalize_to_utc(raw_ends, valid_tz) if raw_ends else None
+                        update_fields.append('ends_at')
+                    if has_tz or valid_tz != exam.display_timezone:
+                        exam.display_timezone = valid_tz
+                        update_fields.append('display_timezone')
+                except DjangoValidationError as val_err:
+                    err_msg = str(val_err)
+                    field_key = 'starts_at' if 'start' in err_msg.lower() else 'ends_at'
+                    return Response(
+                        {
+                            'code': 'INVALID_SCHEDULE',
+                            'detail': err_msg,
+                            'errors': [{'field': field_key, 'message': err_msg}],
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if update_fields:
+                    update_fields.append('updated_at')
+                    exam.save(update_fields=update_fields)
+
+            # Validate department
+            if not (exam.department or '').strip():
+                faculty_dept = get_faculty_department(exam.created_by)
+                if faculty_dept:
+                    exam.department = faculty_dept
+                    exam.save(update_fields=['department', 'updated_at'])
+                else:
+                    return Response(
+                        {'detail': 'A valid department must be assigned to the exam before it can be published.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            if not exam.is_reviewed:
                 return Response(
-                    {'detail': 'A valid department must be assigned to the exam before it can be published.'},
+                    {'detail': 'This generated draft must be reviewed and confirmed before it can be published.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if not exam.is_reviewed:
-            return Response(
-                {'detail': 'This generated draft must be reviewed and confirmed before it can be published.'},
-                status=status.HTTP_400_BAD_REQUEST,
+            # Enforce strict schedule window on publish with structured errors
+            sched_errors = get_exam_schedule_errors(
+                exam.starts_at, exam.ends_at, exam.duration_minutes, is_publishing=True
             )
-
-        # Enforce strict schedule window on publish
-        from api.utils.schedule import validate_exam_schedule
-        sched_ok, sched_err = validate_exam_schedule(
-            exam.starts_at, exam.ends_at, exam.duration_minutes, is_publishing=True
-        )
-        if not sched_ok:
-            return Response({'detail': sched_err}, status=status.HTTP_400_BAD_REQUEST)
-
-        questions = list(exam.questions.all())
-        if not questions:
-            return Response({'detail': 'An exam must contain at least one question.'}, status=status.HTTP_400_BAD_REQUEST)
-        if exam.random_subset_size:
-            if len(questions) < exam.random_subset_size:
-                return Response(
-                    {'detail': f'The exam question bank has {len(questions)} questions, which is less than the requested subset size of {exam.random_subset_size}.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        elif sum(question.marks for question in questions) != exam.total_marks:
-            actual_sum = sum(question.marks for question in questions)
-            return Response(
-                {'detail': f'Question marks ({actual_sum}) must equal exam total marks ({exam.total_marks}).'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Shortfall check: block publish if marks_shortfall > 0 unless confirm_shortfall is explicitly sent
-        if exam.marks_shortfall > 0:
-            if not request.data.get('confirm_shortfall'):
+            if sched_errors:
+                errors_list = [{'field': f, 'message': msg} for f, msg in sched_errors.items()]
+                is_missing = not exam.starts_at or not exam.ends_at
+                code = 'SCHEDULE_REQUIRED' if is_missing else 'INVALID_SCHEDULE'
                 return Response(
                     {
-                        'detail': f'This paper has an unresolved shortfall of {exam.marks_shortfall} marks ({exam.total_marks} of {exam.target_total_marks} marks generated). Resolve the shortfall before publishing, or confirm "Publish with {exam.marks_shortfall} fewer marks".',
-                        'marks_shortfall': exam.marks_shortfall,
-                        'target_total_marks': exam.target_total_marks,
-                        'actual_total_marks': exam.total_marks,
-                        'requires_shortfall_confirmation': True,
+                        'code': code,
+                        'detail': "; ".join(sched_errors.values()),
+                        'errors': errors_list,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            else:
-                report = exam.validation_report or {}
-                report['shortfall_publish_confirmed'] = {
-                    'confirmed_by': request.user.username,
-                    'confirmed_at': timezone.now().isoformat(),
-                    'original_target': exam.target_total_marks,
-                    'published_marks': exam.total_marks,
-                    'shortfall': exam.marks_shortfall,
-                }
-                exam.validation_report = report
-                exam.target_total_marks = exam.total_marks
-                exam.marks_shortfall = 0
-                exam.save(update_fields=['validation_report', 'target_total_marks', 'marks_shortfall'])
 
-        exam.status = Exam.Status.PUBLISHED
-        exam.is_immutable = True
-        exam.save(update_fields=['status', 'is_immutable', 'updated_at'])
+            questions = list(exam.questions.all())
+            if not questions:
+                return Response({'detail': 'An exam must contain at least one question.'}, status=status.HTTP_400_BAD_REQUEST)
+            if exam.random_subset_size:
+                if len(questions) < exam.random_subset_size:
+                    return Response(
+                        {'detail': f'The exam question bank has {len(questions)} questions, which is less than the requested subset size of {exam.random_subset_size}.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            elif sum(question.marks for question in questions) != exam.total_marks:
+                actual_sum = sum(question.marks for question in questions)
+                return Response(
+                    {'detail': f'Question marks ({actual_sum}) must equal exam total marks ({exam.total_marks}).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-        # Update times_used and last_used_at on exam questions and repository bank questions
-        now = timezone.now()
-        exam.questions.all().update(
-            times_used=models.F('times_used') + 1,
-            last_used_at=now,
-        )
-        q_hashes = [q.text_hash for q in questions if q.text_hash]
-        if q_hashes:
-            Question.objects.filter(
-                institution=exam.institution,
-                text_hash__in=q_hashes,
-                exam__isnull=True,
-            ).update(
+            # Shortfall check: block publish if marks_shortfall > 0 unless confirm_shortfall is explicitly sent
+            if exam.marks_shortfall > 0:
+                if not request.data.get('confirm_shortfall'):
+                    return Response(
+                        {
+                            'detail': f'This paper has an unresolved shortfall of {exam.marks_shortfall} marks ({exam.total_marks} of {exam.target_total_marks} marks generated). Resolve the shortfall before publishing, or confirm "Publish with {exam.marks_shortfall} fewer marks".',
+                            'marks_shortfall': exam.marks_shortfall,
+                            'target_total_marks': exam.target_total_marks,
+                            'actual_total_marks': exam.total_marks,
+                            'requires_shortfall_confirmation': True,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                else:
+                    report = exam.validation_report or {}
+                    report['shortfall_publish_confirmed'] = {
+                        'confirmed_by': request.user.username,
+                        'confirmed_at': timezone.now().isoformat(),
+                        'original_target': exam.target_total_marks,
+                        'published_marks': exam.total_marks,
+                        'shortfall': exam.marks_shortfall,
+                    }
+                    exam.validation_report = report
+                    exam.target_total_marks = exam.total_marks
+                    exam.marks_shortfall = 0
+                    exam.save(update_fields=['validation_report', 'target_total_marks', 'marks_shortfall', 'updated_at'])
+
+            exam.status = Exam.Status.PUBLISHED
+            exam.is_immutable = True
+            exam.save(update_fields=['status', 'is_immutable', 'updated_at'])
+
+            # Update times_used and last_used_at on exam questions and repository bank questions
+            now = timezone.now()
+            exam.questions.all().update(
                 times_used=models.F('times_used') + 1,
                 last_used_at=now,
             )
+            q_hashes = [q.text_hash for q in questions if q.text_hash]
+            if q_hashes:
+                Question.objects.filter(
+                    institution=exam.institution,
+                    text_hash__in=q_hashes,
+                    exam__isnull=True,
+                ).update(
+                    times_used=models.F('times_used') + 1,
+                    last_used_at=now,
+                )
 
-        from api.paper_engine.cache import PaperCacheService
-        PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
+            from api.paper_engine.cache import PaperCacheService
+            PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
 
-        visibility = get_exam_visibility_status_for_faculty(exam)
-        data = ExamDetailSerializer(exam).data
-        data['visibility'] = visibility
-        data['message'] = f"Exam published successfully! {visibility['status_summary']}"
-        return Response(data)
+            visibility = get_exam_visibility_status_for_faculty(exam)
+            data = ExamDetailSerializer(exam).data
+            data['visibility'] = visibility
+            data['message'] = f"Exam published successfully! {visibility['status_summary']}"
+            return Response(data)
 
 
 class ConfirmExamReviewView(FacultyExamViewMixin, APIView):
