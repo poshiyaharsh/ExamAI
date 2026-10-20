@@ -74,7 +74,9 @@ function SuperAdminConsoleRoot({ secretSlug }: { secretSlug: string }) {
       const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
       const backendBase =
         (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
-        'http://127.0.0.1:8000';
+        (typeof window !== 'undefined' && window.location.hostname
+          ? `${window.location.protocol}//${window.location.hostname}:8000`
+          : 'http://127.0.0.1:8000');
       const url = `${backendBase}/${secretSlug}/api/${cleanEndpoint}`;
       const headers = new Headers(options.headers || {});
       if (token) {
