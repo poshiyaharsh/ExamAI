@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, ReactNode } from "react";
+import { useEffect, useMemo, useState, useRef, ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -74,7 +74,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [prevCount, setPrevCount] = useState(0);
+  const prevCountRef = useRef(0);
 
   const fetchNotifications = async () => {
     try {
@@ -84,6 +84,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
       setNotifications(list);
       setUnreadCount(unread);
 
+      const prevCount = prevCountRef.current;
       if (unread > prevCount && prevCount > 0) {
         const newest = list[0];
         if (newest && !newest.is_read) {
@@ -99,17 +100,52 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
           }
         }
       }
-      setPrevCount(unread);
+      prevCountRef.current = unread;
     } catch {
       // Ignore background poll errors
     }
   };
 
   useEffect(() => {
-    void fetchNotifications();
-    const interval = window.setInterval(fetchNotifications, 8000);
-    return () => clearInterval(interval);
-  }, [prevCount]);
+    let interval: number | null = null;
+
+    const startPolling = () => {
+      if (interval === null) {
+        interval = window.setInterval(() => {
+          if (document.visibilityState === "visible") {
+            void fetchNotifications();
+          }
+        }, 12000);
+      }
+    };
+
+    const stopPolling = () => {
+      if (interval !== null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchNotifications();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    if (document.visibilityState === "visible") {
+      void fetchNotifications();
+      startPolling();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   const handleMarkAllRead = async () => {
     try {

@@ -281,6 +281,8 @@ def build_type_generation_prompt(
     difficulty_pct,
     syllabus_text,
     retry_feedback=None,
+    avoid_questions=None,
+    pedagogical_angle=None,
 ):
     norm_type = str(question_type or '').strip().lower()
     if norm_type in {'truefalse', 'true_false'}:
@@ -310,6 +312,8 @@ def build_type_generation_prompt(
             difficulty_pct=difficulty_pct,
             syllabus_text=syllabus_text,
             retry_feedback=retry_feedback,
+            avoid_questions=avoid_questions,
+            pedagogical_angle=pedagogical_angle,
         )
 
     else:
@@ -319,6 +323,12 @@ def build_type_generation_prompt(
 
     syllabus_excerpt = (syllabus_text or '')[:3000]
     feedback_block = f"\nATTENTION: A previous generation attempt failed validation: {retry_feedback}\nFix this error strictly.\n" if retry_feedback else ""
+    avoid_block = ""
+    if avoid_questions:
+        cleaned_avoid = [str(q).strip() for q in avoid_questions if str(q).strip()][:8]
+        if cleaned_avoid:
+            avoid_block = "\nDO NOT DUPLICATE: The following questions are already in the paper. Your questions must be completely distinct from these:\n" + "\n".join(f"- {q}" for q in cleaned_avoid) + "\n"
+    angle_block = f"\nPEDAGOGICAL ANGLE / FOCUS: {pedagogical_angle}\n" if pedagogical_angle else ""
 
     return f"""You are an expert university examiner. Generate academic examination questions as a JSON object adhering strictly to the schema.
 
@@ -338,7 +348,7 @@ Assignment Parameters:
 - Marks Per Question: EVERY question must have marks = {marks_per_question}
 - Allowed Topics: {json.dumps(list(topics or []))}
 - Difficulty Distribution: {json.dumps(difficulty_pct or {})}
-{feedback_block}
+{feedback_block}{avoid_block}{angle_block}
 <syllabus_content>
 {syllabus_excerpt}
 </syllabus_content>
@@ -353,6 +363,8 @@ def build_single_pass_long_answer_prompt(
     difficulty_pct,
     syllabus_text,
     retry_feedback=None,
+    avoid_questions=None,
+    pedagogical_angle=None,
 ):
     """
     Single-pass prompt: Generates long answer question text, rubric, comprehensive model answer,
@@ -360,6 +372,12 @@ def build_single_pass_long_answer_prompt(
     """
     syllabus_excerpt = (syllabus_text or '')[:3000]
     feedback_block = f"\nATTENTION: Previous attempt failed validation: {retry_feedback}\nFix this error strictly.\n" if retry_feedback else ""
+    avoid_block = ""
+    if avoid_questions:
+        cleaned_avoid = [str(q).strip() for q in avoid_questions if str(q).strip()][:6]
+        if cleaned_avoid:
+            avoid_block = "\nDO NOT DUPLICATE: The following questions are already in the paper. Your questions must be completely distinct from these:\n" + "\n".join(f"- {q}" for q in cleaned_avoid) + "\n"
+    angle_block = f"\nPEDAGOGICAL ANGLE / FOCUS: {pedagogical_angle}\n" if pedagogical_angle else ""
 
     return f"""You are a university professor creating an examination paper. Generate EXACTLY {count} comprehensive long-answer question(s) with academic model answers as a JSON object adhering to the schema.
 
@@ -377,7 +395,7 @@ Assignment Parameters:
 - Word Limit: 250-400 words
 - Allowed Topics: {json.dumps(list(topics or []))}
 - Difficulty Mix: {json.dumps(difficulty_pct or {})}
-{feedback_block}
+{feedback_block}{avoid_block}{angle_block}
 <syllabus_content>
 {syllabus_excerpt}
 </syllabus_content>
@@ -392,15 +410,23 @@ def build_long_answer_step_a_prompt(
     difficulty_pct,
     syllabus_text,
     retry_feedback=None,
+    avoid_questions=None,
+    pedagogical_angle=None,
 ):
     """
     Step A: Generates long answer question text, rubric criteria, word limit, and source evidence.
     """
     syllabus_excerpt = (syllabus_text or '')[:3500]
     feedback_block = f"\nATTENTION: Previous attempt failed validation: {retry_feedback}\nFix this error strictly.\n" if retry_feedback else ""
+    avoid_block = ""
+    if avoid_questions:
+        cleaned_avoid = [str(q).strip() for q in avoid_questions if str(q).strip()][:6]
+        if cleaned_avoid:
+            avoid_block = "\nDO NOT DUPLICATE: The following questions are already in the paper. Your questions must be completely distinct from these:\n" + "\n".join(f"- {q}" for q in cleaned_avoid) + "\n"
+    angle_block = f"\nPEDAGOGICAL ANGLE / FOCUS: {pedagogical_angle}\n" if pedagogical_angle else ""
 
     return f"""You are a university professor creating an exam paper. Generate EXACTLY {count} comprehensive long-answer question(s).
-{feedback_block}
+{feedback_block}{avoid_block}{angle_block}
 Requirements:
 1. Question text must require an in-depth, structured multi-part response (not a simple one-sentence fact).
 2. Use cognitive verbs matching difficulty:

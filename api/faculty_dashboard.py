@@ -1,5 +1,6 @@
 import logging
 import uuid
+from django.core.cache import cache
 from django.db import models
 from django.db.models import Avg, Count, ExpressionWrapper, F, FloatField, Q, Sum
 from django.utils import timezone
@@ -12,6 +13,9 @@ from .models import Exam, StudentAnswer, StudentAttempt
 from .permissions import IsFacultyUser
 from students.models import StudentProfile
 from .utils.scoring import PASSING_PERCENTAGE
+from api.tenant import get_tenant_cache_key, get_user_institution
+from api.exams.eligibility import compute_live_exam_metrics
+from api.utils.analytics import compute_faculty_exam_performance_overview
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +34,19 @@ class FacultyDashboardView(APIView):
         try:
             user = request.user
             now = timezone.now()
-            from api.tenant import get_user_institution
             tenant = getattr(request, 'tenant', None) or get_user_institution(user)
             if not tenant:
                 return Response({'status': 'error', 'message': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
-            return self._build_dashboard(request, user, tenant, now)
+
+            cache_key = get_tenant_cache_key(tenant.id, 'faculty_dashboard', user_id=user.id)
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
+                return Response(cached_data)
+
+            response = self._build_dashboard(request, user, tenant, now)
+            if response.status_code == 200 and isinstance(response.data, dict) and response.data.get('status') == 'success':
+                cache.set(cache_key, response.data, timeout=60)
+            return response
         except Exception as exc:
             logger.exception("[%s] Unexpected error in FacultyDashboardView: %s", req_id, exc)
             return Response({
@@ -128,7 +140,9 @@ class FacultyDashboardView(APIView):
         }
 
         # 3. Ongoing Exams (currently live)
-        ongoing_base_qs = faculty_exams.filter(
+        ongoing_base_qs = faculty_exams.annotate(
+            active_question_count=Count('questions', filter=Q(questions__is_deleted=False))
+        ).filter(
             status=Exam.Status.PUBLISHED
         ).filter(
             Q(starts_at__isnull=True) | Q(starts_at__lte=now),
@@ -140,14 +154,12 @@ class FacultyDashboardView(APIView):
             '-created_at'
         )[:6]
 
-        from api.exams.eligibility import compute_live_exam_metrics
-
         ongoing_exams_list = []
         try:
             for e in ongoing_qs:
                 m = compute_live_exam_metrics(e, now=now)
                 m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
-                m['question_count'] = e.questions.filter(is_deleted=False).count()
+                m['question_count'] = getattr(e, 'active_question_count', 0)
                 m['topics'] = e.topics[:2] if isinstance(e.topics, list) else []
                 m['all_topics'] = e.topics if isinstance(e.topics, list) else []
                 ongoing_exams_list.append(m)
@@ -178,15 +190,29 @@ class FacultyDashboardView(APIView):
             })
 
         # 5. Recent Exams (last 5 created by faculty)
-        recent_exams_qs = faculty_exams.order_by('-created_at')[:5]
+        recent_exams_qs = list(
+            faculty_exams.annotate(
+                active_question_count=Count('questions', filter=Q(questions__is_deleted=False))
+            ).order_by('-created_at')[:5]
+        )
+        recent_exam_ids = [e.id for e in recent_exams_qs]
+        attempt_aggregates = {}
+        if recent_exam_ids:
+            attempt_aggregates = {
+                row['exam_id']: row
+                for row in StudentAttempt.objects.filter(
+                    exam_id__in=recent_exam_ids,
+                    status__in=COMPLETED_STATUSES,
+                ).annotate(pct=pct_expr).values('exam_id').annotate(
+                    cnt=Count('id'),
+                    avg=Avg('pct'),
+                    passes=Count('id', filter=Q(pct__gte=PASSING_PERCENTAGE)),
+                )
+            }
+
         recent_exams_list = []
         for e in recent_exams_qs:
-            e_attempts = StudentAttempt.objects.filter(exam=e, status__in=COMPLETED_STATUSES)
-            e_stats = e_attempts.annotate(pct=pct_expr).aggregate(
-                cnt=Count('id'),
-                avg=Avg('pct'),
-                passes=Count('id', filter=Q(pct__gte=PASSING_PERCENTAGE)),
-            )
+            e_stats = attempt_aggregates.get(e.id, {})
             cnt = e_stats.get('cnt') or 0
             e_avg = round(e_stats['avg'], 1) if e_stats.get('avg') is not None else None
             passes = e_stats.get('passes') or 0
@@ -208,7 +234,7 @@ class FacultyDashboardView(APIView):
                 'department': e.department,
                 'created_at': e.created_at.isoformat(),
                 'status': e.status,
-                'question_count': e.questions.filter(is_deleted=False).count(),
+                'question_count': getattr(e, 'active_question_count', 0),
                 'total_marks': e.total_marks,
                 'target_total_marks': e.target_total_marks or e.total_marks,
                 'marks_shortfall': e.marks_shortfall or 0,
@@ -222,7 +248,6 @@ class FacultyDashboardView(APIView):
             })
 
         # 6. Exam Performance Overview for Analytics Charts (last 8 published exams)
-        from api.utils.analytics import compute_faculty_exam_performance_overview
         perf_overview = compute_faculty_exam_performance_overview(user, tenant, limit=8)
         exam_perf_data = perf_overview['exams']
         exam_perf_summary = perf_overview['summary']

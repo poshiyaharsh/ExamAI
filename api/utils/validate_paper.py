@@ -293,31 +293,77 @@ def repair_rubric_marks(rubric: list, target_marks: float) -> list:
     return scaled
 
 
+import unicodedata
+
+
+def normalize_grounding_text(text: str) -> str:
+    """
+    Normalizes text for robust grounding and evidence verification.
+    Handles:
+    - Unicode NFKD decomposition (accents, diacritics)
+    - Ligatures (fi, fl, ff, ffi, ffl, etc.)
+    - Smart quotes, curved apostrophes, em-dashes
+    - Hyphenation across linebreaks (e.g. 'archi- \n tecture' -> 'architecture')
+    - Non-breaking spaces and irregular whitespace
+    - Punctuation removal and case folding
+    """
+    if not text:
+        return ""
+    norm = unicodedata.normalize('NFKD', str(text))
+    ligatures = {
+        'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬀ': 'ff', 'ﬃ': 'ffi', 'ﬄ': 'ffl',
+        'æ': 'ae', 'œ': 'oe', 'ß': 'ss'
+    }
+    for lig, rep in ligatures.items():
+        norm = norm.replace(lig, rep)
+    quotes = {
+        '“': '"', '”': '"', '‘': "'", '’': "'", '«': '"', '»': '"',
+        '„': '"', '‟': '"', '—': '-', '–': '-', '•': ' ', '·': ' ',
+        '\xa0': ' ', '\u200b': ''
+    }
+    for q, rep in quotes.items():
+        norm = norm.replace(q, rep)
+    norm = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', norm)
+    norm = re.sub(r'[^a-zA-Z0-9\s]', ' ', norm)
+    norm = re.sub(r'\s+', ' ', norm).strip().lower()
+    return norm
+
+
 def verify_grounding_evidence(source_evidence: str, syllabus_text: str) -> bool:
     """
     Checks if source_evidence quote exists in the syllabus text
-    via normalized substring or word-set overlap.
+    via normalized substring, multi-word sliding window, or substantive token containment.
     """
     if not source_evidence or not syllabus_text:
         return False
 
-    clean_ev = re.sub(r'[^a-zA-Z0-9\s]', '', source_evidence).strip().lower()
-    clean_syl = re.sub(r'[^a-zA-Z0-9\s]', '', syllabus_text).strip().lower()
+    clean_ev = normalize_grounding_text(source_evidence)
+    clean_syl = normalize_grounding_text(syllabus_text)
 
-    if len(clean_ev) < 8:
+    if len(clean_ev) < 6:
         return False
 
-    # Exact normalized substring
+    # 1. Exact normalized substring
     if clean_ev in clean_syl:
         return True
 
-    # 4-word sliding window check
     words = clean_ev.split()
-    if len(words) >= 4:
-        for idx in range(len(words) - 3):
-            sub = ' '.join(words[idx : idx + 4])
+
+    # 2. Sliding window check (3 or 4-word sequences)
+    if len(words) >= 3:
+        window_size = min(4, len(words))
+        for idx in range(len(words) - window_size + 1):
+            sub = ' '.join(words[idx : idx + window_size])
             if sub in clean_syl:
                 return True
+
+    # 3. Substantive content word containment (words > 3 chars)
+    content_words = [w for w in words if len(w) > 3]
+    if len(content_words) >= 4:
+        syl_words_set = set(clean_syl.split())
+        matched = sum(1 for w in content_words if w in syl_words_set)
+        if matched / len(content_words) >= 0.75:
+            return True
 
     return False
 

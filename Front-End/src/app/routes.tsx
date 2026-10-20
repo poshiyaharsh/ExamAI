@@ -1,54 +1,94 @@
+import React, { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
-import { Landing } from "./pages/Landing";
-import { Login } from "./pages/Login";
-import { ForgotPassword } from "./pages/ForgotPassword";
-import { AdminDashboard } from "./pages/AdminDashboard";
-import { AdminExams } from "./pages/AdminExams";
-import { AdminStudents } from "./pages/AdminStudents";
-import { AdminSettings } from "./pages/AdminSettings";
-import { FacultyDashboard } from "./pages/FacultyDashboard";
-import { FacultyGeneratePaper } from "./pages/FacultyGeneratePaper";
-import { FacultyGeneratingPaper } from "./pages/FacultyGeneratingPaper";
-import { FacultyExamHistory } from "./pages/FacultyExamHistory";
-import { FacultyLiveMonitor } from "./pages/FacultyLiveMonitor";
-import { EditPaperPage } from "./pages/EditPaperPage";
-import { FacultySettings } from "./pages/FacultySettings";
-import { QuestionBank } from "./pages/QuestionBank";
-import { AdminQuestionBank } from "./pages/AdminQuestionBank";
-import { AdminFaculty } from "./pages/AdminFaculty";
-import { StudentDashboard } from "./pages/StudentDashboard";
-import { StudentExamsPage } from "./pages/StudentExamsPage";
-import { TakeExamPage } from "./pages/TakeExamPage";
-import { ResultsPage } from "./pages/ResultsPage";
-import { StudentPerformance } from "./pages/StudentPerformance";
-import { StudentSettings } from "./pages/StudentSettings";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { NotFound } from "./pages/NotFound";
+
+function PageLoader() {
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 space-y-4">
+      <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+      <p className="text-sm text-gray-500 font-medium">Loading...</p>
+    </div>
+  );
+}
+
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
+}
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
-  return <ProtectedRoute allowedRoles={["admin"]}>{children}</ProtectedRoute>;
+  return (
+    <ProtectedRoute allowedRoles={["admin"]}>
+      <Suspense fallback={<PageLoader />}>{children}</Suspense>
+    </ProtectedRoute>
+  );
 }
 
 function FacultyOnly({ children }: { children: React.ReactNode }) {
-  return <ProtectedRoute allowedRoles={["faculty"]}>{children}</ProtectedRoute>;
+  return (
+    <ProtectedRoute allowedRoles={["faculty"]}>
+      <Suspense fallback={<PageLoader />}>{children}</Suspense>
+    </ProtectedRoute>
+  );
 }
 
 function StudentOnly({ children }: { children: React.ReactNode }) {
-  return <ProtectedRoute allowedRoles={["student"]}>{children}</ProtectedRoute>;
+  return (
+    <ProtectedRoute allowedRoles={["student"]}>
+      <Suspense fallback={<PageLoader />}>{children}</Suspense>
+    </ProtectedRoute>
+  );
 }
+
+// Lazy loaded page components for optimal first-load code splitting
+const Landing = lazy(() => import("./pages/Landing").then((m) => ({ default: m.Landing })));
+const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword").then((m) => ({ default: m.ForgotPassword })));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard").then((m) => ({ default: m.AdminDashboard })));
+const AdminExams = lazy(() => import("./pages/AdminExams").then((m) => ({ default: m.AdminExams })));
+const AdminStudents = lazy(() => import("./pages/AdminStudents").then((m) => ({ default: m.AdminStudents })));
+const AdminSettings = lazy(() => import("./pages/AdminSettings").then((m) => ({ default: m.AdminSettings })));
+const AdminQuestionBank = lazy(() => import("./pages/AdminQuestionBank").then((m) => ({ default: m.AdminQuestionBank })));
+const AdminFaculty = lazy(() => import("./pages/AdminFaculty").then((m) => ({ default: m.AdminFaculty })));
+const FacultyDashboard = lazy(() => import("./pages/FacultyDashboard").then((m) => ({ default: m.FacultyDashboard })));
+const FacultyGeneratePaper = lazy(() => import("./pages/FacultyGeneratePaper").then((m) => ({ default: m.FacultyGeneratePaper })));
+const FacultyGeneratingPaper = lazy(() => import("./pages/FacultyGeneratingPaper").then((m) => ({ default: m.FacultyGeneratingPaper })));
+const FacultyExamHistory = lazy(() => import("./pages/FacultyExamHistory").then((m) => ({ default: m.FacultyExamHistory })));
+const FacultyLiveMonitor = lazy(() => import("./pages/FacultyLiveMonitor").then((m) => ({ default: m.FacultyLiveMonitor })));
+const EditPaperPage = lazy(() => import("./pages/EditPaperPage").then((m) => ({ default: m.EditPaperPage })));
+const FacultySettings = lazy(() => import("./pages/FacultySettings").then((m) => ({ default: m.FacultySettings })));
+const QuestionBank = lazy(() => import("./pages/QuestionBank").then((m) => ({ default: m.QuestionBank })));
+const StudentDashboard = lazy(() => import("./pages/StudentDashboard").then((m) => ({ default: m.StudentDashboard })));
+const StudentExamsPage = lazy(() => import("./pages/StudentExamsPage").then((m) => ({ default: m.StudentExamsPage })));
+const TakeExamPage = lazy(() => import("./pages/TakeExamPage").then((m) => ({ default: m.TakeExamPage })));
+const ResultsPage = lazy(() => import("./pages/ResultsPage").then((m) => ({ default: m.ResultsPage })));
+const StudentPerformance = lazy(() => import("./pages/StudentPerformance").then((m) => ({ default: m.StudentPerformance })));
+const StudentSettings = lazy(() => import("./pages/StudentSettings").then((m) => ({ default: m.StudentSettings })));
+const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
 
 export const router = createBrowserRouter([
   {
     path: "/",
-    Component: Landing,
+    Component: () => (
+      <PublicRoute>
+        <Landing />
+      </PublicRoute>
+    ),
   },
   {
     path: "/login",
-    Component: Login,
+    Component: () => (
+      <PublicRoute>
+        <Login />
+      </PublicRoute>
+    ),
   },
   {
     path: "/forgot-password",
-    Component: ForgotPassword,
+    Component: () => (
+      <PublicRoute>
+        <ForgotPassword />
+      </PublicRoute>
+    ),
   },
   {
     path: "/admin",
@@ -156,7 +196,11 @@ export const router = createBrowserRouter([
   },
   {
     path: "/question-bank",
-    Component: QuestionBank,
+    Component: () => (
+      <PublicRoute>
+        <QuestionBank />
+      </PublicRoute>
+    ),
   },
   {
     path: "/student",
@@ -208,6 +252,10 @@ export const router = createBrowserRouter([
   },
   {
     path: "*",
-    Component: NotFound,
+    Component: () => (
+      <PublicRoute>
+        <NotFound />
+      </PublicRoute>
+    ),
   },
 ]);

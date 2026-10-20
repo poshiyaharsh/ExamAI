@@ -237,25 +237,56 @@ def detect_syllabus_hierarchy(text: str, pages: list[dict] = None) -> dict:
     }
 
 
-def estimate_syllabus_capacity(char_count: int, num_topics: int = 1) -> dict:
+def estimate_syllabus_capacity(char_count: int, num_topics: int = 1, text: str = "") -> dict:
     """
     Estimates whether the syllabus text is large enough to support the requested
-    number of questions and marks.
+    number of questions and marks based on factual sentence count, distinct concepts,
+    and words per topic.
     """
     safe_chars = max(0, char_count)
-    # 1 substantive question requires ~350-500 characters of grounded text
-    estimated_q = max(3, safe_chars // 400)
-    estimated_marks = min(100, estimated_q * 4)
-    is_low = safe_chars < 3000
+    word_count = len(text.split()) if text else (safe_chars // 6)
+    
+    # Analyze testable sentences if text is provided
+    testable_sentences = 0
+    if text:
+        import re
+        sentences = re.split(r'[.!?]+', text)
+        keywords = {'is', 'are', 'defined', 'consists', 'function', 'protocol', 'layer', 'algorithm', 'mechanism', 'feature', 'process', 'architecture'}
+        for s in sentences:
+            words = set(s.lower().split())
+            if len(words) >= 6 and (words & keywords):
+                testable_sentences += 1
+    else:
+        testable_sentences = max(5, word_count // 25)
+
+    # Question capacity: 1 question requires ~3 factual sentences or ~350 chars
+    estimated_q = max(3, min(testable_sentences // 2, safe_chars // 350))
+    # Marks capacity: objective (~1-2M), short (~5M), long (~10M)
+    estimated_marks = max(10, min(100, int(estimated_q * 3.5)))
+    is_low = safe_chars < 4000 or word_count < 600
+
+    # Suggested blueprint when capacity is low
+    suggested_bp = {}
+    if is_low:
+        if estimated_marks <= 30:
+            suggested_bp = {'mcq': {'count': 10, 'marks': 1}, 'true_false': {'count': 5, 'marks': 1}, 'short_answer': {'count': 3, 'marks': 5}}
+        elif estimated_marks <= 60:
+            suggested_bp = {'mcq': {'count': 15, 'marks': 1}, 'true_false': {'count': 5, 'marks': 1}, 'short_answer': {'count': 4, 'marks': 5}, 'long_answer': {'count': 2, 'marks': 10}}
+        else:
+            suggested_bp = {'mcq': {'count': 10, 'marks': 1}, 'true_false': {'count': 5, 'marks': 1}, 'fill_blank': {'count': 5, 'marks': 1}, 'short_answer': {'count': 4, 'marks': 5}, 'long_answer': {'count': 6, 'marks': 10}}
+
     warning = (
-        f"The selected content ({char_count:,} characters) may only support about {estimated_q} questions ({estimated_marks} marks)."
+        f"The selected document ({char_count:,} characters, ~{word_count} words) can reliably support about {estimated_q} questions (~{estimated_marks} marks). A target higher than {estimated_marks} may result in a shortfall."
         if is_low else None
     )
     return {
+        'word_count': word_count,
+        'testable_sentences': testable_sentences,
         'estimated_max_questions': estimated_q,
         'estimated_max_marks': estimated_marks,
         'is_low_capacity': is_low,
         'warning': warning,
+        'suggested_blueprint': suggested_bp,
     }
 
 
@@ -417,20 +448,40 @@ def chunk_syllabus_by_topics(text: str, topics: list) -> dict:
     return chunks
 
 
-def get_relevant_syllabus_chunk(syllabus_text: str, topic: str, chunks_map: dict = None, max_chars: int = 3000) -> str:
+def get_relevant_syllabus_chunk(
+    syllabus_text: str,
+    topic: str,
+    chunks_map: dict = None,
+    max_chars: int = 3000,
+    round_offset: int = 0,
+) -> str:
     """
     Returns the most relevant section/chunk of the syllabus for the given topic.
+    Supports round_offset to shift reading window across multiple top-up rounds,
+    ensuring subsequent rounds explore fresh text.
     """
+    base_chunk = ""
     if chunks_map and topic in chunks_map and chunks_map[topic]:
-        return chunks_map[topic][:max_chars]
-    if not syllabus_text:
-        return ""
-    if topic:
+        base_chunk = chunks_map[topic]
+    elif syllabus_text and topic:
         lower_text = syllabus_text.lower()
         idx = lower_text.find(topic.lower())
         if idx != -1:
             start = max(0, idx - 200)
-            return syllabus_text[start : min(len(syllabus_text), start + max_chars)].strip()
-    return syllabus_text[:max_chars].strip()
+            base_chunk = syllabus_text[start:]
+
+    if not base_chunk:
+        base_chunk = syllabus_text or ""
+
+    if not base_chunk:
+        return ""
+
+    stride = 800 * max(0, round_offset)
+    if len(base_chunk) > max_chars and stride > 0:
+        start_pos = stride % max(1, len(base_chunk) - max_chars // 2)
+        return base_chunk[start_pos : start_pos + max_chars].strip()
+
+    return base_chunk[:max_chars].strip()
+
 
 

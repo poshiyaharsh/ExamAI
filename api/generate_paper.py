@@ -155,16 +155,43 @@ def _validated_type_questions(data, question_type, default_marks=1):
     return [question for question in fixed_data['questions'] if question['type'] == canon]
 
 
-def deduplicate_questions(questions, similarity_threshold=0.85):
+def deduplicate_questions(questions, similarity_threshold=0.85, return_dropped_list=False):
     """
     Deduplicates questions based on normalized text similarity.
     Uses exact SHA-256 hash match + Jaccard token pre-filter before difflib.SequenceMatcher.
-    Does not drop legitimately different questions.
+    Strips boilerplate question lead-ins before comparison to prevent false positives.
+    Questions of different types are only considered duplicate if stems are near-verbatim (>=0.96).
     """
     unique = []
     seen_hashes = set()
     unique_tokens = []
     dropped_count = 0
+    dropped_items = []
+
+    LEAD_IN_PREFIXES = (
+        'which of the following describes',
+        'which of the following is',
+        'which of the following statements',
+        'which of the following',
+        'state whether the following statement is true or false',
+        'state whether the following is true or false',
+        'true or false:',
+        'explain the following',
+        'explain the concept of',
+        'what is the primary',
+        'what is the purpose of',
+        'what is',
+        'describe the',
+        'discuss the',
+    )
+
+    def _strip_lead_in(text: str) -> str:
+        t = text.strip().lower()
+        for prefix in LEAD_IN_PREFIXES:
+            if t.startswith(prefix):
+                t = t[len(prefix):].strip(' :-,.?')
+                break
+        return t
 
     for q in questions:
         raw_text = str(q.get('text', '')).strip().lower()
@@ -175,22 +202,30 @@ def deduplicate_questions(questions, similarity_threshold=0.85):
         text_hash = hashlib.sha256(norm_text.encode('utf-8')).hexdigest()
         if text_hash in seen_hashes:
             dropped_count += 1
+            dropped_items.append(q)
             continue
 
-        q_tokens = set(norm_text.split())
+        core_text_a = _strip_lead_in(norm_text)
+        q_tokens = set(core_text_a.split())
+        q_type = str(q.get('type', '')).lower()
         is_dup = False
 
         for idx, u in enumerate(unique):
+            u_type = str(u.get('type', '')).lower()
+            effective_threshold = similarity_threshold if q_type == u_type else 0.96
+
             u_tokens = unique_tokens[idx]
             intersection_len = len(q_tokens & u_tokens)
             union_len = len(q_tokens | u_tokens)
-            if union_len > 0 and (intersection_len / union_len) < (similarity_threshold * 0.6):
+            if union_len > 0 and (intersection_len / union_len) < (effective_threshold * 0.5):
                 continue
 
             text_b = ' '.join(str(u.get('text', '')).strip().lower().split())
-            if difflib.SequenceMatcher(None, norm_text, text_b).ratio() >= similarity_threshold:
+            core_text_b = _strip_lead_in(text_b)
+            if difflib.SequenceMatcher(None, core_text_a, core_text_b).ratio() >= effective_threshold:
                 is_dup = True
                 dropped_count += 1
+                dropped_items.append(q)
                 break
 
         if not is_dup:
@@ -200,10 +235,23 @@ def deduplicate_questions(questions, similarity_threshold=0.85):
 
     if dropped_count:
         logger.info("Deduplication removed %s duplicate questions", dropped_count)
+    if return_dropped_list:
+        return unique, dropped_count, dropped_items
     return unique, dropped_count
 
 
-def _generate_single_long_answer(model_tag, marks_per_q, topic, difficulty, syllabus_chunk, progress_cb=None, item_idx=1, total_items=1):
+def _generate_single_long_answer(
+    model_tag,
+    marks_per_q,
+    topic,
+    difficulty,
+    syllabus_chunk,
+    progress_cb=None,
+    item_idx=1,
+    total_items=1,
+    avoid_questions=None,
+    pedagogical_angle=None,
+):
     """
     High-reliability generation for a single long-answer question:
     If OLLAMA_LONG_ANSWER_SINGLE_PASS is True, attempts single-pass generation
@@ -226,6 +274,8 @@ def _generate_single_long_answer(model_tag, marks_per_q, topic, difficulty, syll
                 topics=[topic] if topic else [],
                 difficulty_pct={difficulty: 100},
                 syllabus_text=syllabus_chunk,
+                avoid_questions=avoid_questions,
+                pedagogical_angle=pedagogical_angle,
             )
             raw_single = call_ollama(
                 model=model_tag,
@@ -264,6 +314,8 @@ def _generate_single_long_answer(model_tag, marks_per_q, topic, difficulty, syll
                     difficulty_pct={difficulty: 100},
                     syllabus_text=syllabus_chunk,
                     retry_feedback=feedback,
+                    avoid_questions=avoid_questions,
+                    pedagogical_angle=pedagogical_angle,
                 )
                 raw_a = call_ollama(
                     model=model_tag,
@@ -340,7 +392,18 @@ def _generate_single_long_answer(model_tag, marks_per_q, topic, difficulty, syll
     return question_item
 
 
-def _call_type_batch(question_type, count, marks_per_q, model_key, topics, difficulty_distribution, syllabus_chunk, retry_feedback=None):
+def _call_type_batch(
+    question_type,
+    count,
+    marks_per_q,
+    model_key,
+    topics,
+    difficulty_distribution,
+    syllabus_chunk,
+    retry_feedback=None,
+    avoid_questions=None,
+    pedagogical_angle=None,
+):
     """
     Generates standard questions (MCQ, True/False, Fill in blanks, Short Answer) using Ollama JSON Schema.
     """
@@ -353,6 +416,8 @@ def _call_type_batch(question_type, count, marks_per_q, model_key, topics, diffi
         difficulty_pct=difficulty_distribution,
         syllabus_text=syllabus_chunk,
         retry_feedback=retry_feedback,
+        avoid_questions=avoid_questions,
+        pedagogical_angle=pedagogical_angle,
     )
     schema = get_question_type_schema(question_type)
     num_pred = min(2048, max(512, count * 220 + 256))
@@ -377,7 +442,20 @@ def _call_type_batch(question_type, count, marks_per_q, model_key, topics, diffi
     return []
 
 
-def _generate_type_questions(question_type, count, marks_per_q, model_name, topics, difficulty_distribution, syllabus_text, chunks_map=None, progress_cb=None):
+def _generate_type_questions(
+    question_type,
+    count,
+    marks_per_q,
+    model_name,
+    topics,
+    difficulty_distribution,
+    syllabus_text,
+    chunks_map=None,
+    progress_cb=None,
+    avoid_questions=None,
+    pedagogical_angle=None,
+    round_offset=0,
+):
     canon_type = canonicalize_type(question_type)
     model_tag = MODEL_MAP.get(model_name, model_name)
     generated = []
@@ -395,7 +473,7 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
         for item_idx in range(1, count + 1):
             topic = selected_topics[(item_idx - 1) % len(selected_topics)]
             difficulty = difficulties[(item_idx - 1) % len(difficulties)]
-            chunk = get_relevant_syllabus_chunk(syllabus_text, topic, chunks_map)
+            chunk = get_relevant_syllabus_chunk(syllabus_text, topic, chunks_map, round_offset=round_offset)
 
             item = _generate_single_long_answer(
                 model_tag=model_tag,
@@ -406,6 +484,8 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
                 progress_cb=progress_cb,
                 item_idx=item_idx,
                 total_items=count,
+                avoid_questions=avoid_questions,
+                pedagogical_angle=pedagogical_angle,
             )
             if item:
                 generated.append(item)
@@ -421,7 +501,7 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
         req_count = min(batch_size, count - start)
         # Select topic for this batch to ensure balanced topic distribution and accurate syllabus chunking
         batch_topic = topics[batch_idx % len(topics)] if topics else ''
-        batch_chunk = get_relevant_syllabus_chunk(syllabus_text, batch_topic, chunks_map)
+        batch_chunk = get_relevant_syllabus_chunk(syllabus_text, batch_topic, chunks_map, round_offset=round_offset)
         batch_topics = [batch_topic] if batch_topic else topics
 
         if progress_cb:
@@ -435,6 +515,8 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
             topics=batch_topics,
             difficulty_distribution=difficulty_distribution,
             syllabus_chunk=batch_chunk,
+            avoid_questions=avoid_questions,
+            pedagogical_angle=pedagogical_angle,
         )
         generated.extend(batch)
         shortfall = req_count - len(batch)
@@ -449,6 +531,8 @@ def _generate_type_questions(question_type, count, marks_per_q, model_name, topi
                 difficulty_distribution=difficulty_distribution,
                 syllabus_chunk=batch_chunk,
                 retry_feedback=f"Shortfall: generate {shortfall} more {canon_type} questions.",
+                avoid_questions=avoid_questions,
+                pedagogical_angle=pedagogical_angle,
             )
             generated.extend(retry_batch[:shortfall])
 
@@ -537,43 +621,163 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         if job.is_cancelled:
             return
 
-        # Deduplicate generated questions
-        generated_questions, dropped_dups = deduplicate_questions(generated_questions, similarity_threshold=0.85)
+        # Initial batch deduplication (Round 0)
+        generated_questions, dropped_dups, dropped_items = deduplicate_questions(
+            generated_questions, similarity_threshold=0.85, return_dropped_list=True
+        )
 
         if not generated_questions:
             raise ValueError('AI model returned zero valid questions.')
 
+        # Initialize Marks Waterfall Metrics
+        planned_marks = int(planned_total_marks)
+        target_marks = int(total_marks)
+        initial_generated_marks = int(round(sum(float(q['marks']) for q in generated_questions) + sum(float(q['marks']) for q in dropped_items)))
+        rejected_duplicates_marks = int(round(sum(float(q['marks']) for q in dropped_items)))
+        current_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
+
+        # Closed-loop Top-up Rounds (up to 4 rounds)
+        MAX_TOPUP_ROUNDS = 4
+        TOPUP_ANGLES = [
+            "Practical scenarios, real-world implementations, and applied problem-solving",
+            "Comparative analysis, contrasts, tradeoffs, and distinguishing features",
+            "Causal mechanisms, operational workflows, and underlying system architectures",
+            "Critical evaluation, limitations, boundary conditions, and edge cases",
+        ]
+
+        round_idx = 0
+        while current_total_marks < target_marks and round_idx < MAX_TOPUP_ROUNDS:
+            job.refresh_from_db()
+            if job.is_cancelled:
+                return
+
+            round_idx += 1
+            missing_marks = target_marks - current_total_marks
+            pedagogical_angle = TOPUP_ANGLES[(round_idx - 1) % len(TOPUP_ANGLES)]
+            avoid_list = [q.get('text', '') for q in generated_questions if q.get('text')]
+
+            job.current_step = f"Top-up round {round_idx}/{MAX_TOPUP_ROUNDS}: generating missing {missing_marks} marks ({pedagogical_angle[:35]}...)"
+            pct = min(84, 75 + (round_idx * 2))
+            job.progress = pct
+            job.save(update_fields=['current_step', 'progress'])
+
+            # Determine needed counts per type
+            current_counts_by_type = {}
+            for q in generated_questions:
+                c_type = canonicalize_type(q.get('type', ''))
+                current_counts_by_type[c_type] = current_counts_by_type.get(c_type, 0) + 1
+
+            needed_by_type = {}
+            for q_type, target_c in counts.items():
+                cur_c = current_counts_by_type.get(q_type, 0)
+                if cur_c < target_c:
+                    needed_by_type[q_type] = target_c - cur_c
+
+            # If all planned question counts were met but marks are still short (e.g. from blueprint or dropped essays)
+            if not needed_by_type and missing_marks > 0:
+                for candidate_type in ['short_answer', 'mcq', 'fill_blank', 'true_false']:
+                    if candidate_type in counts and counts[candidate_type] > 0:
+                        m_per_q = MARKS_PER_TYPE.get(candidate_type, 1)
+                        needed_c = max(1, int(missing_marks // m_per_q))
+                        needed_by_type[candidate_type] = needed_c
+                        break
+
+            # Run top-up generation for needed types
+            topup_batch_all = []
+            for q_type, req_c in needed_by_type.items():
+                if req_c <= 0:
+                    continue
+                marks_per_q = MARKS_PER_TYPE.get(q_type, 1)
+                if blueprint and isinstance(blueprint, dict):
+                    cfg = blueprint.get(q_type) or {}
+                    if isinstance(cfg, dict) and cfg.get('marksPerQuestion'):
+                        try:
+                            marks_per_q = float(cfg['marksPerQuestion'])
+                        except (ValueError, TypeError):
+                            pass
+
+                topup_batch = _generate_type_questions(
+                    question_type=q_type,
+                    count=req_c,
+                    marks_per_q=marks_per_q,
+                    model_name=model_name,
+                    topics=topics,
+                    difficulty_distribution=difficulty_distribution,
+                    syllabus_text=syllabus_text,
+                    chunks_map=chunks_map,
+                    progress_cb=update_job_step,
+                    avoid_questions=avoid_list,
+                    pedagogical_angle=pedagogical_angle,
+                    round_offset=round_idx,
+                )
+                topup_batch_all.extend(topup_batch)
+
+            if not topup_batch_all:
+                logger.info("Top-up round %s yielded zero valid items; stopping top-up", round_idx)
+                break
+
+            # Deduplicate combined set
+            combined_candidates = generated_questions + topup_batch_all
+            new_unique, new_dropped_count, new_dropped_items = deduplicate_questions(
+                combined_candidates, similarity_threshold=0.85, return_dropped_list=True
+            )
+
+            added_count = len(new_unique) - len(generated_questions)
+            if added_count <= 0:
+                logger.info("Top-up round %s yielded only duplicate items; stopping top-up", round_idx)
+                break
+
+            generated_questions = new_unique
+            current_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
+            dropped_dups += new_dropped_count
+            rejected_duplicates_marks += int(round(sum(float(q['marks']) for q in new_dropped_items)))
+            initial_generated_marks += int(round(sum(float(q['marks']) for q in topup_batch_all)))
+
+            if current_total_marks >= target_marks:
+                logger.info("Top-up round %s reached target marks (%s/%s)", round_idx, current_total_marks, target_marks)
+                break
+
         job.current_step = 'Validating generated questions'
-        job.progress = 85
+        job.progress = 88
         job.question_count_generated = len(generated_questions)
         job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
 
         # Detailed warnings per type
         warnings = []
         has_shortfall = False
-        for q_type, stat in type_stats.items():
-            if stat['shortfall'] > 0:
-                has_shortfall = True
-                warnings.append(
-                    f"Generated {stat['generated']} of {stat['requested']} requested {q_type.replace('_', ' ').upper()} questions."
-                )
 
         if dropped_dups > 0:
-            warnings.append(f"Removed {dropped_dups} duplicate question(s).")
+            warnings.append(f"Removed {dropped_dups} duplicate question(s) ({rejected_duplicates_marks} marks filtered).")
 
         needs_review_count = sum(1 for q in generated_questions if q.get('needs_review'))
         if needs_review_count > 0:
             warnings.append(f"{needs_review_count} question(s) flagged for faculty review (grounding or length).")
 
         actual_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
-        target_marks = int(total_marks)
         marks_shortfall = max(0, target_marks - actual_total_marks)
+
+        # Marks Waterfall Table / Summary
+        waterfall_record = {
+            "waterfall": {
+                "planned_marks": planned_marks,
+                "target_marks": target_marks,
+                "generated_marks": initial_generated_marks,
+                "rejected_duplicates_count": dropped_dups,
+                "rejected_duplicates_marks": rejected_duplicates_marks,
+                "flagged_for_review_count": needs_review_count,
+                "accepted_questions_count": len(generated_questions),
+                "actual_total_marks": actual_total_marks,
+                "marks_shortfall": marks_shortfall,
+                "topup_rounds_run": round_idx,
+            }
+        }
+        warnings.append(f"Marks waterfall: Planned {planned_marks}M -> Generated {initial_generated_marks}M -> Rejected dups -{rejected_duplicates_marks}M -> Final {actual_total_marks}M of {target_marks}M target.")
 
         if marks_shortfall > 0:
             has_shortfall = True
             warnings.insert(
                 0,
-                f"Only {actual_total_marks} of {target_marks} marks were generated ({marks_shortfall} marks short). The selected document content did not contain enough material."
+                f"Generated {actual_total_marks} of {target_marks} marks ({marks_shortfall} marks short) after {round_idx} top-up rounds. The selected content is exhausted."
             )
 
         # Step: Saving draft
@@ -1054,7 +1258,7 @@ class ParseSyllabusView(APIView):
             if not topics:
                 topics = [text[:100]]
             from .utils.extract_text import estimate_syllabus_capacity
-            capacity = estimate_syllabus_capacity(len(text), len(topics))
+            capacity = estimate_syllabus_capacity(len(text), len(topics), text=text)
             return Response({
                 'filename': 'direct_text_input',
                 'file_hash': '',
@@ -1078,7 +1282,7 @@ class ParseSyllabusView(APIView):
             has_multiple = hierarchy.get('has_multiple_subjects', False)
             topics = cached.get('topics', [])
             from .utils.extract_text import estimate_syllabus_capacity
-            capacity = estimate_syllabus_capacity(len(text), len(topics))
+            capacity = estimate_syllabus_capacity(len(text), len(topics), text=text)
             return Response({
                 'filename': fn,
                 'file_hash': cached.get('hash', ''),
@@ -1115,9 +1319,10 @@ class GenerateMissingQuestionsView(APIView):
             return Response({'detail': 'Cannot generate questions for published or active exams.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Determine target counts
+        target_marks = exam.target_total_marks or exam.total_marks or 50
         planned_counts, _ = compute_question_counts(
             exam.question_types or ['mcq'],
-            exam.total_marks or 50,
+            target_marks,
         )
 
         existing_questions = list(exam.questions.filter(is_deleted=False))
@@ -1132,12 +1337,27 @@ class GenerateMissingQuestionsView(APIView):
             if current_count < target_count:
                 shortfalls[q_type] = target_count - current_count
 
-        if not shortfalls:
+        current_total_marks = sum(float(q.marks) for q in existing_questions)
+        marks_deficit = max(0, target_marks - int(round(current_total_marks)))
+
+        # If question counts match but marks are still short
+        if not shortfalls and marks_deficit > 0:
+            for candidate_type in ['short_answer', 'mcq', 'fill_blank', 'true_false']:
+                if candidate_type in planned_counts and planned_counts[candidate_type] > 0:
+                    m_per_q = MARKS_PER_TYPE.get(candidate_type, 1)
+                    needed_c = max(1, int(marks_deficit // m_per_q))
+                    shortfalls[candidate_type] = needed_c
+                    break
+
+        if not shortfalls and marks_deficit == 0:
             return Response({
-                'detail': 'All planned questions are already generated.',
+                'detail': 'All planned questions and marks are already fulfilled.',
                 'generated_count': 0,
                 'shortfalls': {},
                 'question_count': len(existing_questions),
+                'actual_total_marks': current_total_marks,
+                'target_total_marks': target_marks,
+                'marks_shortfall': 0,
             }, status=status.HTTP_200_OK)
 
         model_name = request.data.get('model') or exam.ai_model_used or 'llama3.2-3b'
@@ -1145,6 +1365,7 @@ class GenerateMissingQuestionsView(APIView):
         diff_dist = exam.difficulty_distribution or {'medium': 100}
         syllabus_text = exam.source_syllabus_text or ''
         chunks_map = chunk_syllabus_by_topics(syllabus_text, topics)
+        avoid_list = [q.text for q in existing_questions if q.text]
 
         new_generated = []
         for q_type, shortfall_count in shortfalls.items():
@@ -1158,6 +1379,8 @@ class GenerateMissingQuestionsView(APIView):
                 difficulty_distribution=diff_dist,
                 syllabus_text=syllabus_text,
                 chunks_map=chunks_map,
+                avoid_questions=avoid_list,
+                pedagogical_angle="Targeted gap filling with distinct angles",
             )
             new_generated.extend(type_results)
 
@@ -1167,6 +1390,17 @@ class GenerateMissingQuestionsView(APIView):
                 'shortfalls': shortfalls,
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        # Deduplicate newly generated questions against existing questions
+        combined_candidates = [{'text': q.text, 'type': q.question_type, 'existing': True} for q in existing_questions] + new_generated
+        unique_combined, _ = deduplicate_questions(combined_candidates, similarity_threshold=0.85)
+        filtered_new = [q for q in unique_combined if not q.get('existing')]
+
+        if not filtered_new:
+            return Response({
+                'detail': 'Generated candidates were duplicates of existing questions in this exam.',
+                'shortfalls': shortfalls,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # Save new questions to exam
         current_max_order = max([q.order for q in existing_questions], default=0)
         from api.validators.question_bank import compute_text_hash
@@ -1175,7 +1409,7 @@ class GenerateMissingQuestionsView(APIView):
 
         created_objs = []
         with transaction.atomic():
-            for idx, g_q in enumerate(new_generated, start=1):
+            for idx, g_q in enumerate(filtered_new, start=1):
                 raw_options = g_q.get('options')
                 correct_ans = g_q.get('correct_answer')
                 q_type = g_q['type']
@@ -1225,19 +1459,24 @@ class GenerateMissingQuestionsView(APIView):
                     if opts_to_create:
                         Option.objects.bulk_create(opts_to_create)
 
-            # Recalculate total marks
+            # Recalculate total marks & shortfall
             all_exam_questions = list(exam.questions.filter(is_deleted=False))
-            exam.total_marks = sum(q.marks for q in all_exam_questions)
+            actual_total = int(round(sum(float(q.marks) for q in all_exam_questions)))
+            target_total = int(exam.target_total_marks or target_marks)
+            exam.total_marks = actual_total
+            exam.marks_shortfall = max(0, target_total - actual_total)
             exam.status = Exam.Status.DRAFT
             exam.is_reviewed = False
             exam.error_message = ''
-            exam.save(update_fields=['total_marks', 'status', 'is_reviewed', 'error_message', 'updated_at'])
+            exam.save(update_fields=['total_marks', 'marks_shortfall', 'status', 'is_reviewed', 'error_message', 'updated_at'])
 
         return Response({
             'detail': f'Successfully generated {len(created_objs)} missing question(s).',
             'generated_count': len(created_objs),
             'total_questions': len(all_exam_questions),
             'actual_total_marks': exam.total_marks,
+            'target_total_marks': target_total,
+            'marks_shortfall': exam.marks_shortfall,
         }, status=status.HTTP_201_CREATED)
 
 
