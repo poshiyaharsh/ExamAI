@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'students',
     'faculty',
     'admins',
+    'superadmin',
     'rest_framework_simplejwt.token_blacklist',
 ]
 
@@ -315,3 +316,13 @@ if EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Super Admin Security Settings
+SUPER_ADMIN_PATH = os.getenv('SUPER_ADMIN_PATH', '').strip()
+SUPER_ADMIN_ALLOWED_IPS = [
+    ip.strip() for ip in os.getenv('SUPER_ADMIN_ALLOWED_IPS', '').split(',') if ip.strip()
+]
+MAX_SUPER_ADMIN_COUNT = int(os.getenv('MAX_SUPER_ADMIN_COUNT', '1'))
+SUPER_ADMIN_SESSION_AGE = 15 * 60  # 15 minutes idle timeout
+SUPER_ADMIN_MAX_AGE = 8 * 3600  # 8 hours absolute session max age
+SUPER_ADMIN_ALERT_EMAIL = os.getenv('SUPER_ADMIN_ALERT_EMAIL', 'harshposhiya92@gmail.com')
