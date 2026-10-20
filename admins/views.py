@@ -1,12 +1,14 @@
-from rest_framework import status
+import datetime
+import logging
+import secrets
+import string
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import OperationalError, ProgrammingError
 from django.db import transaction
-import datetime
-from django.utils import timezone
 from django.db.models import Avg, Count, ExpressionWrapper, F, FloatField, Max, Min, Q
-import logging
+from django.utils import timezone
+from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -15,9 +17,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from api.permissions import IsAdminUser
 from api.models import Exam, Question, StudentAttempt
 from api.throttling import AuthRateThrottle
+from api.utils.departments import validate_department_name
 
 from students.models import StudentProfile
-from .models import AdminInstitution, AdminProfile
+from .models import AdminActionAuditLog, AdminInstitution, AdminProfile, DepartmentChangeAuditLog
 from .serializers import (
     AdminInstitutionCreateSerializer,
     AdminInstitutionSerializer,
@@ -596,6 +599,14 @@ class AdminStudentDetailAPIView(APIView):
                 return error_response
 
             with transaction.atomic():
+                AdminActionAuditLog.objects.create(
+                    admin=request.user,
+                    target_user=student.user,
+                    institution=student.institution,
+                    action=AdminActionAuditLog.ACTION_DELETE,
+                    reason=getattr(request, 'data', {}).get('reason', 'Administrative deletion') if isinstance(getattr(request, 'data', None), dict) else 'Administrative deletion',
+                    details={'email': student.user.email, 'student_id': getattr(student, 'student_id', '')},
+                )
                 student.user.delete()
 
             return Response(
@@ -972,6 +983,14 @@ class AdminFacultyDetailAPIView(APIView):
                 return error_response
 
             with transaction.atomic():
+                AdminActionAuditLog.objects.create(
+                    admin=request.user,
+                    target_user=faculty.user,
+                    institution=faculty.institution,
+                    action=AdminActionAuditLog.ACTION_DELETE,
+                    reason=getattr(request, 'data', {}).get('reason', 'Administrative deletion') if isinstance(getattr(request, 'data', None), dict) else 'Administrative deletion',
+                    details={'email': faculty.user.email, 'employee_id': getattr(faculty, 'employee_id', '')},
+                )
                 faculty.user.delete()
 
             return Response(
@@ -1520,7 +1539,6 @@ class AdminUserDepartmentChangeAPIView(APIView):
         if not reason:
             return Response({'status': 'error', 'message': 'A reason is required for administrative department changes.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from api.utils.departments import validate_department_name
         is_valid, norm_dept = validate_department_name(new_dept, institution=institution)
         if not is_valid:
             return Response({'status': 'error', 'message': f'Invalid department "{new_dept}". Must be an allowed department.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1530,7 +1548,6 @@ class AdminUserDepartmentChangeAPIView(APIView):
         profile._allow_department_change = True
         profile.save(update_fields=['department'])
 
-        from admins.models import DepartmentChangeAuditLog
         log = DepartmentChangeAuditLog.objects.create(
             user=target_user,
             institution=institution,
@@ -1551,4 +1568,142 @@ class AdminUserDepartmentChangeAPIView(APIView):
                 'timestamp': log.timestamp.isoformat(),
             }
         }, status=status.HTTP_200_OK)
+
+
+class AdminFacultyResetPasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def post(self, request, faculty_id):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        institution = _get_admin_institution(request.user)
+        if not institution:
+            return Response(
+                {'status': 'error', 'message': 'Admin institution not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        faculty = FacultyProfile.objects.select_related('user').filter(id=faculty_id, institution=institution).first()
+        if not faculty or not faculty.user:
+            return Response(
+                {'status': 'error', 'message': 'Faculty not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        new_password = request.data.get('new_password', '').strip()
+        reason = request.data.get('reason', '').strip() or 'Admin initiated password reset'
+
+        if not new_password:
+            alphabet = string.ascii_letters + string.digits + '!@#$%'
+            new_password = ''.join(secrets.choice(alphabet) for _ in range(12))
+
+        if len(new_password) < 8:
+            return Response(
+                {'status': 'error', 'message': 'Password must be at least 8 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target_user = faculty.user
+        target_user.set_password(new_password)
+        target_user.save(update_fields=['password'])
+
+        AdminActionAuditLog.objects.create(
+            admin=request.user,
+            target_user=target_user,
+            institution=institution,
+            action=AdminActionAuditLog.ACTION_RESET_PASSWORD,
+            reason=reason,
+            details={
+                'role': 'faculty',
+                'faculty_id': faculty.id,
+                'email': target_user.email,
+                'name': f"{target_user.first_name} {target_user.last_name}".strip(),
+            },
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': f'Password for {target_user.email} reset successfully.',
+                'data': {
+                    'user_id': target_user.id,
+                    'email': target_user.email,
+                    'new_password': new_password,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminStudentResetPasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def post(self, request, student_id):
+        if not _ensure_admin_user(request.user):
+            return Response(
+                {'status': 'error', 'message': 'Only admin users can access this resource.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        institution = _get_admin_institution(request.user)
+        if not institution:
+            return Response(
+                {'status': 'error', 'message': 'Admin institution not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        student = StudentProfile.objects.select_related('user').filter(id=student_id, institution=institution).first()
+        if not student or not student.user:
+            return Response(
+                {'status': 'error', 'message': 'Student not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        new_password = request.data.get('new_password', '').strip()
+        reason = request.data.get('reason', '').strip() or 'Admin initiated password reset'
+
+        if not new_password:
+            alphabet = string.ascii_letters + string.digits + '!@#$%'
+            new_password = ''.join(secrets.choice(alphabet) for _ in range(12))
+
+        if len(new_password) < 8:
+            return Response(
+                {'status': 'error', 'message': 'Password must be at least 8 characters long.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target_user = student.user
+        target_user.set_password(new_password)
+        target_user.save(update_fields=['password'])
+
+        AdminActionAuditLog.objects.create(
+            admin=request.user,
+            target_user=target_user,
+            institution=institution,
+            action=AdminActionAuditLog.ACTION_RESET_PASSWORD,
+            reason=reason,
+            details={
+                'role': 'student',
+                'student_id': student.id,
+                'email': target_user.email,
+                'name': f"{target_user.first_name} {target_user.last_name}".strip(),
+            },
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': f'Password for {target_user.email} reset successfully.',
+                'data': {
+                    'user_id': target_user.id,
+                    'email': target_user.email,
+                    'new_password': new_password,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 

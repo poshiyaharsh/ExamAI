@@ -24,8 +24,10 @@ import {
   LayoutDashboard,
   ListChecks,
   Lock,
+  Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Send,
   Settings,
   Shield,
@@ -52,6 +54,14 @@ import {
   type PaperQuestionType,
   type SyllabusUploadData,
 } from "../../services/api";
+import { authStorage } from "../../services/auth";
+import {
+  clearScopedWizardDraft,
+  getNextRoundScheduleWindow,
+  loadScopedWizardDraft,
+  saveScopedWizardDraft,
+  type WizardDraftData,
+} from "../../utils/wizardDraftStorage";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/faculty" },
@@ -133,37 +143,33 @@ function extractApiErrorMessage(error: unknown, fallback: string) {
 export function FacultyGeneratePaper() {
   const navigate = useNavigate();
 
-  // Load persisted wizard draft from localStorage if available
-  const savedWizardDraft = useMemo(() => {
-    try {
-      const raw = localStorage.getItem("examai_faculty_wizard_draft");
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  }, []);
+  // Authenticated user for draft scoping
+  const currentUser = authStorage.getSession()?.user;
+  const defaultSchedule = useMemo(() => getNextRoundScheduleWindow(), []);
 
   // Wizard Step (1: Details, 2: Questions, 3: Settings, 4: Preview & Publish)
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(() => {
-    const s = savedWizardDraft?.currentStep;
-    return s && s >= 1 && s <= 4 ? (s as 1 | 2 | 3 | 4) : 1;
-  });
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
 
   // Profile
   const [facultyDept, setFacultyDept] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
 
-  // Step 1: Details
-  const [examTitle, setExamTitle] = useState(() => savedWizardDraft?.examTitle || "");
-  const [subjectName, setSubjectName] = useState(() => savedWizardDraft?.subjectName || "");
-  const [duration, setDuration] = useState(() => savedWizardDraft?.duration || "60");
-  const [totalMarks, setTotalMarks] = useState(() => savedWizardDraft?.totalMarks || "100");
-  const [startsAt, setStartsAt] = useState(() => savedWizardDraft?.startsAt || "");
-  const [endsAt, setEndsAt] = useState(() => savedWizardDraft?.endsAt || "");
-  const [topics, setTopics] = useState<string[]>(() => savedWizardDraft?.topics || [""]);
+  // Step 1: Details (Always start clean)
+  const [examTitle, setExamTitle] = useState("");
+  const [subjectName, setSubjectName] = useState("");
+  const [duration, setDuration] = useState("60");
+  const [totalMarks, setTotalMarks] = useState("100");
+  const [startsAt, setStartsAt] = useState(defaultSchedule.startsAt);
+  const [endsAt, setEndsAt] = useState(defaultSchedule.endsAt);
+  const [topics, setTopics] = useState<string[]>([""]);
+
+  // Scoped draft detection and dirty tracking
+  const [detectedDraft, setDetectedDraft] = useState<WizardDraftData | null>(null);
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
 
   // Step 2: Question Blueprint Studio & Syllabus
-  const [examId, setExamId] = useState<number | null>(() => savedWizardDraft?.examId || null);
+  const [examId, setExamId] = useState<number | null>(null);
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
   const [blueprint, setBlueprint] = useState<BlueprintState>(() => {
     try {
@@ -272,25 +278,37 @@ export function FacultyGeneratePaper() {
       .catch(() => {});
   }, []);
 
-  // Autosave wizard inputs to localStorage so refresh or back/forward does not lose schedule
+  // Check for saved scoped draft on mount
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        "examai_faculty_wizard_draft",
-        JSON.stringify({
-          currentStep,
-          examTitle,
-          subjectName,
-          duration,
-          totalMarks,
-          startsAt,
-          endsAt,
-          topics,
-          examId,
-        })
-      );
-    } catch {}
-  }, [currentStep, examTitle, subjectName, duration, totalMarks, startsAt, endsAt, topics, examId]);
+    if (!currentUser?.id) return;
+    const draft = loadScopedWizardDraft(currentUser.id);
+    if (
+      draft &&
+      (draft.examTitle?.trim() ||
+        draft.subjectName?.trim() ||
+        (draft.topics && draft.topics.some((t) => t.trim())) ||
+        draft.examId)
+    ) {
+      setDetectedDraft(draft);
+      setShowDraftBanner(true);
+    }
+  }, [currentUser?.id]);
+
+  // Autosave wizard inputs scoped to authenticated user only when user has actively edited
+  useEffect(() => {
+    if (!isDirty || !currentUser?.id) return;
+    saveScopedWizardDraft(currentUser.id, {
+      currentStep,
+      examTitle,
+      subjectName,
+      duration,
+      totalMarks,
+      startsAt,
+      endsAt,
+      topics,
+      examId,
+    });
+  }, [isDirty, currentUser?.id, currentStep, examTitle, subjectName, duration, totalMarks, startsAt, endsAt, topics, examId]);
 
   // Fetch Faculty Profile to Lock Department
   useEffect(() => {
@@ -469,12 +487,19 @@ export function FacultyGeneratePaper() {
     }
   };
 
-  const handleAddTopic = () => setTopics([...topics, ""]);
-  const handleRemoveTopic = (idx: number) => setTopics(topics.filter((_, i) => i !== idx));
+  const handleAddTopic = () => {
+    setTopics([...topics, ""]);
+    setIsDirty(true);
+  };
+  const handleRemoveTopic = (idx: number) => {
+    setTopics(topics.filter((_, i) => i !== idx));
+    setIsDirty(true);
+  };
   const handleTopicChange = (idx: number, val: string) => {
     const next = [...topics];
     next[idx] = val;
     setTopics(next);
+    setIsDirty(true);
   };
 
   const scheduleAnalysis = useMemo(() => {
@@ -488,6 +513,12 @@ export function FacultyGeneratePaper() {
     const e = new Date(endsAt).getTime();
     if (isNaN(s) || isNaN(e)) {
       return { status: "error", message: "Invalid date format." };
+    }
+    if (s < Date.now() - 60000) {
+      return {
+        status: "error",
+        message: "Exam start time cannot be in the past. Please select a future time.",
+      };
     }
     if (e <= s) {
       return { status: "error", message: "Deadline must be after start time." };
@@ -508,6 +539,62 @@ export function FacultyGeneratePaper() {
       message: `Valid exam window: ${windowStr} (Students have ${durMin} min to complete within this window).`,
     };
   }, [startsAt, endsAt, duration]);
+
+  // Draft Actions
+  const handleResumeDraft = () => {
+    if (!detectedDraft) return;
+    setExamTitle(detectedDraft.examTitle || "");
+    setSubjectName(detectedDraft.subjectName || "");
+    setDuration(detectedDraft.duration || "60");
+    setTotalMarks(detectedDraft.totalMarks || "100");
+    setTopics(detectedDraft.topics && detectedDraft.topics.length ? detectedDraft.topics : [""]);
+    if (detectedDraft.examId) setExamId(detectedDraft.examId);
+    if (detectedDraft.currentStep) setCurrentStep(detectedDraft.currentStep);
+
+    // Validate if saved start time is in past
+    const s = new Date(detectedDraft.startsAt).getTime();
+    if (isNaN(s) || s < Date.now()) {
+      const nextSched = getNextRoundScheduleWindow();
+      setStartsAt(nextSched.startsAt);
+      setEndsAt(nextSched.endsAt);
+      toast.info("Draft resumed. Start time was in the past and has been automatically updated to the next upcoming window.");
+    } else {
+      setStartsAt(detectedDraft.startsAt);
+      setEndsAt(detectedDraft.endsAt);
+      toast.success("Draft resumed successfully.");
+    }
+    setIsDirty(true);
+    setShowDraftBanner(false);
+  };
+
+  const handleDiscardDraft = () => {
+    if (window.confirm("Are you sure you want to discard this saved draft?")) {
+      clearScopedWizardDraft(currentUser?.id);
+      setDetectedDraft(null);
+      setShowDraftBanner(false);
+      toast.success("Saved draft discarded.");
+    }
+  };
+
+  const handleResetStep1Form = () => {
+    if (window.confirm("Reset this form to clean defaults? All entered information will be cleared.")) {
+      const nextSched = getNextRoundScheduleWindow();
+      setExamTitle("");
+      setSubjectName("");
+      setDuration("60");
+      setTotalMarks("100");
+      setStartsAt(nextSched.startsAt);
+      setEndsAt(nextSched.endsAt);
+      setTopics([""]);
+      setQuestions([]);
+      setExamId(null);
+      clearScopedWizardDraft(currentUser?.id);
+      setDetectedDraft(null);
+      setShowDraftBanner(false);
+      setIsDirty(false);
+      toast.success("Form reset to clean defaults.");
+    }
+  };
 
   // Step 1 Validation
   const validateStep1 = () => {
@@ -856,9 +943,8 @@ export function FacultyGeneratePaper() {
       });
 
       const published = await facultyExamApi.publishExam(examId);
-      try {
-        localStorage.removeItem("examai_faculty_wizard_draft");
-      } catch {}
+      clearScopedWizardDraft(currentUser?.id);
+      setIsDirty(false);
       toast.success(published.visibility?.status_summary || "Exam published successfully!");
       navigate("/faculty/history");
     } catch (err) {
@@ -933,24 +1019,95 @@ export function FacultyGeneratePaper() {
 
         {/* ================= STEP 1: DETAILS ================= */}
         {currentStep === 1 && (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
-            <div className="border-b border-slate-100 pb-4">
-              <h2 className="text-lg font-bold text-slate-900">Step 1: Exam Details & Schedule</h2>
-              <p className="text-xs text-slate-500">Provide basic assessment parameters and scheduling window</p>
-            </div>
-
-            <div className="grid gap-5 sm:grid-cols-2">
-              {/* Exam Title */}
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Exam Title *</label>
-                <input
-                  type="text"
-                  value={examTitle}
-                  onChange={(e) => setExamTitle(e.target.value)}
-                  placeholder="e.g., Computer Networks Midterm Assessment"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
-                />
+          <div className="space-y-4">
+            {/* Unfinished Draft Resume Banner */}
+            {detectedDraft && showDraftBanner && (
+              <div
+                data-testid="draft-resume-banner"
+                className="rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50/90 to-indigo-50/90 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs"
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className="rounded-xl bg-blue-600/10 p-2.5 text-blue-700 shrink-0">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-slate-900">
+                        Unfinished Draft Available
+                      </h3>
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                        Saved Draft
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-1">
+                      You have an unsaved paper draft:{" "}
+                      <strong className="text-slate-900 font-semibold">
+                        "{detectedDraft.examTitle || "Untitled Exam"}"
+                      </strong>
+                      {detectedDraft.subjectName ? ` (${detectedDraft.subjectName})` : ""}. Would you like to resume where you left off?
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                  <button
+                    type="button"
+                    onClick={handleResumeDraft}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-blue-700 active:scale-95 transition-all"
+                  >
+                    <Play className="h-3.5 w-3.5 fill-current" />
+                    Resume Draft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDraftBanner(false)}
+                    className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-all"
+                  >
+                    Start Fresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDiscardDraft}
+                    className="inline-flex items-center gap-1 rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
+                    title="Discard saved draft"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
+            )}
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8 shadow-xs space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">Step 1: Exam Details & Schedule</h2>
+                  <p className="text-xs text-slate-500">Provide basic assessment parameters and scheduling window</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResetStep1Form}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-all self-start sm:self-center"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset Form
+                </button>
+              </div>
+
+              <div className="grid gap-5 sm:grid-cols-2">
+                {/* Exam Title */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">Exam Title *</label>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    value={examTitle}
+                    onChange={(e) => {
+                      setExamTitle(e.target.value);
+                      setIsDirty(true);
+                    }}
+                    placeholder="e.g., Computer Networks Midterm Assessment"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  />
+                </div>
 
               {/* Locked Department */}
               <div>
@@ -974,8 +1131,12 @@ export function FacultyGeneratePaper() {
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">Subject / Course Name</label>
                 <input
                   type="text"
+                  autoComplete="off"
                   value={subjectName}
-                  onChange={(e) => setSubjectName(e.target.value)}
+                  onChange={(e) => {
+                    setSubjectName(e.target.value);
+                    setIsDirty(true);
+                  }}
                   placeholder="e.g., CS-402 Network Protocols"
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
                 />
@@ -989,7 +1150,10 @@ export function FacultyGeneratePaper() {
                     type="number"
                     min="1"
                     value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
+                    onChange={(e) => {
+                      setDuration(e.target.value);
+                      setIsDirty(true);
+                    }}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all pl-10"
                   />
                   <Clock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
@@ -1003,7 +1167,10 @@ export function FacultyGeneratePaper() {
                   type="number"
                   min="1"
                   value={totalMarks}
-                  onChange={(e) => setTotalMarks(e.target.value)}
+                  onChange={(e) => {
+                    setTotalMarks(e.target.value);
+                    setIsDirty(true);
+                  }}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
                 />
               </div>
@@ -1015,7 +1182,10 @@ export function FacultyGeneratePaper() {
                   <input
                     type="datetime-local"
                     value={startsAt}
-                    onChange={(e) => setStartsAt(e.target.value)}
+                    onChange={(e) => {
+                      setStartsAt(e.target.value);
+                      setIsDirty(true);
+                    }}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
                   />
                 </div>
@@ -1028,7 +1198,10 @@ export function FacultyGeneratePaper() {
                   <input
                     type="datetime-local"
                     value={endsAt}
-                    onChange={(e) => setEndsAt(e.target.value)}
+                    onChange={(e) => {
+                      setEndsAt(e.target.value);
+                      setIsDirty(true);
+                    }}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
                   />
                 </div>
@@ -1075,6 +1248,7 @@ export function FacultyGeneratePaper() {
                     <div key={idx} className="flex items-center gap-2">
                       <input
                         type="text"
+                        autoComplete="off"
                         value={t}
                         onChange={(e) => handleTopicChange(idx, e.target.value)}
                         placeholder={`Topic ${idx + 1} (e.g., OSI Layer 4 Transport Protocols)`}
@@ -1106,7 +1280,8 @@ export function FacultyGeneratePaper() {
               </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* ================= STEP 2: QUESTIONS ================= */}
         {currentStep === 2 && (
@@ -2421,13 +2596,22 @@ export function FacultyGeneratePaper() {
           onClose={() => setShowProgressModal(false)}
           onSuccess={handleGenerationSuccess}
           onReset={() => {
-            try {
-              localStorage.removeItem("examai_faculty_wizard_draft");
-            } catch {}
+            clearScopedWizardDraft(currentUser?.id);
+            const nextSched = getNextRoundScheduleWindow();
+            setExamTitle("");
+            setSubjectName("");
+            setDuration("60");
+            setTotalMarks("100");
+            setStartsAt(nextSched.startsAt);
+            setEndsAt(nextSched.endsAt);
+            setTopics([""]);
             setQuestions([]);
             setExamId(null);
             setActiveJobId(null);
             setCurrentStep(1);
+            setDetectedDraft(null);
+            setShowDraftBanner(false);
+            setIsDirty(false);
           }}
           onChangeModel={() => {
             setShowProgressModal(false);
