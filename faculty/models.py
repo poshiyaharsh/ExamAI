@@ -27,6 +27,12 @@ class FacultyProfile(models.Model):
                 name='unique_institution_employee_id',
             ),
         ]
+        indexes = [
+            models.Index(
+                fields=['institution', 'department'],
+                name='faculty_inst_dept_idx',
+            ),
+        ]
 
     @staticmethod
     def build_next_employee_id(institution=None):

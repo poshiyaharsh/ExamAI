@@ -6,7 +6,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test:layout": "node tests/verify_layout.mjs"
+    "test:layout": "node tests/verify_layout.mjs",
+    "test:admin-faculty": "node tests/verify_admin_faculty_pagination_scroll.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "1.2.3",

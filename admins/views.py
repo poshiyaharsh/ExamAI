@@ -644,14 +644,49 @@ class AdminFacultyAPIView(APIView):
                         'status': 'success',
                         'message': 'Institution information not created yet.',
                         'data': [],
+                        'results': [],
+                        'count': 0,
+                        'total_count': 0,
+                        'total_pages': 1,
+                        'page': 1,
+                        'page_size': 10,
+                        'has_next': False,
+                        'has_prev': False,
+                        'next': None,
+                        'previous': None,
+                        'pagination': {
+                            'page': 1,
+                            'page_size': 10,
+                            'total_count': 0,
+                            'total_pages': 1,
+                            'has_next': False,
+                            'has_prev': False,
+                        },
                         'total_faculty': 0,
                         'active_faculty': 0,
+                        'inactive_faculty': 0,
                         'total_departments': 0,
+                        'statistics': {
+                            'total_faculty': 0,
+                            'active_faculty': 0,
+                            'inactive_faculty': 0,
+                            'total_departments': 0,
+                        },
+                        'success': True,
                     },
                     status=status.HTTP_200_OK,
                 )
 
-            queryset = FacultyProfile.objects.select_related('user', 'institution').filter(institution=institution)
+            base_queryset = FacultyProfile.objects.select_related('user', 'institution').filter(institution=institution)
+
+            # Pre-filter stats
+            total_faculty_stats = base_queryset.count()
+            active_faculty_stats = base_queryset.filter(user__is_active=True).count()
+            inactive_faculty_stats = max(total_faculty_stats - active_faculty_stats, 0)
+            total_departments_stats = base_queryset.exclude(department__exact='').values('department').distinct().count()
+
+            # Applying search & filters
+            queryset = base_queryset
 
             search_query = request.query_params.get('search', '').strip()
             if search_query:
@@ -663,7 +698,7 @@ class AdminFacultyAPIView(APIView):
                 )
 
             department = request.query_params.get('department', '').strip()
-            if department:
+            if department and department.lower() != 'all':
                 queryset = queryset.filter(department__iexact=department)
 
             status_filter = request.query_params.get('status', '').strip().lower()
@@ -672,32 +707,92 @@ class AdminFacultyAPIView(APIView):
             elif status_filter == 'inactive':
                 queryset = queryset.filter(user__is_active=False)
 
-            faculty = queryset.order_by('user__first_name', 'user__last_name', 'id')
-            serializer = AdminFacultyListSerializer(faculty, many=True)
-            total_faculty = faculty.count()
-            active_faculty = faculty.filter(user__is_active=True).count()
-            total_departments = faculty.exclude(department__exact='').values('department').distinct().count()
-            logger.debug(
-                "Admin faculty list queryset_count=%s active_count=%s serializer_data=%s",
-                total_faculty,
-                active_faculty,
-                serializer.data,
-            )
+            # Stable sorting
+            sort_by = request.query_params.get('sort', '').strip()
+            if sort_by == 'name_desc':
+                queryset = queryset.order_by('-user__first_name', '-user__last_name', '-id')
+            elif sort_by == 'department_asc':
+                queryset = queryset.order_by('department', 'user__first_name', 'id')
+            elif sort_by == 'department_desc':
+                queryset = queryset.order_by('-department', 'user__first_name', 'id')
+            elif sort_by == 'created_desc':
+                queryset = queryset.order_by('-created_at', '-id')
+            else:
+                queryset = queryset.order_by('user__first_name', 'user__last_name', 'id')
+
+            filtered_count = queryset.count()
+
+            # Pagination parameters (allowed: 10, 25, 50, 100)
+            ALLOWED_PAGE_SIZES = (10, 25, 50, 100)
+            raw_page_size = request.query_params.get('page_size')
+            try:
+                parsed_page_size = int(raw_page_size) if raw_page_size else 10
+                page_size = parsed_page_size if parsed_page_size in ALLOWED_PAGE_SIZES else 10
+            except (ValueError, TypeError):
+                page_size = 10
+
+            total_pages = max(1, (filtered_count + page_size - 1) // page_size) if filtered_count else 1
+
+            raw_page = request.query_params.get('page')
+            try:
+                parsed_page = int(raw_page) if raw_page else 1
+                page = max(1, min(total_pages, parsed_page))
+            except (ValueError, TypeError):
+                page = 1
+
+            offset = (page - 1) * page_size
+            faculty_page = queryset[offset:offset + page_size]
+
+            serializer = AdminFacultyListSerializer(faculty_page, many=True)
+
+            has_next = page < total_pages
+            has_prev = page > 1
+
+            base_url = request.build_absolute_uri(request.path)
+
+            def make_page_url(target_page):
+                qp = request.GET.copy()
+                qp['page'] = str(target_page)
+                qp['page_size'] = str(page_size)
+                return f"{base_url}?{qp.urlencode()}"
+
+            next_url = make_page_url(page + 1) if has_next else None
+            prev_url = make_page_url(page - 1) if has_prev else None
+
+            pagination_data = {
+                'page': page,
+                'page_size': page_size,
+                'total_count': filtered_count,
+                'total_pages': total_pages,
+                'has_next': has_next,
+                'has_prev': has_prev,
+            }
 
             return Response(
                 {
                     'status': 'success',
                     'message': 'Faculty fetched successfully.',
                     'data': serializer.data,
-                    'total_faculty': total_faculty,
-                    'active_faculty': active_faculty,
-                    'inactive_faculty': max(total_faculty - active_faculty, 0),
-                    'total_departments': total_departments,
+                    'results': serializer.data,
+                    'count': filtered_count,
+                    'total_count': filtered_count,
+                    'total_pages': total_pages,
+                    'page': page,
+                    'page_size': page_size,
+                    'has_next': has_next,
+                    'has_prev': has_prev,
+                    'next': next_url,
+                    'previous': prev_url,
+                    'pagination': pagination_data,
+                    'total_faculty': total_faculty_stats,
+                    'active_faculty': active_faculty_stats,
+                    'inactive_faculty': inactive_faculty_stats,
+                    'total_departments': total_departments_stats,
                     'statistics': {
-                        'total_faculty': total_faculty,
-                        'active_faculty': active_faculty,
-                        'inactive_faculty': max(total_faculty - active_faculty, 0),
-                        'total_departments': total_departments,
+                        'total_faculty': total_faculty_stats,
+                        'active_faculty': active_faculty_stats,
+                        'inactive_faculty': inactive_faculty_stats,
+                        'total_departments': total_departments_stats,
                     },
                     'success': True,
                 },

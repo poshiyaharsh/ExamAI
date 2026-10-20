@@ -1869,6 +1869,24 @@ export type AdminFacultyListResponse = {
   status: string;
   message: string;
   data: AdminFacultyRow[];
+  results?: AdminFacultyRow[];
+  count?: number;
+  total_count?: number;
+  total_pages?: number;
+  page?: number;
+  page_size?: number;
+  has_next?: boolean;
+  has_prev?: boolean;
+  next?: string | null;
+  previous?: string | null;
+  pagination?: {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
   total_faculty?: number;
   active_faculty?: number;
   inactive_faculty?: number;
@@ -1910,7 +1928,14 @@ export type AdminFacultyCreatePayload = {
 };
 
 export const adminFacultyApi = {
-  getFaculty: async (params?: { search?: string; department?: string; status?: string }): Promise<AdminFacultyListResponse> => {
+  getFaculty: async (params?: {
+    search?: string;
+    department?: string;
+    status?: string;
+    page?: number;
+    page_size?: number;
+    sort?: string;
+  }): Promise<AdminFacultyListResponse> => {
     const response = await apiClient.get<AdminFacultyListResponse>('/api/admin/faculty', { params });
     return response.data;
   },
