@@ -100,3 +100,36 @@ class SuperAdminAuditLog(models.Model):
 
     def __str__(self):
         return f'[{self.created_at}] {self.actor_username} - {self.action}'
+
+
+class SystemSetting(models.Model):
+    """
+    Centralized key-value platform configuration.
+    Controls dynamic maintenance mode, rate limits, and default parameters.
+    """
+    key = models.CharField(max_length=64, unique=True, db_index=True)
+    value = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.CharField(max_length=150, blank=True, default='')
+
+    class Meta:
+        verbose_name = 'System Setting'
+        verbose_name_plural = 'System Settings'
+
+    @classmethod
+    def get_setting(cls, key: str, default=None):
+        record = cls.objects.filter(key=key).first()
+        if record:
+            return record.value
+        return default
+
+    @classmethod
+    def set_setting(cls, key: str, value, updated_by: str = ''):
+        record, _ = cls.objects.update_or_create(
+            key=key,
+            defaults={'value': value, 'updated_by': updated_by},
+        )
+        return record
+
+    def __str__(self):
+        return f'Setting: {self.key}'

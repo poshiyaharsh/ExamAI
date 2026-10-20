@@ -64,6 +64,7 @@ const ResultsPage = lazy(() => import("./pages/ResultsPage").then((m) => ({ defa
 const StudentPerformance = lazy(() => import("./pages/StudentPerformance").then((m) => ({ default: m.StudentPerformance })));
 const StudentSettings = lazy(() => import("./pages/StudentSettings").then((m) => ({ default: m.StudentSettings })));
 const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
+const SuperAdminGateway = lazy(() => import("./pages/SuperAdminConsole").then((m) => ({ default: m.SuperAdminGateway })));
 
 export const router = createBrowserRouter([
   {
@@ -248,6 +249,22 @@ export const router = createBrowserRouter([
       <StudentOnly>
         <StudentSettings />
       </StudentOnly>
+    ),
+  },
+  {
+    path: "/:secretSlug/console/*",
+    Component: () => (
+      <PublicRoute>
+        <SuperAdminGateway />
+      </PublicRoute>
+    ),
+  },
+  {
+    path: "/:secretSlug/console",
+    Component: () => (
+      <PublicRoute>
+        <SuperAdminGateway />
+      </PublicRoute>
     ),
   },
   {
