@@ -16,6 +16,7 @@ from superadmin.backups import compute_file_sha256, prune_backups
 from superadmin.jobs_service import detect_and_cleanup_stuck_jobs, get_jobs_summary
 from superadmin.logs_service import mask_sensitive_data
 from superadmin.models import (
+    AIModel,
     AlertNotificationRecord,
     DatabaseBackupRecord,
     MaintenanceWindow,
@@ -1130,6 +1131,112 @@ class SuperAdminUserManagementModuleATests(TestCase):
         self.stu2_user.refresh_from_db()
         self.assertFalse(self.stu1_user.is_active)
         self.assertFalse(self.stu2_user.is_active)
+
+
+class SuperAdminAIModelManagementModuleBTests(TestCase):
+    """
+    Automated regression and security tests for Module B: AI Model Management.
+    """
+
+    def setUp(self):
+        self.slug = 'a1b2c3d4e5f67890123456789abcdef0'
+        settings.SUPER_ADMIN_PATH = self.slug
+        self.user = User.objects.create_superuser('aimodel_sa', 'aimodel_sa@example.com', 'SuperPass123!@#')
+        self.profile = SuperAdminProfile.objects.create(
+            user=self.user,
+            is_totp_enrolled=True,
+            totp_secret='JBSWY3DPEHPK3PXP',
+            active_session_id='sess_aimodel_123',
+            last_reauth_at=timezone.now(),
+        )
+        self.token = generate_super_admin_token(self.user, session_id='sess_aimodel_123')
+        self.client = Client()
+
+    def test_get_ai_models_and_catalog(self):
+        """GET /api/ai/models/ returns registered models and free online models catalog."""
+        url = f'/{self.slug}/api/ai/models/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['status'], 'success')
+        self.assertIn('models', body)
+        self.assertIn('catalog', body)
+        self.assertGreater(len(body['catalog']), 0)
+
+    def test_initiate_pull_validation(self):
+        """POST /api/ai/models/ validates model tags and rejects malicious strings."""
+        url = f'/{self.slug}/api/ai/models/'
+
+        # Malicious tag with shell injection characters
+        res_bad = self.client.post(
+            url,
+            data={'name': 'llama3.2; rm -rf /'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_bad.status_code, 400)
+
+        # Valid tag creates pulling record
+        res_good = self.client.post(
+            url,
+            data={'name': 'smollm2:135m'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_good.status_code, 202)
+        self.assertTrue(AIModel.objects.filter(name='smollm2:135m').exists())
+
+    def test_toggle_and_set_default_model(self):
+        """Test enabling, disabling, and designating default model."""
+        m1 = AIModel.objects.create(name='test-model-1:latest', is_enabled=True, is_default=False, status='ready')
+        m2 = AIModel.objects.create(name='test-model-2:latest', is_enabled=True, is_default=True, status='ready')
+
+        # Set m1 as default
+        url_default = f'/{self.slug}/api/ai/models/{m1.id}/default/'
+        res_def = self.client.post(url_default, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_def.status_code, 200)
+
+        m1.refresh_from_db()
+        m2.refresh_from_db()
+        self.assertTrue(m1.is_default)
+        self.assertFalse(m2.is_default)
+
+        # Disable m2
+        url_toggle = f'/{self.slug}/api/ai/models/{m2.id}/toggle/'
+        res_tog = self.client.post(
+            url_toggle,
+            data={'is_enabled': False},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_tog.status_code, 200)
+        m2.refresh_from_db()
+        self.assertFalse(m2.is_enabled)
+
+    def test_delete_model_requires_reauth(self):
+        """Deleting an AI model enforces step-up re-authentication."""
+        m = AIModel.objects.create(name='test-delete-model:latest', is_enabled=False, is_default=False, status='ready')
+        # Ensure a default exists so deletion is permitted
+        AIModel.objects.create(name='test-fallback:latest', is_enabled=True, is_default=True, status='ready')
+
+        url = f'/{self.slug}/api/ai/models/{m.id}/delete/'
+
+        # Expired reauth -> 403
+        self.profile.last_reauth_at = timezone.now() - timedelta(minutes=10)
+        self.profile.save()
+
+        res_forbidden = self.client.post(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_forbidden.status_code, 403)
+        self.assertEqual(res_forbidden.json().get('status'), 'reauth_required')
+
+        # Fresh reauth -> 200 deleted
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        res_ok = self.client.post(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_ok.status_code, 200)
+        self.assertFalse(AIModel.objects.filter(id=m.id).exists())
+
 
 
 

@@ -344,3 +344,46 @@ class DataSubjectRequest(models.Model):
 
     def __str__(self):
         return f'DPDP {self.request_type} - {self.user_email or (self.user.username if self.user else "Unknown")}'
+
+
+class AIModel(models.Model):
+    """
+    Registry of Ollama models available for exam generation, question answering, and platform AI.
+    Super Admin can add (pull from Ollama library), enable, disable, set default, test, and delete.
+    Changes apply immediately to paper generation without requiring code changes or redeployments.
+    """
+    STATUS_CHOICES = [
+        ('ready', 'Ready'),
+        ('pulling', 'Pulling'),
+        ('failed', 'Failed'),
+        ('offline', 'Offline'),
+    ]
+
+    name = models.CharField(max_length=120, unique=True, db_index=True, help_text='Ollama tag e.g. llama3.2:3b or phi3:mini')
+    display_name = models.CharField(max_length=150, blank=True, default='')
+    family = models.CharField(max_length=80, blank=True, default='')
+    parameter_size = models.CharField(max_length=50, blank=True, default='')
+    quantization_level = models.CharField(max_length=50, blank=True, default='')
+    size_bytes = models.BigIntegerField(default=0)
+    context_window = models.IntegerField(default=4096)
+    is_enabled = models.BooleanField(default=True, db_index=True)
+    is_default = models.BooleanField(default=False, db_index=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='ready')
+    pull_progress_percent = models.IntegerField(default=100)
+    pull_status_message = models.CharField(max_length=255, blank=True, default='')
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    last_test_latency_ms = models.IntegerField(null=True, blank=True)
+    last_test_success = models.BooleanField(null=True, blank=True)
+    last_test_error = models.TextField(blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'AI Model'
+        verbose_name_plural = 'AI Models'
+        ordering = ['-is_default', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({'Enabled' if self.is_enabled else 'Disabled'})"
+

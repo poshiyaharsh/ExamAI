@@ -36,6 +36,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { SuperAdminUsersModule } from './superadmin/SuperAdminUsersModule';
+import { SuperAdminAIModule } from './superadmin/SuperAdminAIModule';
 
 interface SuperAdminUser {
   username: string;
@@ -538,7 +539,7 @@ function SuperAdminDashboardLayout({
         {activeTab === 'institutes' && <SuperAdminInstitutesTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'users' && <SuperAdminUsersModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'exams' && <SuperAdminExamsTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
-        {activeTab === 'ai' && <SuperAdminAITab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
+        {activeTab === 'ai' && <SuperAdminAIModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'security' && <SuperAdminSecurityTab saFetch={saFetch} onTriggerReauth={triggerReauth} onRefreshUser={onRefreshUser} />}
         {activeTab === 'data' && <SuperAdminDataTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
       </main>
@@ -1714,32 +1715,9 @@ function SuperAdminAITab({
   saFetch: (endpoint: string, options?: RequestInit) => Promise<Response>;
   onTriggerReauth: (cb?: () => void) => void;
 }) {
-  return (
-    <div className="space-y-6 min-w-0 max-w-full">
-      <div className="border-b border-slate-800 pb-5">
-        <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">AI & Generation Infrastructure</h1>
-        <p className="text-xs text-slate-400 mt-1">Ollama local inference service, model routing, and generation queues</p>
-      </div>
-
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-emerald-400" /> Active Local Inference Provider
-        </h3>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          ExamAI leverages a local <strong>Ollama instance</strong> running on <code>http://127.0.0.1:11434</code> with fallback model failover and batching optimizations.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
-          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-            <span className="text-slate-400">Primary Objective Model:</span> <span className="text-emerald-400 font-bold">qwen2.5:3b-instruct</span>
-          </div>
-          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-            <span className="text-slate-400">Primary Subjective Model:</span> <span className="text-emerald-400 font-bold">qwen2.5:3b-instruct</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <SuperAdminAIModule saFetch={saFetch} onTriggerReauth={onTriggerReauth} />;
 }
+
 
 // ==============================================================================
 // TAB 6: SYSTEM & SECURITY CENTER

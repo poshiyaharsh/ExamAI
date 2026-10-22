@@ -59,6 +59,14 @@ from superadmin.dpdp_service import (
     export_user_data,
     get_data_inventory,
 )
+from superadmin.ai_service import (
+    get_ollama_status_and_sync,
+    initiate_model_pull,
+    remove_ollama_model,
+    set_default_ai_model,
+    test_ai_model_connectivity,
+    toggle_ai_model_status,
+)
 from superadmin.user_service import (
     create_user_record,
     execute_bulk_users_action,
@@ -2321,5 +2329,110 @@ class SuperAdminDPDPDataInventoryAPIView(APIView):
     def get(self, request):
         inventory = get_data_inventory()
         return Response({'status': 'success', 'data_inventory': inventory}, status=status.HTTP_200_OK)
+
+
+# ==============================================================================
+# MODULE B: AI MODEL MANAGEMENT (DYNAMIC OLLAMA REGISTRY)
+# ==============================================================================
+
+class SuperAdminAIModelsAPIView(APIView):
+    """
+    Get all registered Ollama models, sync with local Ollama runtime,
+    view running instances, capacity warnings, and initiate downloads.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        data = get_ollama_status_and_sync()
+        return Response({'status': 'success', **data}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        model_name = str(request.data.get('name', '')).strip()
+        if not model_name:
+            return Response({'status': 'error', 'message': 'Model tag name is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        success, msg, model_data = initiate_model_pull(model_name=model_name, actor_username=request.user.username)
+        if not success:
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'status': 'success', 'message': msg, 'data': model_data}, status=status.HTTP_202_ACCEPTED)
+
+
+class SuperAdminAIModelToggleAPIView(APIView):
+    """
+    Enable or disable an AI model. Disabled models are excluded from paper generation.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, model_id):
+        is_enabled = bool(request.data.get('is_enabled', True))
+        success, msg = toggle_ai_model_status(
+            model_id=model_id,
+            is_enabled=is_enabled,
+            actor_username=request.user.username,
+        )
+        if not success:
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'success', 'message': msg}, status=status.HTTP_200_OK)
+
+
+class SuperAdminAIModelSetDefaultAPIView(APIView):
+    """
+    Sets designated AI model as the platform primary default for paper generation.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, model_id):
+        success, msg = set_default_ai_model(model_id=model_id, actor_username=request.user.username)
+        if not success:
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'success', 'message': msg}, status=status.HTTP_200_OK)
+
+
+class SuperAdminAIModelDeleteAPIView(APIView):
+    """
+    Permanently deletes model from disk via Ollama HTTP API and removes from platform registry.
+    Requires step-up re-authentication.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def delete(self, request, model_id):
+        return self._perform_delete(request, model_id)
+
+    def post(self, request, model_id):
+        return self._perform_delete(request, model_id)
+
+    def _perform_delete(self, request, model_id):
+        profile = getattr(request.user, 'super_admin_profile', None)
+        if profile and not profile.is_reauth_valid():
+            return Response(
+                {'status': 'reauth_required', 'message': 'Deleting an AI model requires step-up re-authentication.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        success, msg = remove_ollama_model(model_id=model_id, actor_username=request.user.username)
+        if not success:
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'success', 'message': msg}, status=status.HTTP_200_OK)
+
+
+class SuperAdminAIModelTestAPIView(APIView):
+    """
+    Runs latency benchmark and operational health test for an Ollama model.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, model_id):
+        success, msg, result = test_ai_model_connectivity(model_id=model_id, actor_username=request.user.username)
+        return Response(
+            {'status': 'success' if success else 'failed', 'message': msg, 'result': result},
+            status=status.HTTP_200_OK,
+        )
+
 
 

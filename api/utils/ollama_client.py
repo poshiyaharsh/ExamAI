@@ -70,6 +70,27 @@ def resolve_ollama_model(
 
     installed_set = set(installed)
 
+    # 0. Check Super Admin dynamic AIModel registry if available
+    try:
+        from superadmin.models import AIModel
+        enabled_qs = AIModel.objects.filter(is_enabled=True, status='ready')
+        if enabled_qs.exists():
+            enabled_names = {m.name: m for m in enabled_qs}
+            if preferred_model:
+                canonical_pref = canonicalize_model_tag(preferred_model)
+                for name in enabled_names:
+                    if name.lower() == canonical_pref.lower() or name.split(':')[0] == canonical_pref.split(':')[0]:
+                        if name in installed_set:
+                            return name, None
+            default_m = enabled_qs.filter(is_default=True).first()
+            if default_m and default_m.name in installed_set:
+                return default_m.name, None
+            for m in enabled_qs:
+                if m.name in installed_set:
+                    return m.name, None
+    except Exception:
+        pass
+
     # 1. Preferred model (e.g. from exam or request)
     if preferred_model:
         canonical_pref = canonicalize_model_tag(preferred_model)

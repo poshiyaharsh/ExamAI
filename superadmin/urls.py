@@ -1,6 +1,11 @@
 from django.urls import path
 from superadmin.views import (
     SuperAdmin2FAEnrollAPIView,
+    SuperAdminAIModelDeleteAPIView,
+    SuperAdminAIModelSetDefaultAPIView,
+    SuperAdminAIModelTestAPIView,
+    SuperAdminAIModelToggleAPIView,
+    SuperAdminAIModelsAPIView,
     SuperAdminAnnouncementsAPIView,
     SuperAdminAuditLogAPIView,
     SuperAdminBackupAPIView,
@@ -96,6 +101,13 @@ urlpatterns = [
     # Global Exams Overview
     path('exams/', SuperAdminExamListAPIView.as_view(), name='sa-exams-list'),
     path('exams/<int:exam_id>/force-close/', SuperAdminExamForceCloseAPIView.as_view(), name='sa-exam-force-close'),
+
+    # Module B: AI Models & Ollama Management
+    path('ai/models/', SuperAdminAIModelsAPIView.as_view(), name='sa-ai-models'),
+    path('ai/models/<int:model_id>/toggle/', SuperAdminAIModelToggleAPIView.as_view(), name='sa-ai-model-toggle'),
+    path('ai/models/<int:model_id>/default/', SuperAdminAIModelSetDefaultAPIView.as_view(), name='sa-ai-model-default'),
+    path('ai/models/<int:model_id>/delete/', SuperAdminAIModelDeleteAPIView.as_view(), name='sa-ai-model-delete'),
+    path('ai/models/<int:model_id>/test/', SuperAdminAIModelTestAPIView.as_view(), name='sa-ai-model-test'),
 
     # System Settings & Security
     path('system/settings/', SuperAdminSystemSettingsAPIView.as_view(), name='sa-system-settings'),
