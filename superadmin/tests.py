@@ -18,8 +18,10 @@ from superadmin.logs_service import mask_sensitive_data
 from superadmin.models import (
     AIModel,
     AlertNotificationRecord,
+    CampaignDeliveryRecord,
     DatabaseBackupRecord,
     MaintenanceWindow,
+    NotificationCampaign,
     SuperAdminAuditLog,
     SuperAdminProfile,
     SystemSetting,
@@ -1236,6 +1238,143 @@ class SuperAdminAIModelManagementModuleBTests(TestCase):
         res_ok = self.client.post(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
         self.assertEqual(res_ok.status_code, 200)
         self.assertFalse(AIModel.objects.filter(id=m.id).exists())
+
+
+class SuperAdminNotificationEngineModuleCTests(TestCase):
+    """
+    Automated tests for Module C: Notifications Engine, Audience Resolution, and Delivery Tracking.
+    """
+
+    def setUp(self):
+        self.slug = 'a1b2c3d4e5f67890123456789abcdef0'
+        settings.SUPER_ADMIN_PATH = self.slug
+        self.sa_user = User.objects.create_superuser('notify_sa', 'notify_sa@example.com', 'SuperPass123!@#')
+        self.profile = SuperAdminProfile.objects.create(
+            user=self.sa_user,
+            is_totp_enrolled=True,
+            totp_secret='JBSWY3DPEHPK3PXP',
+            active_session_id='sess_notify_123',
+            last_reauth_at=timezone.now(),
+        )
+        self.token = generate_super_admin_token(self.sa_user, session_id='sess_notify_123')
+        self.client = Client()
+
+        # Seed test institution, students, and faculty
+        self.inst = AdminInstitution.objects.create(
+            admin=self.sa_user,
+            institution_name='Notification Test Institute',
+            institution_code='INST-N01',
+        )
+        self.stu = User.objects.create_user(username='stu_notify', email='stu_notify@test.edu', password='pw')
+        self.stu_profile = StudentProfile.objects.create(
+            user=self.stu,
+            institution=self.inst,
+            student_id='STU-NOTIF-01',
+            department='Computer Engineering',
+        )
+
+        self.fac = User.objects.create_user(username='fac_notify', email='fac_notify@test.edu', password='pw')
+        self.fac_profile = FacultyProfile.objects.create(
+            user=self.fac,
+            institution=self.inst,
+            department='Computer Engineering',
+            designation='Assistant Professor',
+        )
+
+    def test_audience_preview_resolutions(self):
+        """Test audience preview for all, role-based, and department-based filters."""
+        url = f'/{self.slug}/api/notifications/audience-preview/'
+
+        # Preview: All
+        res_all = self.client.post(url, data={'target_audience': 'all'}, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_all.status_code, 200)
+        body_all = res_all.json()
+        self.assertGreaterEqual(body_all['total_recipients'], 2)
+
+        # Preview: Students only
+        res_stu = self.client.post(
+            url,
+            data={'target_audience': 'role', 'target_role': 'student'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_stu.status_code, 200)
+        self.assertEqual(res_stu.json()['total_recipients'], 1)
+        self.assertEqual(res_stu.json()['sample_recipients'][0]['username'], 'stu_notify')
+
+        # Preview: Faculty only
+        res_fac = self.client.post(
+            url,
+            data={'target_audience': 'role', 'target_role': 'faculty'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_fac.status_code, 200)
+        self.assertEqual(res_fac.json()['total_recipients'], 1)
+        self.assertEqual(res_fac.json()['sample_recipients'][0]['username'], 'fac_notify')
+
+    def test_create_and_dispatch_campaign_immediate(self):
+        """Creating an immediate campaign dispatches api.Notification to users and creates delivery tracking records."""
+        url = f'/{self.slug}/api/notifications/campaigns/'
+        payload = {
+            'title': 'Emergency Server Maintenance Scheduled',
+            'message': 'Platform will undergo brief maintenance at 11 PM.',
+            'notification_type': 'warning',
+            'target_audience': 'role',
+            'target_role': 'student',
+            'link': '/exams',
+        }
+
+        res = self.client.post(url, data=payload, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 201)
+        c_id = res.json()['data']['id']
+
+        # Give background worker a brief moment to write records
+        time.sleep(0.5)
+
+        campaign = NotificationCampaign.objects.get(id=c_id)
+        self.assertIn(campaign.status, ('sending', 'completed'))
+        self.assertEqual(campaign.recipients_count, 1)
+
+        # Verify that student received the notification (bell integration)
+        notif = Notification.objects.filter(user=self.stu, title='Emergency Server Maintenance Scheduled').first()
+        self.assertIsNotNone(notif)
+        self.assertEqual(notif.type, 'warning')
+        self.assertFalse(notif.is_read)
+
+        # Verify campaign delivery record exists
+        deliv = CampaignDeliveryRecord.objects.filter(campaign=campaign, user=self.stu).first()
+        self.assertIsNotNone(deliv)
+        self.assertEqual(deliv.status, 'delivered')
+
+    def test_schedule_and_cancel_campaign(self):
+        """Test scheduling a campaign for future execution and cancelling before dispatch."""
+        url = f'/{self.slug}/api/notifications/campaigns/'
+        future_time = timezone.now() + timedelta(days=2)
+
+        payload = {
+            'title': 'Next Term Registration Opens',
+            'message': 'Registration opens next Monday.',
+            'notification_type': 'info',
+            'target_audience': 'all',
+            'scheduled_at': future_time.isoformat(),
+        }
+
+        res = self.client.post(url, data=payload, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 201)
+        c_id = res.json()['data']['id']
+
+        campaign = NotificationCampaign.objects.get(id=c_id)
+        self.assertEqual(campaign.status, 'scheduled')
+
+        # Cancel the scheduled campaign
+        cancel_url = f'/{self.slug}/api/notifications/campaigns/{c_id}/cancel/'
+        res_cancel = self.client.post(cancel_url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_cancel.status_code, 200)
+
+        campaign.refresh_from_db()
+        self.assertEqual(campaign.status, 'cancelled')
+
 
 
 

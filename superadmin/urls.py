@@ -37,6 +37,9 @@ from superadmin.views import (
     SuperAdminMaintenanceWindowAPIView,
     SuperAdminMeAPIView,
     SuperAdminMonitoringHealthAPIView,
+    SuperAdminNotificationAudiencePreviewAPIView,
+    SuperAdminNotificationCampaignCancelAPIView,
+    SuperAdminNotificationCampaignListCreateAPIView,
     SuperAdminPermissionsMatrixAPIView,
     SuperAdminReauthAPIView,
     SuperAdminStuckJobDetectorAPIView,
@@ -108,6 +111,11 @@ urlpatterns = [
     path('ai/models/<int:model_id>/default/', SuperAdminAIModelSetDefaultAPIView.as_view(), name='sa-ai-model-default'),
     path('ai/models/<int:model_id>/delete/', SuperAdminAIModelDeleteAPIView.as_view(), name='sa-ai-model-delete'),
     path('ai/models/<int:model_id>/test/', SuperAdminAIModelTestAPIView.as_view(), name='sa-ai-model-test'),
+
+    # Module C: Notifications Engine & Delivery Tracking
+    path('notifications/campaigns/', SuperAdminNotificationCampaignListCreateAPIView.as_view(), name='sa-campaigns'),
+    path('notifications/campaigns/<int:campaign_id>/cancel/', SuperAdminNotificationCampaignCancelAPIView.as_view(), name='sa-campaign-cancel'),
+    path('notifications/audience-preview/', SuperAdminNotificationAudiencePreviewAPIView.as_view(), name='sa-audience-preview'),
 
     # System Settings & Security
     path('system/settings/', SuperAdminSystemSettingsAPIView.as_view(), name='sa-system-settings'),

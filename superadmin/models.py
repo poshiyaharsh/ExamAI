@@ -387,3 +387,102 @@ class AIModel(models.Model):
     def __str__(self):
         return f"{self.name} ({'Enabled' if self.is_enabled else 'Disabled'})"
 
+
+class NotificationCampaign(models.Model):
+    """
+    Super Admin broadcast notification campaign with targeted audience resolution,
+    scheduling, batched background delivery, and real-time delivery/read tracking.
+    """
+    AUDIENCE_CHOICES = [
+        ('all', 'All Users across all Institutes'),
+        ('role', 'Specific Role (Students, Faculty, or Admins)'),
+        ('institute', 'Specific Institute'),
+        ('department', 'Specific Department'),
+        ('individual', 'Specific Individual Users'),
+    ]
+
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('scheduled', 'Scheduled'),
+        ('sending', 'Sending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    notification_type = models.CharField(
+        max_length=30,
+        choices=[('info', 'Info'), ('warning', 'Warning'), ('success', 'Success'), ('error', 'Error')],
+        default='info',
+    )
+    link = models.CharField(max_length=500, blank=True, default='')
+
+    target_audience = models.CharField(max_length=50, choices=AUDIENCE_CHOICES, default='all')
+    target_role = models.CharField(max_length=30, blank=True, default='')
+    target_institute = models.ForeignKey(
+        'admins.AdminInstitution',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='admin_notification_campaigns',
+    )
+    target_department = models.CharField(max_length=120, blank=True, default='')
+    target_user_ids = models.JSONField(default=list, blank=True)
+
+    scheduled_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='draft', db_index=True)
+
+    recipients_count = models.IntegerField(default=0)
+    delivered_count = models.IntegerField(default=0)
+    read_count = models.IntegerField(default=0)
+    channels = models.JSONField(default=list, blank=True)
+
+    created_by = models.CharField(max_length=150, default='system')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Notification Campaign'
+        verbose_name_plural = 'Notification Campaigns'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.title} ({self.status})'
+
+
+class CampaignDeliveryRecord(models.Model):
+    """
+    Individual recipient delivery and read status tracker for a notification campaign.
+    """
+    campaign = models.ForeignKey(
+        NotificationCampaign,
+        on_delete=models.CASCADE,
+        related_name='delivery_records',
+        db_index=True,
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='campaign_deliveries', db_index=True)
+    notification = models.ForeignKey(
+        'api.Notification',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='campaign_record',
+    )
+    status = models.CharField(max_length=30, default='delivered')
+    delivered_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Campaign Delivery Record'
+        verbose_name_plural = 'Campaign Delivery Records'
+        ordering = ['-delivered_at']
+        indexes = [
+            models.Index(fields=['campaign', 'user']),
+        ]
+
+    def __str__(self):
+        return f'Campaign #{self.campaign_id} -> User {self.user_id} ({self.status})'
+
+

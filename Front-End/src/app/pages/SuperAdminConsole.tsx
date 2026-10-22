@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
+  Bell,
   ShieldAlert,
   ShieldCheck,
   Server,
@@ -37,6 +38,7 @@ import {
 } from 'lucide-react';
 import { SuperAdminUsersModule } from './superadmin/SuperAdminUsersModule';
 import { SuperAdminAIModule } from './superadmin/SuperAdminAIModule';
+import { SuperAdminNotificationsModule } from './superadmin/SuperAdminNotificationsModule';
 
 interface SuperAdminUser {
   username: string;
@@ -500,6 +502,12 @@ function SuperAdminDashboardLayout({
             label="AI & Generation"
           />
           <SidebarNavButton
+            active={activeTab === 'notifications'}
+            onClick={() => setActiveTab('notifications')}
+            icon={<Bell className="w-4 h-4" />}
+            label="Notifications"
+          />
+          <SidebarNavButton
             active={activeTab === 'security'}
             onClick={() => setActiveTab('security')}
             icon={<Lock className="w-4 h-4" />}
@@ -540,6 +548,7 @@ function SuperAdminDashboardLayout({
         {activeTab === 'users' && <SuperAdminUsersModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'exams' && <SuperAdminExamsTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'ai' && <SuperAdminAIModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
+        {activeTab === 'notifications' && <SuperAdminNotificationsModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'security' && <SuperAdminSecurityTab saFetch={saFetch} onTriggerReauth={triggerReauth} onRefreshUser={onRefreshUser} />}
         {activeTab === 'data' && <SuperAdminDataTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
       </main>

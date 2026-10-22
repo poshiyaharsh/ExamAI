@@ -67,6 +67,12 @@ from superadmin.ai_service import (
     test_ai_model_connectivity,
     toggle_ai_model_status,
 )
+from superadmin.notification_service import (
+    cancel_scheduled_campaign,
+    create_and_send_campaign,
+    list_campaigns_paginated,
+    preview_campaign_audience,
+)
 from superadmin.user_service import (
     create_user_record,
     execute_bulk_users_action,
@@ -2433,6 +2439,84 @@ class SuperAdminAIModelTestAPIView(APIView):
             {'status': 'success' if success else 'failed', 'message': msg, 'result': result},
             status=status.HTTP_200_OK,
         )
+
+
+# ==============================================================================
+# MODULE C: NOTIFICATIONS ENGINE
+# ==============================================================================
+
+class SuperAdminNotificationCampaignListCreateAPIView(APIView):
+    """
+    List campaigns with real-time delivery and read rates.
+    Create and dispatch or schedule targeted notification campaigns.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        page = max(1, int(request.GET.get('page', 1)))
+        page_size = min(int(request.GET.get('page_size', 10)), 100)
+        search = str(request.GET.get('search', '')).strip()
+        status_filter = str(request.GET.get('status', 'all')).strip()
+
+        data = list_campaigns_paginated(
+            page=page,
+            page_size=page_size,
+            search=search,
+            status_filter=status_filter,
+        )
+        return Response({'status': 'success', **data}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        success, msg, campaign_data = create_and_send_campaign(
+            data=request.data,
+            actor_username=request.user.username,
+        )
+        if not success:
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'success', 'message': msg, 'data': campaign_data}, status=status.HTTP_201_CREATED)
+
+
+class SuperAdminNotificationAudiencePreviewAPIView(APIView):
+    """
+    Live recipient count resolution and sample recipient preview for the audience builder.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request):
+        target_audience = request.data.get('target_audience', 'all')
+        target_role = request.data.get('target_role', '')
+        target_institute_id = request.data.get('target_institute_id')
+        target_department = request.data.get('target_department', '')
+        target_user_ids = request.data.get('target_user_ids', [])
+
+        preview_data = preview_campaign_audience(
+            target_audience=target_audience,
+            target_role=target_role,
+            target_institute_id=target_institute_id,
+            target_department=target_department,
+            target_user_ids=target_user_ids,
+        )
+        return Response({'status': 'success', **preview_data}, status=status.HTTP_200_OK)
+
+
+class SuperAdminNotificationCampaignCancelAPIView(APIView):
+    """
+    Cancels a scheduled or draft notification campaign.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, campaign_id):
+        success, msg = cancel_scheduled_campaign(
+            campaign_id=campaign_id,
+            actor_username=request.user.username,
+        )
+        if not success:
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'success', 'message': msg}, status=status.HTTP_200_OK)
+
 
 
 
