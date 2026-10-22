@@ -1,11 +1,14 @@
 import json
 import time
 from datetime import timedelta
+from io import StringIO
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from admins.models import AdminInstitution, AdminProfile
 from api.models import Exam, Notification, PaperGenerationJob
@@ -1517,6 +1520,299 @@ class SuperAdminReportsAndToolsModuleDTests(TestCase):
         self.assertEqual(res.status_code, 200)
         results = res.json()['results']
         self.assertTrue(any(r['title'] == 'Apex University of Science' for r in results))
+
+
+class SuperAdminGlobalExamsManagerModuleTests(TestCase):
+    """
+    Automated tests for Global Exams Manager filtering, metadata, and export:
+    - Search by title, subject, department, faculty username
+    - Multi-select status and phase filters
+    - Institute, department, faculty hierarchy
+    - Date range, marks range, question types
+    - CSV/XLSX export with formula injection sanitization (CWE-1236)
+    """
+
+    def setUp(self):
+        self.slug = 'a1b2c3d4e5f67890123456789abcdef0'
+        settings.SUPER_ADMIN_PATH = self.slug
+        self.sa_user = User.objects.create_superuser('exams_sa', 'exams_sa@example.com', 'SuperPass123!@#')
+        self.profile = SuperAdminProfile.objects.create(
+            user=self.sa_user,
+            is_totp_enrolled=True,
+            totp_secret='JBSWY3DPEHPK3PXP',
+            active_session_id='sess_exams_123',
+            last_reauth_at=timezone.now(),
+        )
+        self.token = generate_super_admin_token(self.sa_user, session_id='sess_exams_123')
+        self.client = Client()
+
+        # Seed institutions
+        self.admin2_user = User.objects.create_user(
+            username='admin_beacon',
+            email='admin_beacon@example.com',
+            password='AdminPassword123!',
+        )
+        self.inst1 = AdminInstitution.objects.create(
+            admin=self.sa_user,
+            institution_name='Apex University of Science',
+            institution_code='APEX-01',
+        )
+        self.inst2 = AdminInstitution.objects.create(
+            admin=self.admin2_user,
+            institution_name='Beacon Engineering Institute',
+            institution_code='BEACON-02',
+        )
+
+        # Seed Faculty
+        self.fac_user = User.objects.create_user(
+            username='fac_exam_mgr',
+            email='fac_exam_mgr@example.com',
+            password='FacultyPassword123!',
+        )
+        self.fac_profile = FacultyProfile.objects.create(
+            user=self.fac_user,
+            department='Computer Science',
+            employee_id='FAC-CS-001',
+        )
+
+        # Seed Exams
+        self.exam1 = Exam.objects.create(
+            title='Calculus I Final',
+            subject='Mathematics',
+            department='Mathematics',
+            institution=self.inst1,
+            created_by=self.sa_user,
+            total_marks=100,
+            duration_minutes=120,
+            status=Exam.Status.PUBLISHED,
+        )
+        self.exam2 = Exam.objects.create(
+            title='Intro to Algorithms',
+            subject='Algorithms',
+            department='Computer Science',
+            institution=self.inst1,
+            created_by=self.fac_user,
+            total_marks=50,
+            duration_minutes=60,
+            status=Exam.Status.DRAFT,
+        )
+        self.exam3 = Exam.objects.create(
+            title='=2+5 Dangerous Formula Midterm',
+            subject='Computer Networks',
+            department='Electronics',
+            institution=self.inst2,
+            created_by=self.fac_user,
+            total_marks=75,
+            duration_minutes=90,
+            status=Exam.Status.CLOSED,
+        )
+
+    def test_exams_filter_metadata(self):
+        """Metadata endpoint returns available institutes, departments, faculties, statuses, ai_models."""
+        url = f'/{self.slug}/api/exams/metadata/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['status'], 'success')
+        meta = body['data']
+        self.assertIn('institutions', meta)
+        self.assertIn('departments', meta)
+        self.assertIn('faculty', meta)
+        self.assertIn('allowed_statuses', meta)
+        self.assertIn('ai_models', meta)
+        inst_names = [i.get('institution_name') or i.get('name') for i in meta['institutions']]
+        self.assertIn('Apex University of Science', inst_names)
+        self.assertIn('Beacon Engineering Institute', inst_names)
+
+    def test_exams_list_filtering(self):
+        """Exams list endpoint filters correctly by search, status, department, and marks."""
+        base_url = f'/{self.slug}/api/exams/'
+
+        # 1. Search by title
+        res1 = self.client.get(f'{base_url}?q=Calculus', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res1.status_code, 200)
+        data1 = res1.json()['data']
+        self.assertEqual(len(data1), 1)
+        self.assertEqual(data1[0]['title'], 'Calculus I Final')
+
+        # 2. Filter by status (single)
+        res2 = self.client.get(f'{base_url}?status=draft', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.json()['data']
+        self.assertEqual(len(data2), 1)
+        self.assertEqual(data2[0]['title'], 'Intro to Algorithms')
+
+        # 3. Filter by status (comma-separated multi-select)
+        res3 = self.client.get(f'{base_url}?status=draft,closed', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res3.status_code, 200)
+        data3 = res3.json()['data']
+        self.assertEqual(len(data3), 2)
+
+        # 4. Filter by department
+        res4 = self.client.get(f'{base_url}?department=Computer Science', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res4.status_code, 200)
+        data4 = res4.json()['data']
+        self.assertEqual(len(data4), 1)
+        self.assertEqual(data4[0]['title'], 'Intro to Algorithms')
+
+        # 5. Filter by marks range
+        res5 = self.client.get(f'{base_url}?min_marks=70&max_marks=100', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res5.status_code, 200)
+        data5 = res5.json()['data']
+        titles = [e['title'] for e in data5]
+        self.assertIn('Calculus I Final', titles)
+        self.assertIn('=2+5 Dangerous Formula Midterm', titles)
+        self.assertNotIn('Intro to Algorithms', titles)
+
+    def test_exams_export_csv_with_formula_sanitization(self):
+        """CSV export sanitizes formulas starting with '=', '+', '-', '@' to prevent CSV injection (CWE-1236)."""
+        url = f'/{self.slug}/api/exams/export/?format=csv'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('text/csv', res['Content-Type'])
+        self.assertIn('attachment;', res['Content-Disposition'])
+        content = res.content.decode('utf-8')
+        self.assertIn('Title,Subject,Department,Institution', content)
+        # Verify formula cell was sanitized: '=2+5' should be escaped to "'=2+5"
+        self.assertIn("'=2+5 Dangerous Formula Midterm", content)
+
+    def test_exams_export_xlsx(self):
+        """XLSX export generates a valid openxml spreadsheet byte stream."""
+        url = f'/{self.slug}/api/exams/export/?format=xlsx'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('spreadsheetml', res['Content-Type'])
+        self.assertGreater(len(res.content), 100)
+
+
+class SuperAdminEmailAndNotificationsModuleTests(TestCase):
+    """
+    Automated tests for Super Admin Email Status, test email command,
+    and Outbound Email / Pop-Up notifications delivery.
+    """
+
+    def setUp(self):
+        self.slug = 'a1b2c3d4e5f67890123456789abcdef0'
+        settings.SUPER_ADMIN_PATH = self.slug
+        self.sa_user = User.objects.create_superuser('email_sa', 'email_sa@example.com', 'SuperPass123!@#')
+        self.profile = SuperAdminProfile.objects.create(
+            user=self.sa_user,
+            is_totp_enrolled=True,
+            totp_secret='JBSWY3DPEHPK3PXP',
+            active_session_id='sess_email_123',
+            last_reauth_at=timezone.now(),
+        )
+        self.token = generate_super_admin_token(self.sa_user, session_id='sess_email_123')
+        self.client = Client()
+
+    def test_email_status_endpoint(self):
+        """Email status endpoint returns active backend, provider info, and rate limits."""
+        url = f'/{self.slug}/api/notifications/email-status/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['status'], 'success')
+        data = body['data']
+        self.assertIn('backend', data)
+        self.assertIn('is_configured', data)
+        self.assertIn('daily_limit', data)
+        self.assertIn('sent_today', data)
+        self.assertIn('remaining_today', data)
+
+    def test_test_email_management_command(self):
+        """Test the test_email management command runs and outputs delivery summary."""
+        out = StringIO()
+        call_command('test_email', recipient='verify@example.com', stdout=out)
+        output = out.getvalue()
+        self.assertIn('successfully dispatched', output.lower())
+        self.assertIn('verify@example.com', output)
+
+    def test_send_test_email_endpoint(self):
+        """Sending a test email via API requires Super Admin authentication and dispatches successfully."""
+        url = f'/{self.slug}/api/notifications/send-test-email/'
+        res = self.client.post(
+            url,
+            data={'to': 'testuser@example.com'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body['status'], 'success')
+        self.assertIn('testuser@example.com', body['message'])
+
+
+class NotificationPopupApiTests(TestCase):
+    """
+    Automated tests for first-time user pop-up notifications:
+    - GET /api/notifications/popups/
+    - POST /api/notifications/<id>/dismiss-popup/
+    - POST /api/notifications/dismiss-all-popups/
+    """
+
+    def setUp(self):
+        self.student_user = User.objects.create_user(
+            username='popup_student',
+            email='popup_student@example.com',
+            password='StudentPass123!',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.student_user)
+
+        self.notif1 = Notification.objects.create(
+            user=self.student_user,
+            title='Campus Closure Notice',
+            message='Severe weather alert: campus will be closed tomorrow.',
+            type='warning',
+            is_popup=True,
+        )
+        self.notif2 = Notification.objects.create(
+            user=self.student_user,
+            title='System Update Scheduled',
+            message='Scheduled maintenance this Saturday at 2 AM.',
+            type='info',
+            is_popup=True,
+        )
+
+    def test_popup_workflow(self):
+        """Verify fetching popups, timestamp marking, and dismissal."""
+        # 1. Fetch pending popups
+        res = self.client.get('/api/notifications/popups/')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()['popups']
+        self.assertEqual(len(data), 2)
+        titles = [p['title'] for p in data]
+        self.assertIn('Campus Closure Notice', titles)
+        self.assertIn('System Update Scheduled', titles)
+
+        # Verify popup_shown_at was set
+        self.notif1.refresh_from_db()
+        self.assertIsNotNone(self.notif1.popup_shown_at)
+
+        # 2. Dismiss first popup
+        dismiss_res = self.client.post(f'/api/notifications/{self.notif1.id}/dismiss-popup/')
+        self.assertEqual(dismiss_res.status_code, 200)
+        self.notif1.refresh_from_db()
+        self.assertIsNotNone(self.notif1.popup_dismissed_at)
+
+        # 3. Subsequent fetch only returns notif2
+        res2 = self.client.get('/api/notifications/popups/')
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.json()['popups']
+        self.assertEqual(len(data2), 1)
+        self.assertEqual(data2[0]['id'], self.notif2.id)
+
+        # 4. Dismiss all remaining
+        dismiss_all_res = self.client.post('/api/notifications/dismiss-all-popups/')
+        self.assertEqual(dismiss_all_res.status_code, 200)
+        self.notif2.refresh_from_db()
+        self.assertIsNotNone(self.notif2.popup_dismissed_at)
+
+        # 5. Fetch now returns zero
+        res3 = self.client.get('/api/notifications/popups/')
+        self.assertEqual(res3.status_code, 200)
+        self.assertEqual(len(res3.json()['popups']), 0)
+
 
 
 

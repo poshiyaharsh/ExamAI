@@ -22,6 +22,10 @@ import {
   Eye,
   Check,
   ShieldAlert,
+  Mail,
+  MailCheck,
+  Layers,
+  HelpCircle,
 } from 'lucide-react';
 
 interface CampaignItem {
@@ -39,6 +43,11 @@ interface CampaignItem {
   delivered_count: number;
   read_count: number;
   read_percent: number;
+  show_popup?: boolean;
+  send_email?: boolean;
+  channels?: string[];
+  email_sent_count?: number;
+  email_failed_count?: number;
   scheduled_at: string | null;
   dispatched_at: string | null;
   created_by: string;
@@ -59,7 +68,26 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  const [kpis, setKpis] = useState({
+  const [kpis, setKpis] = useState<{
+    total_campaigns: number;
+    total_notifications_sent: number;
+    scheduled_count: number;
+    smtp_configured: boolean;
+    email_status?: {
+      is_configured: boolean;
+      backend: string;
+      provider: string;
+      host: string;
+      port: number;
+      from_email: string;
+      use_tls: boolean;
+      use_ssl: boolean;
+      daily_limit: number;
+      sent_today: number;
+      remaining_today: number;
+      quota_reached: boolean;
+    };
+  }>({
     total_campaigns: 0,
     total_notifications_sent: 0,
     scheduled_count: 0,
@@ -76,6 +104,8 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
   const [targetRole, setTargetRole] = useState('student');
   const [targetInstituteId, setTargetInstituteId] = useState<string>('');
   const [targetDepartment, setTargetDepartment] = useState('');
+  const [showPopup, setShowPopup] = useState(false);
+  const [sendEmail, setSendEmail] = useState(false);
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -83,10 +113,20 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
 
   // Audience Preview State
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewData, setPreviewData] = useState<{ total_recipients: number; sample_recipients: any[] } | null>(null);
+  const [previewData, setPreviewData] = useState<{ total_recipients: number; sample_recipients: any[]; email_status_banner?: string } | null>(null);
+
+  // Email Diagnostics & Test Modal State
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [testEmailTo, setTestEmailTo] = useState('');
+  const [testEmailLoading, setTestEmailLoading] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState<{ status: 'success' | 'error'; message: string; data?: any } | null>(null);
+
+  // Pop-Up Live Preview in Super Admin Console
+  const [previewPopupOpen, setPreviewPopupOpen] = useState(false);
 
   // Institutes list for selector
   const [institutes, setInstitutes] = useState<any[]>([]);
+
 
   // Fetch Campaigns
   const fetchCampaigns = useCallback(async () => {
@@ -172,6 +212,8 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
         notification_type: notifType,
         link: link.trim(),
         target_audience: targetAudience,
+        show_popup: showPopup,
+        send_email: sendEmail,
       };
 
       if (targetAudience === 'role') payload.target_role = targetRole;
@@ -225,11 +267,51 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
     setTargetRole('student');
     setTargetInstituteId('');
     setTargetDepartment('');
+    setShowPopup(false);
+    setSendEmail(false);
     setIsScheduled(false);
     setScheduledAt('');
     setComposeError('');
     setPreviewData(null);
   };
+
+  const handleSendTestEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!testEmailTo.trim() || !testEmailTo.includes('@')) {
+      setTestEmailResult({ status: 'error', message: 'Please enter a valid recipient email address.' });
+      return;
+    }
+    setTestEmailLoading(true);
+    setTestEmailResult(null);
+    try {
+      const res = await saFetch('notifications/send-test-email/', {
+        method: 'POST',
+        body: JSON.stringify({ to: testEmailTo.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestEmailResult({
+          status: 'success',
+          message: data.message || 'Test email dispatched successfully.',
+          data: data.data,
+        });
+        fetchCampaigns();
+      } else {
+        setTestEmailResult({
+          status: 'error',
+          message: data.message || 'Failed to dispatch test email.',
+        });
+      }
+    } catch (err: any) {
+      setTestEmailResult({
+        status: 'error',
+        message: err.message || 'Network communication failure.',
+      });
+    } finally {
+      setTestEmailLoading(false);
+    }
+  };
+
 
   return (
     <div className="space-y-6 min-w-0 max-w-full">
@@ -247,7 +329,17 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => {
+              setTestEmailResult(null);
+              setEmailModalOpen(true);
+            }}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-sky-300 cursor-pointer transition-all"
+          >
+            <Mail className="w-3.5 h-3.5 text-sky-400" />
+            <span>Email Diagnostics</span>
+          </button>
           <button
             onClick={fetchCampaigns}
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-200 cursor-pointer transition-all"
@@ -268,17 +360,51 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
         </div>
       </div>
 
-      {/* Email Backend Disabled Explanation Banner */}
-      <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-3">
-        <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-        <div className="space-y-0.5">
-          <p className="font-bold">Email Dispatch Note (Console Backend Active)</p>
-          <p className="text-[11px] text-amber-200/90 leading-relaxed">
-            The platform email backend is configured to local console output (SMTP host is empty in <code>.env</code>).
-            All campaign dispatches are instantly delivered in-app directly to each student, faculty, and admin bell indicator with zero latency.
-          </p>
+      {/* Dynamic Email Delivery Status Banner */}
+      {kpis.email_status?.is_configured ? (
+        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <MailCheck className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+            <div className="space-y-0.5">
+              <p className="font-bold flex items-center gap-2">
+                Real Outbound Email Active • Provider: {kpis.email_status.provider}
+                <span className="px-2 py-0.2 rounded-md bg-emerald-500/20 text-emerald-300 font-mono text-[10px]">
+                  {kpis.email_status.sent_today} / {kpis.email_status.daily_limit} Daily Quota Used
+                </span>
+              </p>
+              <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                SMTP server connected via {kpis.email_status.host}:{kpis.email_status.port} (Sender: {kpis.email_status.from_email}).
+                Broadcast campaigns with outbound email enabled will deliver directly to user inboxes.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setEmailModalOpen(true)}
+            className="shrink-0 px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 font-bold text-[11px] transition-colors cursor-pointer"
+          >
+            Test Delivery
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+            <div className="space-y-0.5">
+              <p className="font-bold">Email Dispatch Note (Console Backend Fallback Active)</p>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                SMTP credentials are unset in <code>.env</code>. The platform automatically falls back to console simulation without failing.
+                In-app bell notifications and first-time dialog popups deliver with zero latency.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setEmailModalOpen(true)}
+            className="shrink-0 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 font-bold text-[11px] transition-colors cursor-pointer"
+          >
+            Setup Guide & Test
+          </button>
+        </div>
+      )}
 
       {/* KPI Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
@@ -297,7 +423,7 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
             <CheckCircle2 className="w-4 h-4 text-sky-400" />
           </div>
           <p className="text-xl font-extrabold text-white">{kpis.total_notifications_sent.toLocaleString()}</p>
-          <p className="text-[10px] text-slate-400 font-mono">Bell inbox entries</p>
+          <p className="text-[10px] text-slate-400 font-mono">Bell & Pop-up entries</p>
         </div>
 
         <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-1">
@@ -311,13 +437,18 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
 
         <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-1">
           <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span>Active Channel</span>
-            <Bell className="w-4 h-4 text-purple-400" />
+            <span>Active Channels</span>
+            <Layers className="w-4 h-4 text-purple-400" />
           </div>
-          <p className="text-xs font-bold text-white uppercase font-mono">In-App Bell Only</p>
-          <p className="text-[10px] text-slate-400 font-mono">SMTP disabled</p>
+          <p className="text-xs font-bold text-white uppercase font-mono truncate">
+            {kpis.email_status?.is_configured ? 'Bell + Pop-Up + Email' : 'Bell + Pop-Up'}
+          </p>
+          <p className="text-[10px] text-slate-400 font-mono truncate">
+            {kpis.email_status?.is_configured ? `SMTP: ${kpis.email_status.provider}` : 'SMTP: Local Console'}
+          </p>
         </div>
       </div>
+
 
       {/* Filter / Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -717,6 +848,78 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
                 </div>
               </div>
 
+              {/* Multi-Channel Delivery Options (Pop-Up & Real Email) */}
+              <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-3.5">
+                <p className="font-bold text-slate-200 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-emerald-400" /> Additional Delivery Channels
+                </p>
+
+                {/* Pop-Up Modal Toggle */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-white">First-Time Dialog Pop-Up</span>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
+                        High Priority
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Pops up in the center of the user's screen upon their next visit. Exam attempts are automatically shielded from interruption.
+                    </p>
+                    {title.trim() && message.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPopupOpen(true)}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-400 hover:text-purple-300 cursor-pointer pt-0.5 transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Preview how pop-up looks to users</span>
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={showPopup}
+                    onChange={(e) => setShowPopup(e.target.checked)}
+                    className="w-4 h-4 mt-1 rounded-sm accent-purple-500 cursor-pointer shrink-0"
+                  />
+                </div>
+
+                {/* Outbound Email Dispatch Toggle */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-white">Dispatch Outbound Email</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-bold border uppercase ${
+                          kpis.email_status?.is_configured
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        }`}
+                      >
+                        {kpis.email_status?.is_configured
+                          ? `Active (${kpis.email_status.provider})`
+                          : 'Console Fallback'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Sends an email to each resolved recipient with a valid address.
+                      {kpis.email_status?.is_configured ? (
+                        <> Daily quota: <strong>{kpis.email_status.remaining_today}</strong> remaining of {kpis.email_status.daily_limit}.</>
+                      ) : (
+                        <> (Console mode active: outputs will print to backend server terminal without sending real emails).</>
+                      )}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={sendEmail}
+                    onChange={(e) => setSendEmail(e.target.checked)}
+                    className="w-4 h-4 mt-1 rounded-sm accent-emerald-500 cursor-pointer shrink-0"
+                  />
+                </div>
+              </div>
+
               {/* Scheduling Options */}
               <div className="p-3.5 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -769,6 +972,180 @@ export function SuperAdminNotificationsModule({ saFetch }: SuperAdminNotificatio
           </div>
         </div>
       )}
+
+      {/* Pop-Up Live Preview Modal (Simulating Student/Faculty View) */}
+      {previewPopupOpen && (
+        <div className="fixed inset-0 z-60 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-slate-900 border border-purple-500/40 rounded-3xl p-6 sm:p-7 shadow-2xl text-slate-100 relative overflow-hidden space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/30 text-purple-400">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    Live Preview (User View)
+                  </span>
+                  <h3 className="text-base font-bold text-white mt-1">{title || 'Sample Title'}</h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setPreviewPopupOpen(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
+              {message || 'Your broadcast message content will appear here...'}
+            </p>
+            {link && (
+              <div className="text-xs text-sky-400 flex items-center gap-1 font-mono">
+                <span>Link target:</span> <u>{link}</u>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setPreviewPopupOpen(false)}
+                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs cursor-pointer"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email Diagnostics & Test Email Modal */}
+      {emailModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-6 text-slate-100 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Email Delivery Diagnostics</h3>
+                  <p className="text-xs text-slate-400">SMTP configuration status, daily quotas, and test dispatch</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEmailModalOpen(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Diagnostics Cards */}
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-slate-400 text-[11px]">Active Provider</span>
+                <p className="font-bold text-white truncate">
+                  {kpis.email_status?.provider || (kpis.smtp_configured ? 'SMTP' : 'Console Simulation')}
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-slate-400 text-[11px]">Backend Class</span>
+                <p className="font-mono text-[11px] text-slate-300 truncate" title={kpis.email_status?.backend}>
+                  {kpis.email_status?.backend ? kpis.email_status.backend.split('.').pop() : 'ConsoleBackend'}
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-slate-400 text-[11px]">Daily Quota</span>
+                <p className="font-bold text-emerald-400">
+                  {kpis.email_status ? `${kpis.email_status.remaining_today} remaining` : '300 / day'}
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  {kpis.email_status ? `${kpis.email_status.sent_today} sent today` : '0 sent today'}
+                </p>
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-1">
+                <span className="text-slate-400 text-[11px]">Default Sender (From)</span>
+                <p className="font-mono text-[11px] text-slate-300 truncate" title={kpis.email_status?.from_email}>
+                  {kpis.email_status?.from_email || 'noreply@examai.local'}
+                </p>
+              </div>
+            </div>
+
+            {/* Test Email Form */}
+            <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-3">
+              <p className="font-bold text-slate-200 flex items-center gap-2 text-xs">
+                <Send className="w-4 h-4 text-sky-400" /> Send Diagnostic Test Email
+              </p>
+              <form onSubmit={handleSendTestEmail} className="space-y-3">
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Recipient Address *</label>
+                  <input
+                    type="email"
+                    required
+                    value={testEmailTo}
+                    onChange={(e) => setTestEmailTo(e.target.value)}
+                    placeholder="Enter your email e.g. you@example.com"
+                    className="w-full px-3.5 py-2 bg-slate-900 border border-slate-800 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-slate-500">
+                    CLI Equivalent: <code>python manage.py test_email --to &lt;email&gt;</code>
+                  </p>
+                  <button
+                    type="submit"
+                    disabled={testEmailLoading || !testEmailTo.trim()}
+                    className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs disabled:opacity-40 transition-colors cursor-pointer"
+                  >
+                    {testEmailLoading ? 'Dispatching...' : 'Send Test'}
+                  </button>
+                </div>
+              </form>
+
+              {testEmailResult && (
+                <div
+                  className={`p-3 rounded-xl border text-xs ${
+                    testEmailResult.status === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <p className="font-bold">{testEmailResult.message}</p>
+                  {testEmailResult.data?.is_console && (
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Note: Console mode is active. The email body was printed to the terminal running the Django backend.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Free Provider Guide Box */}
+            <div className="p-3.5 bg-slate-950/40 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-1">
+              <p className="font-bold text-slate-300">How to configure free real email delivery:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                <li><strong>Brevo (Recommended):</strong> 300 emails/day free forever. Set <code>EMAIL_HOST=smtp-relay.brevo.com</code> in <code>.env</code>.</li>
+                <li><strong>Gmail:</strong> 500 emails/day free. Turn on 2-Step Verification & create an App Password.</li>
+                <li><strong>Mailjet:</strong> 200 emails/day free. Set <code>EMAIL_HOST=in-v3.mailjet.com</code> in <code>.env</code>.</li>
+                <li>See <code>docs/email-setup.md</code> for the complete setup tutorial.</li>
+              </ul>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setEmailModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

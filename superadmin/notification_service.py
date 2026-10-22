@@ -1,15 +1,17 @@
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.mail import send_mail
 from django.db import connection, transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 
 from admins.models import AdminInstitution, AdminProfile
-from api.models import Notification
+from api.models import Notification, UserNotificationPreference
 from faculty.models import FacultyProfile
 from students.models import StudentProfile
 from superadmin.audit import GENESIS_HASH, compute_audit_hash
@@ -19,7 +21,62 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+def get_email_status() -> Dict[str, Any]:
+    """
+    Returns real-time diagnostics of the platform email configuration,
+    detecting whether real SMTP (Brevo, Gmail, Mailjet, custom) or local console fallback is active.
+    Includes daily send counts and remaining quota.
+    """
+    host = getattr(settings, 'EMAIL_HOST', '') or ''
+    user = getattr(settings, 'EMAIL_HOST_USER', '') or ''
+    pwd = getattr(settings, 'EMAIL_HOST_PASSWORD', '') or ''
+    backend = getattr(settings, 'EMAIL_BACKEND', '') or ''
+    port = getattr(settings, 'EMAIL_PORT', 587)
+    use_tls = getattr(settings, 'EMAIL_USE_TLS', True)
+    use_ssl = getattr(settings, 'EMAIL_USE_SSL', False)
+    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@examai.local')
+
+    is_configured = bool(host and user and pwd and 'smtp' in backend.lower())
+
+    # Provider identification
+    provider = 'Console (Local Fallback)'
+    host_lower = host.lower()
+    if 'brevo.com' in host_lower or 'sendinblue' in host_lower:
+        provider = 'Brevo'
+    elif 'gmail.com' in host_lower:
+        provider = 'Gmail (App Password)'
+    elif 'mailjet.com' in host_lower:
+        provider = 'Mailjet'
+    elif is_configured:
+        provider = f'Custom SMTP ({host})'
+
+    daily_limit = getattr(settings, 'EMAIL_MAX_PER_DAY', 300)
+    today = timezone.now().date()
+    sent_today = CampaignDeliveryRecord.objects.filter(
+        email_status='sent',
+        email_sent_at__date=today,
+    ).count()
+
+    remaining_today = max(0, daily_limit - sent_today)
+
+    return {
+        'is_configured': is_configured,
+        'backend': backend,
+        'provider': provider,
+        'host': host if is_configured else '(none - console)',
+        'port': port,
+        'from_email': from_email,
+        'use_tls': use_tls,
+        'use_ssl': use_ssl,
+        'daily_limit': daily_limit,
+        'sent_today': sent_today,
+        'remaining_today': remaining_today,
+        'quota_reached': (sent_today >= daily_limit),
+    }
+
+
 def record_notify_audit(
+
     actor_username: str,
     action: str,
     target_entity: str = 'NotificationCampaign',
@@ -165,19 +222,26 @@ def preview_campaign_audience(
             'institute': inst_name,
         })
 
+    email_status = get_email_status()
     return {
         'total_recipients': total_count,
         'sample_recipients': sample_users,
         'target_audience': target_audience,
-        'email_enabled': False,
-        'email_status_banner': 'Email dispatch is disabled (SMTP host unconfigured). In-app notifications will be delivered instantly to user bell indicators.',
+        'email_enabled': email_status['is_configured'],
+        'email_status': email_status,
+        'email_status_banner': (
+            f"Email provider active: {email_status['provider']} ({email_status['sent_today']}/{email_status['daily_limit']} used today)."
+            if email_status['is_configured']
+            else 'Email dispatch is configured for Console simulation (SMTP unconfigured in .env). Test output will print to console.'
+        ),
     }
 
 
 def dispatch_campaign_background(campaign_id: int):
     """
     Background worker that resolves users and delivers notifications in batches of 250.
-    Creates both api.Notification (for bell integration) and CampaignDeliveryRecord (for tracking).
+    Creates both api.Notification (for bell and pop-up integration) and CampaignDeliveryRecord (for tracking).
+    Optionally dispatches outbound emails with daily quota protections.
     """
     import sys
     is_testing = 'test' in sys.argv or getattr(settings, 'TESTING', False)
@@ -207,18 +271,30 @@ def dispatch_campaign_background(campaign_id: int):
 
         for i in range(0, len(all_user_ids), batch_size):
             chunk_ids = all_user_ids[i : i + batch_size]
-            users_chunk = User.objects.filter(id__in=chunk_ids)
+            users_chunk = User.objects.filter(id__in=chunk_ids).select_related(
+                'student_profile__institution',
+                'faculty_profile__institution',
+                'admin_institution',
+            ).prefetch_related('notification_preference')
 
             with transaction.atomic():
                 delivery_records = []
                 for u in users_chunk:
                     inst = None
-                    if hasattr(u, 'student_profile') and u.student_profile.institution:
+                    if hasattr(u, 'student_profile') and u.student_profile and u.student_profile.institution:
                         inst = u.student_profile.institution
-                    elif hasattr(u, 'faculty_profile') and u.faculty_profile.institution:
+                    elif hasattr(u, 'faculty_profile') and u.faculty_profile and u.faculty_profile.institution:
                         inst = u.faculty_profile.institution
-                    elif hasattr(u, 'admin_profile') and u.admin_profile.institution:
-                        inst = u.admin_profile.institution
+                    elif hasattr(u, 'admin_institution') and u.admin_institution:
+                        inst = u.admin_institution
+
+                    # User popup preference check
+                    user_pref = getattr(u, 'notification_preference', None)
+                    popup_enabled = True
+                    if user_pref is not None:
+                        popup_enabled = user_pref.popup_notifications_enabled
+
+                    is_popup = bool(campaign.show_popup and popup_enabled)
 
                     notif = Notification.objects.create(
                         user=u,
@@ -228,6 +304,7 @@ def dispatch_campaign_background(campaign_id: int):
                         type=campaign.notification_type,
                         link=campaign.link or '',
                         is_read=False,
+                        is_popup=is_popup,
                     )
                     delivery_records.append(
                         CampaignDeliveryRecord(
@@ -235,12 +312,79 @@ def dispatch_campaign_background(campaign_id: int):
                             user=u,
                             notification=notif,
                             status='delivered',
+                            email_status='pending' if campaign.send_email else 'skipped',
                         )
                     )
                 CampaignDeliveryRecord.objects.bulk_create(delivery_records)
 
             delivered_total += len(chunk_ids)
             NotificationCampaign.objects.filter(id=campaign_id).update(delivered_count=delivered_total)
+
+        # Handle Email Dispatch if campaign.send_email is active
+        if campaign.send_email:
+            email_status_info = get_email_status()
+            daily_limit = email_status_info['daily_limit']
+            from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@examai.local')
+            batch_delay = getattr(settings, 'EMAIL_BATCH_DELAY_SECONDS', 1.0)
+
+            records = CampaignDeliveryRecord.objects.filter(campaign=campaign).select_related('user')
+            today = timezone.now().date()
+
+            for rec in records:
+                u = rec.user
+                if not u.email or '@' not in u.email:
+                    rec.email_status = 'skipped'
+                    rec.email_error = 'Recipient missing valid email address'
+                    rec.save(update_fields=['email_status', 'email_error'])
+                    continue
+
+                user_pref = getattr(u, 'notification_preference', None)
+                if user_pref and not user_pref.email_notifications_enabled:
+                    rec.email_status = 'skipped'
+                    rec.email_error = 'Recipient opted out of email delivery'
+                    rec.save(update_fields=['email_status', 'email_error'])
+                    continue
+
+                sent_count_today = CampaignDeliveryRecord.objects.filter(
+                    email_status='sent',
+                    email_sent_at__date=today,
+                ).count()
+
+                if sent_count_today >= daily_limit:
+                    rec.email_status = 'failed'
+                    rec.email_error = f'Daily email limit ({daily_limit}) reached'
+                    rec.save(update_fields=['email_status', 'email_error'])
+                    continue
+
+                try:
+                    subject = f"[ExamAI] {campaign.title}"
+                    body = (
+                        f"Dear {u.first_name or u.username},\n\n"
+                        f"{campaign.message}\n\n"
+                        + (f"Link: {campaign.link}\n\n" if campaign.link else "")
+                        + "--------------------------------------------------\n"
+                        + "ExamAI Automated Notification System\n"
+                        + "You received this email because you are a registered platform user."
+                    )
+                    send_mail(
+                        subject=subject,
+                        message=body,
+                        from_email=from_email,
+                        recipient_list=[u.email],
+                        fail_silently=False,
+                    )
+                    rec.email_status = 'sent'
+                    rec.email_sent_at = timezone.now()
+                    rec.email_error = ''
+                    rec.save(update_fields=['email_status', 'email_sent_at', 'email_error'])
+                except Exception as mail_exc:
+                    logger.warning('Failed to dispatch email to %s: %s', u.email, mail_exc)
+                    rec.email_status = 'failed'
+                    rec.email_error = str(mail_exc)[:300]
+                    rec.save(update_fields=['email_status', 'email_error'])
+
+                if not is_testing and batch_delay > 0:
+                    time.sleep(batch_delay * 0.05)
 
         # Mark campaign completed
         campaign.refresh_from_db()
@@ -253,11 +397,13 @@ def dispatch_campaign_background(campaign_id: int):
             action='campaign.dispatched',
             target_entity='NotificationCampaign',
             target_id=str(campaign.id),
-            description=f'Dispatched campaign "{campaign.title}" to {delivered_total} recipients',
+            description=f'Dispatched campaign "{campaign.title}" to {delivered_total} recipients (popup={campaign.show_popup}, email={campaign.send_email})',
             after_state={
                 'campaign_id': campaign.id,
                 'delivered_count': delivered_total,
                 'status': 'completed',
+                'show_popup': campaign.show_popup,
+                'send_email': campaign.send_email,
             },
         )
         logger.info('Finished background dispatch for campaign #%s (delivered=%s)', campaign_id, delivered_total)
@@ -289,6 +435,15 @@ def create_and_send_campaign(data: Dict[str, Any], actor_username: str) -> Tuple
     target_department = str(data.get('target_department', '')).strip()
     target_user_ids = data.get('target_user_ids', [])
     link = str(data.get('link', '')).strip()
+
+    show_popup = bool(data.get('show_popup', False))
+    send_email = bool(data.get('send_email', False))
+
+    channels = ['in_app']
+    if show_popup:
+        channels.append('popup')
+    if send_email:
+        channels.append('email')
 
     scheduled_at_str = data.get('scheduled_at')
     scheduled_at = None
@@ -329,7 +484,9 @@ def create_and_send_campaign(data: Dict[str, Any], actor_username: str) -> Tuple
         scheduled_at=scheduled_at if is_scheduled_future else None,
         status=status_str,
         recipients_count=recipients_count,
-        channels=['in_app'],
+        channels=channels,
+        show_popup=show_popup,
+        send_email=send_email,
         created_by=actor_username,
     )
 
@@ -338,8 +495,8 @@ def create_and_send_campaign(data: Dict[str, Any], actor_username: str) -> Tuple
         action='campaign.created',
         target_entity='NotificationCampaign',
         target_id=str(campaign.id),
-        description=f'Created campaign "{title}" targeting {recipients_count} recipients (status={status_str})',
-        after_state={'campaign_id': campaign.id, 'status': status_str, 'recipients': recipients_count},
+        description=f'Created campaign "{title}" targeting {recipients_count} recipients (status={status_str}, popup={show_popup}, email={send_email})',
+        after_state={'campaign_id': campaign.id, 'status': status_str, 'recipients': recipients_count, 'show_popup': show_popup, 'send_email': send_email},
     )
 
     if not is_scheduled_future:
@@ -364,6 +521,9 @@ def serialize_campaign_row(c: NotificationCampaign) -> Dict[str, Any]:
     read_count = c.delivery_records.filter(notification__is_read=True).count()
     read_percent = round((read_count / c.delivered_count) * 100, 1) if c.delivered_count > 0 else 0
 
+    email_sent_count = c.delivery_records.filter(email_status='sent').count()
+    email_failed_count = c.delivery_records.filter(email_status='failed').count()
+
     return {
         'id': c.id,
         'title': c.title,
@@ -379,11 +539,17 @@ def serialize_campaign_row(c: NotificationCampaign) -> Dict[str, Any]:
         'delivered_count': c.delivered_count,
         'read_count': read_count,
         'read_percent': read_percent,
+        'show_popup': c.show_popup,
+        'send_email': c.send_email,
+        'channels': c.channels,
+        'email_sent_count': email_sent_count,
+        'email_failed_count': email_failed_count,
         'scheduled_at': c.scheduled_at.isoformat() if c.scheduled_at else None,
         'dispatched_at': c.dispatched_at.isoformat() if c.dispatched_at else None,
         'created_by': c.created_by,
         'created_at': c.created_at.isoformat(),
     }
+
 
 
 def list_campaigns_paginated(
@@ -412,6 +578,7 @@ def list_campaigns_paginated(
     total_broadcasts = NotificationCampaign.objects.count()
     total_notifications_sent = Notification.objects.count()
     total_scheduled = NotificationCampaign.objects.filter(status='scheduled').count()
+    email_status = get_email_status()
 
     return {
         'campaigns': data,
@@ -425,9 +592,11 @@ def list_campaigns_paginated(
             'total_campaigns': total_broadcasts,
             'total_notifications_sent': total_notifications_sent,
             'scheduled_count': total_scheduled,
-            'smtp_configured': False,
+            'smtp_configured': email_status['is_configured'],
+            'email_status': email_status,
         },
     }
+
 
 
 def cancel_scheduled_campaign(campaign_id: int, actor_username: str) -> Tuple[bool, str]:

@@ -1882,7 +1882,20 @@ export const notificationApi = {
     const response = await apiClient.post<{ detail: string }>("/api/notifications/read-all/");
     return response.data;
   },
+  getPopups: async (): Promise<{ count: number; popups: AppNotification[] }> => {
+    const response = await apiClient.get<{ count: number; popups: AppNotification[] }>("/api/notifications/popups/");
+    return response.data;
+  },
+  dismissPopup: async (id: number): Promise<{ detail: string }> => {
+    const response = await apiClient.post<{ detail: string }>(`/api/notifications/${id}/dismiss-popup/`);
+    return response.data;
+  },
+  dismissAllPopups: async (): Promise<{ detail: string }> => {
+    const response = await apiClient.post<{ detail: string }>("/api/notifications/dismiss-all-popups/");
+    return response.data;
+  },
 };
+
 
 export type AdminFacultyListResponse = {
   status: string;

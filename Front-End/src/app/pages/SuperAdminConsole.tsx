@@ -38,6 +38,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { SuperAdminUsersModule } from './superadmin/SuperAdminUsersModule';
+import { SuperAdminExamsModule } from './superadmin/SuperAdminExamsModule';
 import { SuperAdminAIModule } from './superadmin/SuperAdminAIModule';
 import { SuperAdminNotificationsModule } from './superadmin/SuperAdminNotificationsModule';
 import { SuperAdminReportsModule } from './superadmin/SuperAdminReportsModule';
@@ -554,7 +555,7 @@ function SuperAdminDashboardLayout({
         {activeTab === 'dashboard' && <SuperAdminDashboardTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'institutes' && <SuperAdminInstitutesTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'users' && <SuperAdminUsersModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
-        {activeTab === 'exams' && <SuperAdminExamsTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
+        {activeTab === 'exams' && <SuperAdminExamsModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'ai' && <SuperAdminAIModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'notifications' && <SuperAdminNotificationsModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'security' && <SuperAdminSecurityTab saFetch={saFetch} onTriggerReauth={triggerReauth} onRefreshUser={onRefreshUser} />}

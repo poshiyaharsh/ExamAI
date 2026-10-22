@@ -438,6 +438,8 @@ class NotificationCampaign(models.Model):
     delivered_count = models.IntegerField(default=0)
     read_count = models.IntegerField(default=0)
     channels = models.JSONField(default=list, blank=True)
+    show_popup = models.BooleanField(default=False, help_text='Display as high-priority first-time popup to user')
+    send_email = models.BooleanField(default=False, help_text='Dispatch via email to recipients with active address')
 
     created_by = models.CharField(max_length=150, default='system')
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -456,6 +458,13 @@ class CampaignDeliveryRecord(models.Model):
     """
     Individual recipient delivery and read status tracker for a notification campaign.
     """
+    EMAIL_STATUS_CHOICES = [
+        ('skipped', 'Skipped'),
+        ('pending', 'Pending'),
+        ('sent', 'Sent'),
+        ('failed', 'Failed'),
+    ]
+
     campaign = models.ForeignKey(
         NotificationCampaign,
         on_delete=models.CASCADE,
@@ -474,6 +483,10 @@ class CampaignDeliveryRecord(models.Model):
     delivered_at = models.DateTimeField(auto_now_add=True)
     read_at = models.DateTimeField(null=True, blank=True)
 
+    email_status = models.CharField(max_length=20, choices=EMAIL_STATUS_CHOICES, default='skipped')
+    email_error = models.TextField(blank=True, default='')
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         verbose_name = 'Campaign Delivery Record'
         verbose_name_plural = 'Campaign Delivery Records'
@@ -484,5 +497,6 @@ class CampaignDeliveryRecord(models.Model):
 
     def __str__(self):
         return f'Campaign #{self.campaign_id} -> User {self.user_id} ({self.status})'
+
 
 

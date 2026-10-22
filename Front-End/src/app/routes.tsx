@@ -1,6 +1,16 @@
-import React, { lazy, Suspense } from "react";
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Outlet } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { NotificationPopupManager } from "./components/NotificationPopupManager";
+
+function RootLayout() {
+  return (
+    <>
+      <NotificationPopupManager />
+      <Outlet />
+    </>
+  );
+}
+
 
 function PageLoader() {
   return (
@@ -68,13 +78,17 @@ const SuperAdminGateway = lazy(() => import("./pages/SuperAdminConsole").then((m
 
 export const router = createBrowserRouter([
   {
-    path: "/",
-    Component: () => (
-      <PublicRoute>
-        <Landing />
-      </PublicRoute>
-    ),
-  },
+    Component: RootLayout,
+    children: [
+      {
+        path: "/",
+        Component: () => (
+          <PublicRoute>
+            <Landing />
+          </PublicRoute>
+        ),
+      },
+
   {
     path: "/login",
     Component: () => (
@@ -267,12 +281,15 @@ export const router = createBrowserRouter([
       </PublicRoute>
     ),
   },
-  {
-    path: "*",
-    Component: () => (
-      <PublicRoute>
-        <NotFound />
-      </PublicRoute>
-    ),
+      {
+        path: "*",
+        Component: () => (
+          <PublicRoute>
+            <NotFound />
+          </PublicRoute>
+        ),
+      },
+    ],
   },
 ]);
+

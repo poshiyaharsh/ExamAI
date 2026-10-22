@@ -20,6 +20,8 @@ from superadmin.views import (
     SuperAdminDPDPDataExportAPIView,
     SuperAdminDPDPDataInventoryAPIView,
     SuperAdminErrorSummaryAPIView,
+    SuperAdminExamExportAPIView,
+    SuperAdminExamFilterMetadataAPIView,
     SuperAdminExamForceCloseAPIView,
     SuperAdminExamListAPIView,
     SuperAdminExportsAPIView,
@@ -40,6 +42,8 @@ from superadmin.views import (
     SuperAdminNotificationAudiencePreviewAPIView,
     SuperAdminNotificationCampaignCancelAPIView,
     SuperAdminNotificationCampaignListCreateAPIView,
+    SuperAdminEmailStatusAPIView,
+    SuperAdminSendTestEmailAPIView,
     SuperAdminPermissionsMatrixAPIView,
     SuperAdminReauthAPIView,
     SuperAdminStuckJobDetectorAPIView,
@@ -109,6 +113,8 @@ urlpatterns = [
 
     # Global Exams Overview
     path('exams/', SuperAdminExamListAPIView.as_view(), name='sa-exams-list'),
+    path('exams/metadata/', SuperAdminExamFilterMetadataAPIView.as_view(), name='sa-exams-filter-metadata'),
+    path('exams/export/', SuperAdminExamExportAPIView.as_view(), name='sa-exams-export'),
     path('exams/<int:exam_id>/force-close/', SuperAdminExamForceCloseAPIView.as_view(), name='sa-exam-force-close'),
 
     # Module B: AI Models & Ollama Management
@@ -122,6 +128,8 @@ urlpatterns = [
     path('notifications/campaigns/', SuperAdminNotificationCampaignListCreateAPIView.as_view(), name='sa-campaigns'),
     path('notifications/campaigns/<int:campaign_id>/cancel/', SuperAdminNotificationCampaignCancelAPIView.as_view(), name='sa-campaign-cancel'),
     path('notifications/audience-preview/', SuperAdminNotificationAudiencePreviewAPIView.as_view(), name='sa-audience-preview'),
+    path('notifications/email-status/', SuperAdminEmailStatusAPIView.as_view(), name='sa-email-status'),
+    path('notifications/send-test-email/', SuperAdminSendTestEmailAPIView.as_view(), name='sa-send-test-email'),
 
     # System Settings & Security
     path('system/settings/', SuperAdminSystemSettingsAPIView.as_view(), name='sa-system-settings'),

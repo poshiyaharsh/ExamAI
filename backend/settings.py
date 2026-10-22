@@ -98,7 +98,21 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+import sys
+TESTING = 'test' in sys.argv
 DB_ENGINE = os.getenv('DB_ENGINE', 'sqlite').strip().lower()
+
+if TESTING and DB_ENGINE == 'mysql':
+    try:
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        _res = sock.connect_ex((os.getenv('DB_HOST', '127.0.0.1'), int(os.getenv('DB_PORT', 3306))))
+        sock.close()
+        if _res != 0:
+            DB_ENGINE = 'sqlite'
+    except Exception:
+        DB_ENGINE = 'sqlite'
 
 if DB_ENGINE == 'mysql':
     db_password = os.getenv('DB_PASSWORD', '')
@@ -331,6 +345,13 @@ if EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Email Quota & Rate-Limiting Controls
+EMAIL_MAX_PER_MINUTE = int(os.getenv('EMAIL_MAX_PER_MINUTE', '30'))
+EMAIL_MAX_PER_DAY = int(os.getenv('EMAIL_MAX_PER_DAY', '300'))
+EMAIL_BATCH_SIZE = int(os.getenv('EMAIL_BATCH_SIZE', '20'))
+EMAIL_BATCH_DELAY_SECONDS = float(os.getenv('EMAIL_BATCH_DELAY_SECONDS', '1.0'))
+
 
 # Super Admin Security Settings
 SUPER_ADMIN_PATH = os.getenv('SUPER_ADMIN_PATH', '').strip()

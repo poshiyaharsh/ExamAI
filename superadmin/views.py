@@ -70,6 +70,7 @@ from superadmin.ai_service import (
 from superadmin.notification_service import (
     cancel_scheduled_campaign,
     create_and_send_campaign,
+    get_email_status,
     list_campaigns_paginated,
     preview_campaign_audience,
 )
@@ -81,6 +82,13 @@ from superadmin.user_service import (
     revoke_user_sessions,
     serialize_user_row,
     toggle_user_active_status,
+)
+from superadmin.exams_service import (
+    export_exams_to_csv_string,
+    export_exams_to_xlsx_bytes,
+    filter_exams_queryset,
+    get_exams_filter_metadata,
+    serialize_exam_row,
 )
 from superadmin.reports_service import (
     REPORT_CATALOG,
@@ -1226,72 +1234,45 @@ class SuperAdminUserTransferAPIView(APIView):
 # ==============================================================================
 
 class SuperAdminExamListAPIView(APIView):
+    """
+    Super Admin Global Exams Manager with comprehensive multi-criteria filtering,
+    search, phase resolution, and stable pagination.
+    """
     authentication_classes = [SuperAdminAuthentication]
     permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
 
     def get(self, request):
-        status_filter = str(request.query_params.get('status', 'all')).strip().lower()
-        inst_id = request.query_params.get('institution_id')
-        search = str(request.query_params.get('search', '')).strip()
-        shortfall_only = str(request.query_params.get('shortfall_only', '')).lower() == 'true'
+        try:
+            page_num = max(1, int(request.query_params.get('page', 1)))
+        except (ValueError, TypeError):
+            page_num = 1
 
-        page_num = int(request.query_params.get('page', 1))
-        page_size = int(request.query_params.get('page_size', 10))
-        if page_size not in [10, 25, 50, 100]:
+        try:
+            page_size = int(request.query_params.get('page_size', 10))
+            if page_size not in [10, 25, 50, 100]:
+                page_size = 10
+        except (ValueError, TypeError):
             page_size = 10
 
-        qs = Exam.objects.all().select_related('institution', 'created_by').order_by('-created_at')
-
-        if status_filter != 'all':
-            qs = qs.filter(status=status_filter)
-
-        if shortfall_only:
-            qs = qs.filter(marks_shortfall__gt=0)
-
-        if inst_id:
-            try:
-                qs = qs.filter(institution_id=int(inst_id))
-            except (ValueError, TypeError):
-                pass
-
-        if search:
-            qs = qs.filter(
-                Q(title__icontains=search)
-                | Q(subject__icontains=search)
-                | Q(department__icontains=search)
-                | Q(institution__institution_name__icontains=search)
+        try:
+            qs, applied_filters = filter_exams_queryset(request.query_params)
+        except ValidationError as ve:
+            err_dict = ve.message_dict if hasattr(ve, 'message_dict') else {'error': str(ve)}
+            return Response(
+                {'status': 'error', 'message': 'Invalid filter parameters.', 'errors': err_dict},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         paginator = Paginator(qs, page_size)
         page_obj = paginator.get_page(page_num)
 
-        items = []
-        for e in page_obj:
-            items.append({
-                'id': e.id,
-                'title': e.title,
-                'subject': e.subject,
-                'department': e.department,
-                'institution': {
-                    'id': e.institution.id if e.institution else None,
-                    'name': e.institution.institution_name if e.institution else 'Unassigned',
-                },
-                'status': e.status,
-                'duration_minutes': e.duration_minutes,
-                'total_marks': e.total_marks,
-                'target_total_marks': e.target_total_marks,
-                'marks_shortfall': e.marks_shortfall,
-                'starts_at': e.starts_at.isoformat() if e.starts_at else None,
-                'ends_at': e.ends_at.isoformat() if e.ends_at else None,
-                'is_immutable': e.is_immutable,
-                'created_by': e.created_by.username if e.created_by else 'Unknown',
-                'created_at': e.created_at.isoformat() if e.created_at else None,
-            })
+        items = [serialize_exam_row(e) for e in page_obj]
 
         return Response(
             {
                 'status': 'success',
                 'data': items,
+                'applied_filters': applied_filters,
                 'pagination': {
                     'page': page_obj.number,
                     'page_size': page_size,
@@ -1303,6 +1284,73 @@ class SuperAdminExamListAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class SuperAdminExamFilterMetadataAPIView(APIView):
+    """
+    Returns dynamic filter options (institutions, departments, faculty, models, status counts)
+    for dependent multi-level filter controls.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        inst_id = request.query_params.get('institution_id')
+        parsed_id = int(inst_id) if inst_id and str(inst_id).isdigit() else None
+        meta = get_exams_filter_metadata(institution_id=parsed_id)
+        return Response({'status': 'success', 'data': meta, 'metadata': meta}, status=status.HTTP_200_OK)
+
+
+class SuperAdminExamExportAPIView(APIView):
+    """
+    Exports filtered exams dataset to CSV or XLSX with formula injection protection (CWE-1236).
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def perform_content_negotiation(self, request, force=False):
+        renderers = self.get_renderers()
+        return (renderers[0], renderers[0].media_type)
+
+    def get(self, request):
+        return self._handle_export(request, request.query_params)
+
+    def post(self, request):
+        params = {**request.query_params.dict(), **request.data}
+        return self._handle_export(request, params)
+
+    def _handle_export(self, request, params):
+        format_str = str(params.get('format', 'csv')).strip().lower()
+        if format_str not in ('csv', 'xlsx'):
+            format_str = 'csv'
+
+        try:
+            qs, applied = filter_exams_queryset(params)
+        except ValidationError as ve:
+            return Response({'status': 'error', 'message': str(ve)}, status=status.HTTP_400_BAD_REQUEST)
+
+        export_qs = qs[:5000]
+        timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+
+        log_super_admin_action(
+            request,
+            action=f'exams_exported_{format_str}',
+            target_entity='Exam',
+            target_id=f'{len(export_qs)}_exams',
+            description=f'Exported {len(export_qs)} exams in {format_str.upper()} format.',
+            after_state={'format': format_str, 'count': len(export_qs), 'applied_filters': applied},
+        )
+
+        if format_str == 'xlsx':
+            content = export_exams_to_xlsx_bytes(export_qs)
+            resp = HttpResponse(content, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            resp['Content-Disposition'] = f'attachment; filename="global_exams_{timestamp}.xlsx"'
+            return resp
+        else:
+            content = export_exams_to_csv_string(export_qs)
+            resp = HttpResponse(content, content_type='text/csv; charset=utf-8')
+            resp['Content-Disposition'] = f'attachment; filename="global_exams_{timestamp}.csv"'
+            return resp
 
 
 class SuperAdminExamForceCloseAPIView(APIView):
@@ -2527,6 +2575,79 @@ class SuperAdminNotificationCampaignCancelAPIView(APIView):
         if not success:
             return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'status': 'success', 'message': msg}, status=status.HTTP_200_OK)
+
+
+class SuperAdminEmailStatusAPIView(APIView):
+    """
+    Returns email configuration diagnostics, SMTP provider detection, daily send counts, and quota.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        email_data = get_email_status()
+        return Response({'status': 'success', 'data': email_data}, status=status.HTTP_200_OK)
+
+
+class SuperAdminSendTestEmailAPIView(APIView):
+    """
+    Dispatches a real diagnostic email to verify SMTP credentials or console fallback.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request):
+        recipient = str(request.data.get('to') or request.data.get('recipient_email') or '').strip()
+        if not recipient or '@' not in recipient:
+            return Response({'status': 'error', 'message': 'A valid recipient email address is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        backend = getattr(settings, 'EMAIL_BACKEND', '')
+        from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@examai.local')
+
+        subject = f'[ExamAI] Super Admin Diagnostic Email - {timezone.now().strftime("%Y-%m-%d %H:%M:%S UTC")}'
+        message = (
+            f"Hello,\n\n"
+            f"This is an automated diagnostic test from ExamAI Super Admin Console.\n"
+            f"Triggered by super administrator: {request.user.username}\n\n"
+            f"Configuration Details:\n"
+            f"- Backend: {backend}\n"
+            f"- From: {from_email}\n"
+            f"- Timestamp: {timezone.now().isoformat()}\n\n"
+            f"Regards,\n"
+            f"ExamAI Platform Administration"
+        )
+
+        try:
+            from django.core.mail import send_mail
+            sent = send_mail(
+                subject=subject,
+                message=message,
+                from_email=from_email,
+                recipient_list=[recipient],
+                fail_silently=False,
+            )
+            is_console = 'console' in backend.lower()
+            detail = (
+                f'Diagnostic email printed to console (local simulation active).'
+                if is_console
+                else f'Diagnostic email dispatched successfully to {recipient}.'
+            )
+            return Response({
+                'status': 'success',
+                'message': detail,
+                'data': {
+                    'recipient': recipient,
+                    'sent_count': sent,
+                    'backend': backend,
+                    'is_console': is_console,
+                }
+            }, status=status.HTTP_200_OK)
+        except Exception as exc:
+            logger.error('Failed to dispatch test email from Super Admin console: %s', exc)
+            return Response({
+                'status': 'error',
+                'message': f'Email dispatch failed: {str(exc)}',
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ==============================================================================

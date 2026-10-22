@@ -637,11 +637,38 @@ class Notification(models.Model):
 	type = models.CharField(max_length=30, choices=NotificationType.choices, default=NotificationType.INFO)
 	link = models.CharField(max_length=500, blank=True, default='')
 	is_read = models.BooleanField(default=False, db_index=True)
+	is_popup = models.BooleanField(default=False, db_index=True)
+	popup_shown_at = models.DateTimeField(null=True, blank=True)
+	popup_dismissed_at = models.DateTimeField(null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
 	class Meta:
 		ordering = ['-created_at']
 		indexes = [
 			models.Index(fields=['user', 'is_read', '-created_at']),
+			models.Index(fields=['user', 'is_popup', 'popup_dismissed_at']),
 		]
+
+
+class UserNotificationPreference(models.Model):
+	"""
+	User-level preference for delivery channels (email, in-app popup).
+	"""
+	user = models.OneToOneField(
+		User,
+		on_delete=models.CASCADE,
+		related_name='notification_preference',
+	)
+	email_notifications_enabled = models.BooleanField(default=True)
+	popup_notifications_enabled = models.BooleanField(default=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		verbose_name = 'User Notification Preference'
+		verbose_name_plural = 'User Notification Preferences'
+
+	def __str__(self):
+		return f'Pref: {self.user.username} (email={self.email_notifications_enabled}, popup={self.popup_notifications_enabled})'
+
 

@@ -33,9 +33,12 @@ from .generate_paper import (
     ScopeCheckView,
 )
 from .notifications_views import (
+    NotificationDismissAllPopupsView,
+    NotificationDismissPopupView,
     NotificationListView,
     NotificationMarkAllReadView,
     NotificationMarkReadView,
+    NotificationPopupListView,
 )
 from .paper_generations import (
     PaperGenerationJobActiveView,
@@ -87,6 +90,9 @@ urlpatterns = [
     path('papers/generations/<int:job_id>/cancel/', PaperGenerationJobCancelView.as_view(), name='paper-generation-cancel'),
     path('papers/generations/<int:job_id>/', PaperGenerationJobDetailView.as_view(), name='paper-generation-detail'),
     path('papers/generations/', PaperGenerationJobListView.as_view(), name='paper-generation-list'),
+    path('notifications/popups/', NotificationPopupListView.as_view(), name='notification-popups'),
+    path('notifications/dismiss-all-popups/', NotificationDismissAllPopupsView.as_view(), name='notification-dismiss-all-popups'),
+    path('notifications/<int:notification_id>/dismiss-popup/', NotificationDismissPopupView.as_view(), name='notification-dismiss-popup'),
     path('notifications/read-all/', NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
     path('notifications/<int:notification_id>/read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
     path('notifications/', NotificationListView.as_view(), name='notification-list'),
