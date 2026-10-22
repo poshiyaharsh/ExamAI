@@ -433,7 +433,7 @@ function SuperAdminLogin({
 // SUPER ADMIN DASHBOARD LAYOUT & TABS
 // ==============================================================================
 
-type ConsoleTab = 'dashboard' | 'institutes' | 'users' | 'exams' | 'ai' | 'security' | 'data';
+type ConsoleTab = 'dashboard' | 'institutes' | 'users' | 'exams' | 'ai' | 'notifications' | 'security' | 'reports' | 'data';
 
 function SuperAdminDashboardLayout({
   secretSlug,
@@ -562,7 +562,11 @@ function SuperAdminDashboardLayout({
           <SuperAdminReportsModule
             saFetch={saFetch}
             onTriggerReauth={triggerReauth}
-            onNavigateTab={(tab) => setActiveTab(tab)}
+            onNavigateTab={(tab) => {
+              if (['dashboard', 'institutes', 'users', 'exams', 'ai', 'notifications', 'security', 'reports', 'data'].includes(tab)) {
+                setActiveTab(tab as ConsoleTab);
+              }
+            }}
           />
         )}
         {activeTab === 'data' && <SuperAdminDataTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
