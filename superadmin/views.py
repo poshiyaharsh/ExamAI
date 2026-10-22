@@ -82,6 +82,17 @@ from superadmin.user_service import (
     serialize_user_row,
     toggle_user_active_status,
 )
+from superadmin.reports_service import (
+    REPORT_CATALOG,
+    export_report_to_csv_string,
+    export_report_to_pdf_bytes,
+    export_report_to_xlsx_bytes,
+    execute_global_command_search,
+    execute_global_emergency_session_revocation,
+    generate_download_token,
+    generate_report_data,
+    verify_download_token,
+)
 from superadmin.exports_service import export_entities_to_csv
 from superadmin.logs_service import get_error_summary_grouped, get_system_logs
 from superadmin.models import (
@@ -2516,6 +2527,175 @@ class SuperAdminNotificationCampaignCancelAPIView(APIView):
         if not success:
             return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'status': 'success', 'message': msg}, status=status.HTTP_200_OK)
+
+
+# ==============================================================================
+# MODULE D & E: REPORTS, EXPORTS & ADMINISTRATIVE TOOLS
+# ==============================================================================
+
+def _build_report_file_response(report_data: dict, format_str: str) -> HttpResponse:
+    safe_name = report_data.get('report_id', 'report')
+    timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+    if format_str == 'xlsx':
+        content = export_report_to_xlsx_bytes(report_data)
+        resp = HttpResponse(content, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        resp['Content-Disposition'] = f'attachment; filename="examai_{safe_name}_{timestamp}.xlsx"'
+        return resp
+    elif format_str == 'pdf':
+        content = export_report_to_pdf_bytes(report_data)
+        resp = HttpResponse(content, content_type='application/pdf')
+        resp['Content-Disposition'] = f'attachment; filename="examai_{safe_name}_{timestamp}.pdf"'
+        return resp
+    else:
+        content = export_report_to_csv_string(report_data)
+        resp = HttpResponse(content, content_type='text/csv; charset=utf-8')
+        resp['Content-Disposition'] = f'attachment; filename="examai_{safe_name}_{timestamp}.csv"'
+        return resp
+
+
+class SuperAdminReportCatalogAPIView(APIView):
+    """
+    Module D: Lists all 8 production-grade reports across all platform domains.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        return Response({'status': 'success', 'catalog': REPORT_CATALOG}, status=status.HTTP_200_OK)
+
+
+class SuperAdminReportDataAPIView(APIView):
+    """
+    Module D: Retrieves summary metrics, preview rows, and chart series for a specific report.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request, report_id):
+        inst_id = request.GET.get('institution_id')
+        parsed_inst_id = int(inst_id) if inst_id and str(inst_id).isdigit() else None
+        data = generate_report_data(report_id, institution_id=parsed_inst_id)
+        return Response({'status': 'success', 'report': data}, status=status.HTTP_200_OK)
+
+
+class SuperAdminReportExportAPIView(APIView):
+    """
+    Module D: Generates sanitized CSV, XLSX, or PDF export and returns a signed 24-hr download URL.
+    Optionally streams the file directly if stream=true.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, report_id):
+        format_str = str(request.data.get('format', 'csv')).strip().lower()
+        if format_str not in ('csv', 'xlsx', 'pdf'):
+            format_str = 'csv'
+
+        inst_id = request.data.get('institution_id')
+        parsed_inst_id = int(inst_id) if inst_id and str(inst_id).isdigit() else None
+
+        report_data = generate_report_data(report_id, institution_id=parsed_inst_id)
+        token = generate_download_token(report_id, format_str, request.user.username)
+
+        log_super_admin_action(
+            request,
+            action=f'report_exported_{format_str}',
+            target_entity='Report',
+            target_id=report_id,
+            description=f'Exported report "{report_data["title"]}" in {format_str.upper()} format.',
+            after_state={'report_id': report_id, 'format': format_str, 'rows_count': len(report_data.get('rows', []))},
+        )
+
+        stream = bool(request.data.get('stream', False))
+        if stream:
+            return _build_report_file_response(report_data, format_str)
+
+        return Response(
+            {
+                'status': 'success',
+                'report_id': report_id,
+                'format': format_str,
+                'token': token,
+                'download_url': f'/api/reports/download/{token}/',
+                'row_count': len(report_data.get('rows', [])),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SuperAdminReportDownloadAPIView(APIView):
+    """
+    Module D: Validates the 24-hour HMAC-SHA256 token and streams the report file.
+    Does not require bearer auth header since the token is pre-signed.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        valid, report_id, format_str, username = verify_download_token(token)
+        if not valid or not report_id or not format_str:
+            return Response(
+                {'status': 'error', 'message': 'Invalid or expired download token.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        report_data = generate_report_data(report_id)
+        return _build_report_file_response(report_data, format_str)
+
+
+class SuperAdminEmergencyRevokeSessionsAPIView(APIView):
+    """
+    Module E: Emergency Administrative Tool to revoke active sessions platform-wide
+    or per-institute with step-up re-authentication.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request):
+        profile = getattr(request.user, 'super_admin_profile', None)
+        if profile and not profile.is_reauth_valid():
+            return Response(
+                {'status': 'reauth_required', 'message': 'Emergency session revocation requires step-up re-authentication.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        reason = str(request.data.get('reason', '')).strip()
+        if not reason:
+            return Response(
+                {'status': 'error', 'message': 'Justification reason is mandatory for emergency revocation.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target_inst_id = request.data.get('target_institute_id')
+        parsed_id = int(target_inst_id) if target_inst_id and str(target_inst_id).isdigit() else None
+
+        success, msg, count = execute_global_emergency_session_revocation(
+            actor_username=request.user.username,
+            target_institute_id=parsed_id,
+            reason=reason,
+        )
+
+        return Response(
+            {
+                'status': 'success' if success else 'error',
+                'message': msg,
+                'affected_sessions_count': count,
+            },
+            status=status.HTTP_200_OK if success else status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class SuperAdminGlobalSearchAPIView(APIView):
+    """
+    Module E: Global instant command search (Cmd+K / Ctrl+K) across institutes, users, and exams.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request):
+        q = str(request.GET.get('q', '')).strip()
+        res = execute_global_command_search(q)
+        return Response({'status': 'success', **res}, status=status.HTTP_200_OK)
+
 
 
 

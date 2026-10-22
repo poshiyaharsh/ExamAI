@@ -1376,6 +1376,150 @@ class SuperAdminNotificationEngineModuleCTests(TestCase):
         self.assertEqual(campaign.status, 'cancelled')
 
 
+class SuperAdminReportsAndToolsModuleDTests(TestCase):
+    """
+    Automated regression and security tests for Module D & E:
+    Reports Catalog, Data Engine, CSV/XLSX/PDF Exports, Formula Sanitization,
+    Emergency Session Revocation, and Global Quick Search.
+    """
+
+    def setUp(self):
+        self.slug = 'a1b2c3d4e5f67890123456789abcdef0'
+        settings.SUPER_ADMIN_PATH = self.slug
+        self.sa_user = User.objects.create_superuser('reports_sa', 'reports_sa@example.com', 'SuperPass123!@#')
+        self.profile = SuperAdminProfile.objects.create(
+            user=self.sa_user,
+            is_totp_enrolled=True,
+            totp_secret='JBSWY3DPEHPK3PXP',
+            active_session_id='sess_reports_123',
+            last_reauth_at=timezone.now(),
+        )
+        self.token = generate_super_admin_token(self.sa_user, session_id='sess_reports_123')
+        self.client = Client()
+
+        # Seed test institution and exam
+        self.inst = AdminInstitution.objects.create(
+            admin=self.sa_user,
+            institution_name='Apex University of Science',
+            institution_code='APEX-TEST',
+        )
+        self.exam = Exam.objects.create(
+            title='Database Security Midterm',
+            subject='Cybersecurity',
+            department='Computer Science',
+            institution=self.inst,
+            created_by=self.sa_user,
+            total_marks=100,
+            duration_minutes=60,
+            status=Exam.Status.PUBLISHED,
+        )
+
+    def test_report_catalog_and_all_report_data(self):
+        """Verify report catalog lists 8 reports and each report generates valid structured data."""
+        url_cat = f'/{self.slug}/api/reports/'
+        res_cat = self.client.get(url_cat, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_cat.status_code, 200)
+        catalog = res_cat.json()['catalog']
+        self.assertEqual(len(catalog), 8)
+
+        # Test data generation for all 8 catalog reports
+        for item in catalog:
+            r_id = item['id']
+            url_data = f'/{self.slug}/api/reports/{r_id}/'
+            res_data = self.client.get(url_data, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+            self.assertEqual(res_data.status_code, 200, f'Report {r_id} failed to generate data.')
+            body = res_data.json()
+            self.assertEqual(body['status'], 'success')
+            report = body['report']
+            self.assertIn('summary', report)
+            self.assertIn('chart_data', report)
+            self.assertIn('headers', report)
+            self.assertIn('rows', report)
+
+    def test_exports_csv_xlsx_pdf_and_signed_download(self):
+        """Test exporting reports to CSV, XLSX, and PDF and validating signed token downloads."""
+        from superadmin.reports_service import sanitize_formula_cell
+
+        # 1. Formula injection test
+        self.assertEqual(sanitize_formula_cell('=1+1'), "'=1+1")
+        self.assertEqual(sanitize_formula_cell('+cmd|/c'), "'+cmd|/c")
+        self.assertEqual(sanitize_formula_cell('@SUM(A1:A10)'), "'@SUM(A1:A10)")
+        self.assertEqual(sanitize_formula_cell('-2+5'), "'-2+5")
+        self.assertEqual(sanitize_formula_cell('Safe Value'), 'Safe Value')
+
+        # 2. Export to CSV and download
+        url_export = f'/{self.slug}/api/reports/system_usage/export/'
+        res_csv = self.client.post(url_export, data={'format': 'csv'}, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_csv.status_code, 200)
+        token_csv = res_csv.json()['token']
+
+        download_url_csv = f'/{self.slug}/api/reports/download/{token_csv}/'
+        res_dl_csv = self.client.get(download_url_csv)
+        self.assertEqual(res_dl_csv.status_code, 200)
+        self.assertIn('text/csv', res_dl_csv['Content-Type'])
+        self.assertIn('attachment;', res_dl_csv['Content-Disposition'])
+
+        # 3. Export to XLSX
+        res_xlsx = self.client.post(url_export, data={'format': 'xlsx'}, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_xlsx.status_code, 200)
+        token_xlsx = res_xlsx.json()['token']
+
+        download_url_xlsx = f'/{self.slug}/api/reports/download/{token_xlsx}/'
+        res_dl_xlsx = self.client.get(download_url_xlsx)
+        self.assertEqual(res_dl_xlsx.status_code, 200)
+        self.assertIn('spreadsheetml', res_dl_xlsx['Content-Type'])
+
+        # 4. Export to PDF
+        res_pdf = self.client.post(url_export, data={'format': 'pdf'}, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_pdf.status_code, 200)
+        token_pdf = res_pdf.json()['token']
+
+        download_url_pdf = f'/{self.slug}/api/reports/download/{token_pdf}/'
+        res_dl_pdf = self.client.get(download_url_pdf)
+        self.assertEqual(res_dl_pdf.status_code, 200)
+        self.assertIn('application/pdf', res_dl_pdf['Content-Type'])
+
+    def test_emergency_revocation_requires_reauth(self):
+        """Emergency session revocation mandates step-up re-authentication."""
+        url = f'/{self.slug}/api/operations/emergency-revoke-sessions/'
+
+        # Expired reauth -> 403
+        self.profile.last_reauth_at = timezone.now() - timedelta(minutes=15)
+        self.profile.save()
+
+        res_forbidden = self.client.post(
+            url,
+            data={'reason': 'Suspected platform intrusion'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_forbidden.status_code, 403)
+        self.assertEqual(res_forbidden.json().get('status'), 'reauth_required')
+
+        # Fresh reauth -> 200
+        self.profile.last_reauth_at = timezone.now()
+        self.profile.save()
+
+        res_ok = self.client.post(
+            url,
+            data={'reason': 'Suspected platform intrusion'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_ok.status_code, 200)
+        self.assertEqual(res_ok.json()['status'], 'success')
+        self.assertTrue(SuperAdminAuditLog.objects.filter(action='emergency.sessions_revoked').exists())
+
+    def test_global_quick_search(self):
+        """Global quick search finds institutes, exams, and users by query."""
+        url = f'/{self.slug}/api/system/quick-search/?q=Apex'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        results = res.json()['results']
+        self.assertTrue(any(r['title'] == 'Apex University of Science' for r in results))
+
+
+
 
 
 

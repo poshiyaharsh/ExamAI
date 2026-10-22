@@ -35,10 +35,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  BarChart3,
 } from 'lucide-react';
 import { SuperAdminUsersModule } from './superadmin/SuperAdminUsersModule';
 import { SuperAdminAIModule } from './superadmin/SuperAdminAIModule';
 import { SuperAdminNotificationsModule } from './superadmin/SuperAdminNotificationsModule';
+import { SuperAdminReportsModule } from './superadmin/SuperAdminReportsModule';
 
 interface SuperAdminUser {
   username: string;
@@ -514,6 +516,12 @@ function SuperAdminDashboardLayout({
             label="System & Security"
           />
           <SidebarNavButton
+            active={activeTab === 'reports'}
+            onClick={() => setActiveTab('reports')}
+            icon={<BarChart3 className="w-4 h-4" />}
+            label="Reports & Tools"
+          />
+          <SidebarNavButton
             active={activeTab === 'data'}
             onClick={() => setActiveTab('data')}
             icon={<Database className="w-4 h-4" />}
@@ -550,6 +558,13 @@ function SuperAdminDashboardLayout({
         {activeTab === 'ai' && <SuperAdminAIModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'notifications' && <SuperAdminNotificationsModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'security' && <SuperAdminSecurityTab saFetch={saFetch} onTriggerReauth={triggerReauth} onRefreshUser={onRefreshUser} />}
+        {activeTab === 'reports' && (
+          <SuperAdminReportsModule
+            saFetch={saFetch}
+            onTriggerReauth={triggerReauth}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+          />
+        )}
         {activeTab === 'data' && <SuperAdminDataTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
       </main>
 

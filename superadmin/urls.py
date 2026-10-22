@@ -44,6 +44,12 @@ from superadmin.views import (
     SuperAdminReauthAPIView,
     SuperAdminStuckJobDetectorAPIView,
     SuperAdminSystemSettingsAPIView,
+    SuperAdminEmergencyRevokeSessionsAPIView,
+    SuperAdminGlobalSearchAPIView,
+    SuperAdminReportCatalogAPIView,
+    SuperAdminReportDataAPIView,
+    SuperAdminReportDownloadAPIView,
+    SuperAdminReportExportAPIView,
     SuperAdminUserBulkActionAPIView,
     SuperAdminUserCreateAPIView,
     SuperAdminUserDetailDrawerAPIView,
@@ -136,4 +142,12 @@ urlpatterns = [
     path('privacy/dpdp/inventory/', SuperAdminDPDPDataInventoryAPIView.as_view(), name='sa-dpdp-inventory'),
     path('privacy/dpdp/export/<int:user_id>/', SuperAdminDPDPDataExportAPIView.as_view(), name='sa-dpdp-export'),
     path('privacy/dpdp/anonymize/<int:user_id>/', SuperAdminDPDPAnonymizeAPIView.as_view(), name='sa-dpdp-anonymize'),
+
+    # Module D & E: Reports Catalog, Data, Exports & Emergency Tools
+    path('reports/', SuperAdminReportCatalogAPIView.as_view(), name='sa-reports-catalog'),
+    path('reports/<str:report_id>/', SuperAdminReportDataAPIView.as_view(), name='sa-report-data'),
+    path('reports/<str:report_id>/export/', SuperAdminReportExportAPIView.as_view(), name='sa-report-export'),
+    path('reports/download/<str:token>/', SuperAdminReportDownloadAPIView.as_view(), name='sa-report-download'),
+    path('operations/emergency-revoke-sessions/', SuperAdminEmergencyRevokeSessionsAPIView.as_view(), name='sa-emergency-revoke-sessions'),
+    path('system/quick-search/', SuperAdminGlobalSearchAPIView.as_view(), name='sa-global-quick-search'),
 ]
