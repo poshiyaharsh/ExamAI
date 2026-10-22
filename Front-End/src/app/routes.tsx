@@ -1,3 +1,4 @@
+import React, { lazy, Suspense } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { NotificationPopupManager } from "./components/NotificationPopupManager";
