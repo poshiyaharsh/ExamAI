@@ -35,6 +35,7 @@ import {
   ChevronRight,
   Sparkles,
 } from 'lucide-react';
+import { SuperAdminUsersModule } from './superadmin/SuperAdminUsersModule';
 
 interface SuperAdminUser {
   username: string;
@@ -535,7 +536,7 @@ function SuperAdminDashboardLayout({
       <main className="flex-1 min-w-0 max-w-full overflow-y-auto bg-slate-950 p-4 sm:p-6 lg:p-8">
         {activeTab === 'dashboard' && <SuperAdminDashboardTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'institutes' && <SuperAdminInstitutesTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
-        {activeTab === 'users' && <SuperAdminUsersTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
+        {activeTab === 'users' && <SuperAdminUsersModule saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'exams' && <SuperAdminExamsTab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'ai' && <SuperAdminAITab saFetch={saFetch} onTriggerReauth={triggerReauth} />}
         {activeTab === 'security' && <SuperAdminSecurityTab saFetch={saFetch} onTriggerReauth={triggerReauth} onRefreshUser={onRefreshUser} />}

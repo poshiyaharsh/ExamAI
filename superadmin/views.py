@@ -59,6 +59,15 @@ from superadmin.dpdp_service import (
     export_user_data,
     get_data_inventory,
 )
+from superadmin.user_service import (
+    create_user_record,
+    execute_bulk_users_action,
+    filter_users_queryset,
+    get_user_drawer_details,
+    revoke_user_sessions,
+    serialize_user_row,
+    toggle_user_active_status,
+)
 from superadmin.exports_service import export_entities_to_csv
 from superadmin.logs_service import get_error_summary_grouped, get_system_logs
 from superadmin.models import (
@@ -812,111 +821,33 @@ class SuperAdminInstituteToggleStatusAPIView(APIView):
 
 class SuperAdminUserListAPIView(APIView):
     """
-    Unified directory for students, faculty, and admins across all institutions.
+    Role-separated directory for students, faculty, and admins across all institutions.
     """
     authentication_classes = [SuperAdminAuthentication]
     permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
 
     def get(self, request):
-        role_filter = str(request.query_params.get('role', 'all')).strip().lower()
-        inst_id = request.query_params.get('institution_id')
-        dept_filter = str(request.query_params.get('department', 'all')).strip()
-        status_filter = str(request.query_params.get('status', 'all')).strip().lower()
-        search = str(request.query_params.get('search', '')).strip()
+        role_param = str(request.query_params.get('role', 'student')).strip().lower()
+        if role_param not in ('student', 'faculty', 'admin'):
+            role_param = 'student'
+
+        qs, tab_counts = filter_users_queryset(request.query_params)
 
         page_num = int(request.query_params.get('page', 1))
         page_size = int(request.query_params.get('page_size', 10))
         if page_size not in [10, 25, 50, 100]:
             page_size = 10
 
-        qs = User.objects.exclude(super_admin_profile__isnull=False).select_related(
-            'admin_profile', 'faculty_profile', 'student_profile', 'admin_institution'
-        ).order_by('-date_joined')
-
-        if search:
-            qs = qs.filter(
-                Q(username__icontains=search)
-                | Q(email__icontains=search)
-                | Q(first_name__icontains=search)
-                | Q(last_name__icontains=search)
-                | Q(student_profile__student_id__icontains=search)
-                | Q(faculty_profile__employee_id__icontains=search)
-            )
-
-        if status_filter == 'active':
-            qs = qs.filter(is_active=True)
-        elif status_filter == 'inactive':
-            qs = qs.filter(is_active=False)
-
-        if role_filter == 'admin':
-            qs = qs.filter(admin_profile__isnull=False)
-        elif role_filter == 'faculty':
-            qs = qs.filter(faculty_profile__isnull=False)
-        elif role_filter == 'student':
-            qs = qs.filter(student_profile__isnull=False)
-
-        if inst_id:
-            try:
-                inst_int = int(inst_id)
-                qs = qs.filter(
-                    Q(admin_institution__id=inst_int)
-                    | Q(faculty_profile__institution_id=inst_int)
-                    | Q(student_profile__institution_id=inst_int)
-                )
-            except (ValueError, TypeError):
-                pass
-
-        if dept_filter and dept_filter != 'all':
-            qs = qs.filter(
-                Q(faculty_profile__department__iexact=dept_filter)
-                | Q(student_profile__department__iexact=dept_filter)
-            )
-
         paginator = Paginator(qs, page_size)
         page_obj = paginator.get_page(page_num)
 
-        items = []
-        for u in page_obj:
-            user_role = 'student'
-            inst_obj = None
-            dept = ''
-            code_id = ''
-
-            if hasattr(u, 'admin_profile'):
-                user_role = 'admin'
-                inst_obj = getattr(u, 'admin_institution', None)
-            elif hasattr(u, 'faculty_profile'):
-                user_role = 'faculty'
-                inst_obj = u.faculty_profile.institution
-                dept = u.faculty_profile.department
-                code_id = u.faculty_profile.employee_id
-            elif hasattr(u, 'student_profile'):
-                user_role = 'student'
-                inst_obj = u.student_profile.institution
-                dept = u.student_profile.department
-                code_id = u.student_profile.student_id
-
-            items.append({
-                'id': u.id,
-                'username': u.username,
-                'email': u.email,
-                'full_name': f'{u.first_name} {u.last_name}'.strip() or u.username,
-                'role': user_role,
-                'identifier': code_id,
-                'department': dept or 'Unassigned',
-                'is_active': u.is_active,
-                'institution': {
-                    'id': inst_obj.id if inst_obj else None,
-                    'name': inst_obj.institution_name if inst_obj else 'Unassigned',
-                    'code': inst_obj.institution_code if inst_obj else '',
-                },
-                'date_joined': u.date_joined.isoformat() if u.date_joined else None,
-            })
+        items = [serialize_user_row(u, role_param) for u in page_obj]
 
         return Response(
             {
                 'status': 'success',
                 'data': items,
+                'counts': tab_counts,
                 'pagination': {
                     'page': page_obj.number,
                     'page_size': page_size,
@@ -928,6 +859,216 @@ class SuperAdminUserListAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class SuperAdminUserDetailDrawerAPIView(APIView):
+    """
+    Returns comprehensive profile, login history, activity summary, and sent notifications.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def get(self, request, user_id):
+        try:
+            drawer_data = get_user_drawer_details(user_id)
+            return Response({'status': 'success', 'data': drawer_data}, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_404_NOT_FOUND)
+
+
+class SuperAdminUserCreateAPIView(APIView):
+    """
+    Create Student, Faculty, or Admin user. Super Admin creation is strictly prohibited.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request):
+        role = str(request.data.get('role', '')).strip().lower()
+        if role == 'admin':
+            profile = request.user.super_admin_profile
+            if not profile.is_reauth_valid():
+                raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': 'Re-authentication required to create an Institute Admin.'})
+
+        try:
+            new_user, raw_password = create_user_record(request.data, request.user)
+            log_super_admin_action(
+                request,
+                action='user_created',
+                target_entity='User',
+                target_id=str(new_user.id),
+                description=f'Created new {role} user "{new_user.username}" ({new_user.email})',
+                after_state={'username': new_user.username, 'email': new_user.email, 'role': role},
+            )
+            return Response(
+                {
+                    'status': 'success',
+                    'message': f'User "{new_user.username}" created successfully.',
+                    'user': {
+                        'id': new_user.id,
+                        'username': new_user.username,
+                        'email': new_user.email,
+                        'role': role,
+                    },
+                    'temporary_password': raw_password,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        except ValidationError as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SuperAdminUserUpdateProfileAPIView(APIView):
+    """
+    Update basic user profile (first_name, last_name, email).
+    Department/institution is strictly immutable here (must use transfer endpoint).
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin, RequiresReauth]
+
+    def post(self, request, user_id):
+        target_user = User.objects.filter(id=user_id).first()
+        if not target_user or hasattr(target_user, 'super_admin_profile'):
+            raise Http404()
+
+        email = str(request.data.get('email', '')).strip().lower()
+        first_name = str(request.data.get('first_name', '')).strip()
+        last_name = str(request.data.get('last_name', '')).strip()
+
+        if email and email != target_user.email:
+            if User.objects.filter(email=email).exclude(id=target_user.id).exists():
+                return Response({'status': 'error', 'message': f'Email "{email}" is already in use.'}, status=status.HTTP_400_BAD_REQUEST)
+            target_user.email = email
+
+        if first_name:
+            target_user.first_name = first_name
+        if last_name:
+            target_user.last_name = last_name
+
+        target_user.save()
+
+        log_super_admin_action(
+            request,
+            action='user_profile_updated',
+            target_entity='User',
+            target_id=str(target_user.id),
+            description=f'Updated profile details for {target_user.username}',
+            after_state={'email': target_user.email, 'first_name': target_user.first_name, 'last_name': target_user.last_name},
+        )
+
+        return Response({'status': 'success', 'message': 'Profile updated successfully.'}, status=status.HTTP_200_OK)
+
+
+class SuperAdminUserToggleActiveAPIView(APIView):
+    """
+    Activate or deactivate user account with impact assessment.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request, user_id):
+        try:
+            target, next_status, impact = toggle_user_active_status(user_id, request.user)
+            verb = 'activated' if next_status else 'deactivated'
+
+            log_super_admin_action(
+                request,
+                action=f'user_{verb}',
+                target_entity='User',
+                target_id=str(target.id),
+                description=f'Super Admin {verb} user {target.username} ({target.email}). Impact: {impact}',
+                after_state={'is_active': next_status, 'impact': impact},
+            )
+
+            return Response(
+                {
+                    'status': 'success',
+                    'message': f'User "{target.username}" has been {verb}.',
+                    'is_active': next_status,
+                    'impact': impact,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except ValidationError as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SuperAdminUserRevokeSessionsAPIView(APIView):
+    """
+    Force logout / revoke all active sessions for a user.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin, RequiresReauth]
+
+    def post(self, request, user_id):
+        target = User.objects.filter(id=user_id).first()
+        if not target or hasattr(target, 'super_admin_profile'):
+            raise Http404()
+
+        revoked_count = revoke_user_sessions(user_id)
+        log_super_admin_action(
+            request,
+            action='user_sessions_revoked',
+            target_entity='User',
+            target_id=str(target.id),
+            description=f'Revoked all active sessions for user {target.username} ({revoked_count} tokens blacklisted)',
+        )
+
+        return Response(
+            {
+                'status': 'success',
+                'message': f'Revoked {revoked_count} active session(s) for user "{target.username}".',
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SuperAdminUserBulkActionAPIView(APIView):
+    """
+SuperAdminBulkActionAPIView = SuperAdminUserBulkActionAPIView
+    Atomic bulk operations on selected users.
+    Risky actions (deactivate, move_department) require fresh step-up re-authentication.
+    """
+    authentication_classes = [SuperAdminAuthentication]
+    permission_classes = [IsSuperAdmin, IsEnrolledSuperAdmin]
+
+    def post(self, request):
+        action = str(request.data.get('action', '')).strip().lower()
+        user_ids = request.data.get('user_ids', [])
+        select_all = bool(request.data.get('select_all', False))
+        filters = request.data.get('filters', {})
+        payload = request.data.get('payload', {})
+
+        if select_all:
+            qs, _ = filter_users_queryset(filters)
+            user_ids = list(qs.values_list('id', flat=True))
+
+        if not user_ids:
+            return Response({'status': 'error', 'message': 'No users selected.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Risky actions mandate reauth
+        if action in ('deactivate', 'move_department'):
+            profile = request.user.super_admin_profile
+            if not profile.is_reauth_valid():
+                raise exceptions.PermissionDenied({'status': 'reauth_required', 'message': f'Re-authentication required to bulk {action} users.'})
+
+        try:
+            result = execute_bulk_users_action(action, user_ids, payload, request.user)
+            log_super_admin_action(
+                request,
+                action=f'bulk_users_{action}',
+                target_entity='User',
+                target_id=f'{len(user_ids)}_users',
+                description=f'Bulk {action} executed on {len(user_ids)} users. Result: {result["succeeded"]} succeeded, {result["failed"]} failed.',
+                after_state=result,
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            msg = e.message if hasattr(e, 'message') else str(e)
+            return Response({'status': 'error', 'message': msg}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SuperAdminUserResetPasswordAPIView(APIView):

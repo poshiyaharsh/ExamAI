@@ -36,9 +36,15 @@ from superadmin.views import (
     SuperAdminReauthAPIView,
     SuperAdminStuckJobDetectorAPIView,
     SuperAdminSystemSettingsAPIView,
+    SuperAdminUserBulkActionAPIView,
+    SuperAdminUserCreateAPIView,
+    SuperAdminUserDetailDrawerAPIView,
     SuperAdminUserListAPIView,
     SuperAdminUserResetPasswordAPIView,
+    SuperAdminUserRevokeSessionsAPIView,
+    SuperAdminUserToggleActiveAPIView,
     SuperAdminUserTransferAPIView,
+    SuperAdminUserUpdateProfileAPIView,
 )
 
 urlpatterns = [
@@ -77,6 +83,12 @@ urlpatterns = [
 
     # Global Users Management & Impersonation
     path('users/', SuperAdminUserListAPIView.as_view(), name='sa-users-list'),
+    path('users/create/', SuperAdminUserCreateAPIView.as_view(), name='sa-user-create'),
+    path('users/bulk-action/', SuperAdminUserBulkActionAPIView.as_view(), name='sa-user-bulk-action'),
+    path('users/<int:user_id>/drawer/', SuperAdminUserDetailDrawerAPIView.as_view(), name='sa-user-drawer'),
+    path('users/<int:user_id>/update-profile/', SuperAdminUserUpdateProfileAPIView.as_view(), name='sa-user-update-profile'),
+    path('users/<int:user_id>/toggle-active/', SuperAdminUserToggleActiveAPIView.as_view(), name='sa-user-toggle-active'),
+    path('users/<int:user_id>/revoke-sessions/', SuperAdminUserRevokeSessionsAPIView.as_view(), name='sa-user-revoke-sessions'),
     path('users/<int:user_id>/reset-password/', SuperAdminUserResetPasswordAPIView.as_view(), name='sa-user-reset-password'),
     path('users/<int:user_id>/transfer/', SuperAdminUserTransferAPIView.as_view(), name='sa-user-transfer'),
     path('users/<int:user_id>/impersonate/', SuperAdminImpersonateAPIView.as_view(), name='sa-user-impersonate'),

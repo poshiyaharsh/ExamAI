@@ -7,8 +7,10 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from admins.models import AdminInstitution
-from api.models import Exam, PaperGenerationJob
+from admins.models import AdminInstitution, AdminProfile
+from api.models import Exam, Notification, PaperGenerationJob
+from faculty.models import FacultyProfile
+from students.models import StudentProfile
 from superadmin.authentication import generate_super_admin_token
 from superadmin.backups import compute_file_sha256, prune_backups
 from superadmin.jobs_service import detect_and_cleanup_stuck_jobs, get_jobs_summary
@@ -948,6 +950,187 @@ class SuperAdminApiIntegrationTests(TestCase):
         self.assertIn('inventory', inv)
         self.assertIn('disclaimer', inv)
         self.assertGreater(len(inv['inventory']), 3)
+
+
+class SuperAdminUserManagementModuleATests(TestCase):
+    def setUp(self):
+        self.slug = 'a1b2c3d4e5f67890123456789abcdef0'
+        settings.SUPER_ADMIN_PATH = self.slug
+        self.sa_user = User.objects.create_user(
+            username='harshposhiya',
+            email='harshposhiya92@gmail.com',
+            password='TestSecurePassword123!',
+        )
+        self.profile = SuperAdminProfile.objects.create(
+            user=self.sa_user,
+            totp_secret=generate_totp_secret(),
+            is_totp_enrolled=True,
+            active_session_id='sess_test_123',
+            last_reauth_at=timezone.now(),
+        )
+        self.token = generate_super_admin_token(self.sa_user, session_id='sess_test_123')
+        self.client = Client()
+
+        # Seed institution
+        self.inst = AdminInstitution.objects.create(
+            admin=self.sa_user,  # Temporary admin
+            institution_name='Apex University',
+            institution_code='INST-2026-999',
+            city='Vadodara',
+            state='Gujarat',
+        )
+
+        # Seed students
+        self.stu1_user = User.objects.create_user(username='stu_alice', email='alice@apex.edu', password='pw')
+        self.stu1_profile = StudentProfile.objects.create(
+            user=self.stu1_user, institution=self.inst, student_id='STU-2026-0001', department='Computer Engineering'
+        )
+
+        self.stu2_user = User.objects.create_user(username='stu_bob', email='bob@apex.edu', password='pw')
+        self.stu2_profile = StudentProfile.objects.create(
+            user=self.stu2_user, institution=self.inst, student_id='STU-2025-0042', department='Information Technology'
+        )
+
+        # Seed faculty
+        self.fac_user = User.objects.create_user(username='fac_dr_smith', email='smith@apex.edu', password='pw')
+        self.fac_profile = FacultyProfile.objects.create(
+            user=self.fac_user, institution=self.inst, employee_id='FAC-2026-010', department='Computer Engineering', designation='Professor'
+        )
+
+        # Seed institute admin
+        self.admin_user = User.objects.create_user(username='admin_john', email='john@apex.edu', password='pw')
+        AdminProfile.objects.create(user=self.admin_user)
+        self.inst.admin = self.admin_user
+        self.inst.save(update_fields=['admin'])
+
+    def test_role_separated_user_listing_and_counts(self):
+        """Verify Students, Faculty, and Admins are listed separately with accurate tab counts."""
+        url = f'/{self.slug}/api/users/'
+        res_stu = self.client.get(f'{url}?role=student', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_stu.status_code, 200)
+        data_stu = res_stu.json()
+        self.assertEqual(data_stu['counts']['students'], 2)
+        self.assertEqual(data_stu['counts']['faculty'], 1)
+        self.assertEqual(data_stu['counts']['admins'], 1)
+        self.assertEqual(len(data_stu['data']), 2)
+        self.assertEqual(data_stu['data'][0]['role'], 'student')
+
+        # Faculty Tab
+        res_fac = self.client.get(f'{url}?role=faculty', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_fac.status_code, 200)
+        data_fac = res_fac.json()
+        self.assertEqual(len(data_fac['data']), 1)
+        self.assertEqual(data_fac['data'][0]['username'], 'fac_dr_smith')
+        self.assertEqual(data_fac['data'][0]['designation'], 'Professor')
+
+        # Admins Tab
+        res_adm = self.client.get(f'{url}?role=admin', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_adm.status_code, 200)
+        data_adm = res_adm.json()
+        self.assertEqual(len(data_adm['data']), 1)
+        self.assertEqual(data_adm['data'][0]['username'], 'admin_john')
+
+        # Super admin account is NEVER listed in the directory
+        all_usernames = [u['username'] for u in data_stu['data'] + data_fac['data'] + data_adm['data']]
+        self.assertNotIn('harshposhiya', all_usernames)
+
+    def test_student_batch_and_search_filters(self):
+        """Test batch year filtering and search across identifiers."""
+        url = f'/{self.slug}/api/users/'
+        # Filter batch 2026
+        res = self.client.get(f'{url}?role=student&batch_year=2026', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.json()['data']), 1)
+        self.assertEqual(res.json()['data'][0]['username'], 'stu_alice')
+
+        # Search by enrollment ID
+        res_search = self.client.get(f'{url}?role=student&search=STU-2025-0042', HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_search.status_code, 200)
+        self.assertEqual(len(res_search.json()['data']), 1)
+        self.assertEqual(res_search.json()['data'][0]['username'], 'stu_bob')
+
+    def test_user_detail_drawer_endpoint(self):
+        """Test comprehensive drawer returns activity summary and notifications."""
+        Notification.objects.create(
+            user=self.stu1_user,
+            institution=self.inst,
+            title='Midterm Schedule Posted',
+            message='Please review syllabus',
+            type='info',
+        )
+        url = f'/{self.slug}/api/users/{self.stu1_user.id}/drawer/'
+        res = self.client.get(url, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()['data']
+        self.assertEqual(data['profile']['username'], 'stu_alice')
+        self.assertEqual(data['profile']['department'], 'Computer Engineering')
+        self.assertEqual(len(data['notifications']), 1)
+        self.assertEqual(data['notifications'][0]['title'], 'Midterm Schedule Posted')
+
+    def test_create_user_and_super_admin_forbidden(self):
+        """Verify user creation and strict prohibition of creating a second super admin."""
+        url = f'/{self.slug}/api/users/create/'
+        # 1. Prohibit super admin creation
+        res_bad = self.client.post(
+            url,
+            data={'role': 'super_admin', 'email': 'evil@hacker.com', 'username': 'fake_super'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_bad.status_code, 400)
+
+        # 2. Valid Student Creation
+        res_good = self.client.post(
+            url,
+            data={
+                'role': 'student',
+                'email': 'new_student@apex.edu',
+                'first_name': 'Charlie',
+                'last_name': 'Brown',
+                'institution_id': self.inst.id,
+                'department': 'Mechanical Engineering',
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res_good.status_code, 201)
+        new_u = User.objects.filter(email='new_student@apex.edu').first()
+        self.assertIsNotNone(new_u)
+        self.assertTrue(hasattr(new_u, 'student_profile'))
+        self.assertTrue(new_u.student_profile.student_id.startswith('STU-'))
+
+    def test_activate_deactivate_and_last_super_admin_safety(self):
+        """Verify activation/deactivation and enforcement that Super Admin cannot be deactivated."""
+        # 1. Cannot deactivate super admin
+        url_sa = f'/{self.slug}/api/users/{self.sa_user.id}/toggle-active/'
+        res_sa = self.client.post(url_sa, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res_sa.status_code, 400)
+
+        # 2. Toggle student active -> inactive
+        url_stu = f'/{self.slug}/api/users/{self.stu1_user.id}/toggle-active/'
+        res = self.client.post(url_stu, HTTP_AUTHORIZATION=f'Bearer {self.token}')
+        self.assertEqual(res.status_code, 200)
+        self.stu1_user.refresh_from_db()
+        self.assertFalse(self.stu1_user.is_active)
+
+    def test_bulk_actions_atomic(self):
+        """Test atomic bulk operations on users."""
+        url = f'/{self.slug}/api/users/bulk-action/'
+        res = self.client.post(
+            url,
+            data={
+                'action': 'deactivate',
+                'user_ids': [self.stu1_user.id, self.stu2_user.id],
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {self.token}',
+        )
+        self.assertEqual(res.status_code, 200)
+        self.stu1_user.refresh_from_db()
+        self.stu2_user.refresh_from_db()
+        self.assertFalse(self.stu1_user.is_active)
+        self.assertFalse(self.stu2_user.is_active)
+
 
 
 
