@@ -340,9 +340,22 @@ export const GenerationProgressModal: React.FC<GenerationProgressModalProps> = (
                 <p className="text-xs text-rose-700 leading-relaxed">
                   {job?.error_message || "The model was unable to generate questions from the syllabus."}
                 </p>
-                <p className="text-[11px] text-slate-500 pt-1">
-                  Next Step: Check that local Ollama is active or select a lighter model like Phi-3 Mini.
-                </p>
+                <div className="rounded-lg bg-white/70 border border-rose-200/60 p-2.5 text-[11px] text-slate-700 space-y-1">
+                  <span className="font-bold text-slate-900 block">Recommended Action:</span>
+                  {(() => {
+                    const errMsg = (job?.error_message || "").toLowerCase();
+                    if (errMsg.includes("not found") || errMsg.includes("model")) {
+                      return "The specified model tag is not installed in Ollama. Switch to an installed model or check GET /api/tags.";
+                    }
+                    if (errMsg.includes("connect") || errMsg.includes("reach") || errMsg.includes("refused")) {
+                      return "Ollama is not running. Please start Ollama on http://127.0.0.1:11434 and click Try Again.";
+                    }
+                    if (errMsg.includes("time") || errMsg.includes("timed out")) {
+                      return "Generation timed out on CPU. Try reducing question counts or selecting a faster model like phi3:mini.";
+                    }
+                    return "Verify Ollama service status, inspect server logs, or select another installed model tag.";
+                  })()}
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2 pt-2 justify-end">

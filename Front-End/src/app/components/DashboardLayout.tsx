@@ -77,6 +77,9 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const prevCountRef = useRef(0);
 
   const fetchNotifications = async () => {
+    if (!session?.access) {
+      return;
+    }
     try {
       const data = await notificationApi.getNotifications();
       const list = data.notifications || [];
@@ -101,12 +104,19 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
         }
       }
       prevCountRef.current = unread;
-    } catch {
+    } catch (err: any) {
+      if (err?.response?.status === 401 || err?.response?.status === 403) {
+        // Stop polling on auth failure
+        return;
+      }
       // Ignore background poll errors
     }
   };
 
   useEffect(() => {
+    if (!session?.access) {
+      return;
+    }
     let interval: number | null = null;
 
     const startPolling = () => {
@@ -145,7 +155,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [session?.access]);
 
   const handleMarkAllRead = async () => {
     try {

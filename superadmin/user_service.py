@@ -2,7 +2,7 @@ import logging
 import secrets
 import string
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -16,7 +16,11 @@ from api.models import AttemptEvent, Exam, Notification, StudentAttempt
 from faculty.models import FacultyProfile
 from students.models import StudentProfile
 
-User = get_user_model()
+if TYPE_CHECKING:
+    from django.contrib.auth.models import User
+else:
+    User = get_user_model()
+
 logger = logging.getLogger(__name__)
 
 

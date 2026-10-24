@@ -163,15 +163,21 @@ def generate_report_data(report_id: str, institution_id: Optional[int] = None) -
                 'value': User.objects.filter(date_joined__date__lte=day).count(),
             })
 
+        institutes_qs = AdminInstitution.objects.annotate(
+            students_count=Count('student_profiles', distinct=True),
+            faculty_count=Count('faculty_profiles', distinct=True),
+            exams_count=Count('exams', distinct=True),
+        ).order_by('institution_name')[:100]
+
         rows = []
-        for inst in AdminInstitution.objects.all().order_by('institution_name')[:100]:
+        for inst in institutes_qs:
             rows.append({
                 'Institution': inst.institution_name,
                 'Code': inst.institution_code,
                 'Status': inst.status,
-                'Students': inst.student_profiles.count(),
-                'Faculty': inst.faculty_profiles.count(),
-                'Exams': inst.exams.count(),
+                'Students': inst.students_count,
+                'Faculty': inst.faculty_count,
+                'Exams': inst.exams_count,
                 'Created': inst.created_at.strftime('%Y-%m-%d') if inst.created_at else '-',
             })
 
@@ -292,11 +298,27 @@ def generate_report_data(report_id: str, institution_id: Optional[int] = None) -
         if institution_id:
             faculty_qs = faculty_qs.filter(institution_id=institution_id)
 
+        faculty_list = list(faculty_qs.order_by('user__username')[:100])
+        user_ids = [f.user_id for f in faculty_list if f.user_id]
+
+        exam_counts = dict(
+            Exam.objects.filter(created_by_id__in=user_ids)
+            .values('created_by_id')
+            .annotate(c=Count('id'))
+            .values_list('created_by_id', 'c')
+        )
+        job_counts = dict(
+            PaperGenerationJob.objects.filter(faculty_id__in=user_ids)
+            .values('faculty_id')
+            .annotate(c=Count('id'))
+            .values_list('faculty_id', 'c')
+        )
+
         rows = []
         dept_counts: Dict[str, int] = {}
-        for f in faculty_qs.order_by('user__username')[:100]:
-            papers_count = Exam.objects.filter(created_by=f.user).count()
-            jobs_count = PaperGenerationJob.objects.filter(created_by=f.user).count()
+        for f in faculty_list:
+            papers_count = exam_counts.get(f.user_id, 0)
+            jobs_count = job_counts.get(f.user_id, 0)
             dept = f.department or 'General'
             dept_counts[dept] = dept_counts.get(dept, 0) + papers_count
 
@@ -327,7 +349,7 @@ def generate_report_data(report_id: str, institution_id: Optional[int] = None) -
 
     # 5. AI Generation Metrics Report
     elif report_id == 'ai_generation_metrics':
-        jobs_qs = PaperGenerationJob.objects.all().order_by('-created_at')
+        jobs_qs = PaperGenerationJob.objects.all().select_related('exam').order_by('-created_at')
         total_jobs = jobs_qs.count()
         completed_jobs = jobs_qs.filter(status=PaperGenerationJob.Status.COMPLETED).count()
         failed_jobs = jobs_qs.filter(status=PaperGenerationJob.Status.FAILED).count()
@@ -341,16 +363,23 @@ def generate_report_data(report_id: str, institution_id: Optional[int] = None) -
 
         rows = []
         for j in jobs_qs[:100]:
+            exam_title = j.exam.title if j.exam else '-'
+            subject_name = (j.exam.subject if j.exam and j.exam.subject else '') or j.department or '-'
+            duration_val = '-'
+            if j.completed_at and (j.started_at or j.created_at):
+                dur_secs = (j.completed_at - (j.started_at or j.created_at)).total_seconds()
+                duration_val = f'{dur_secs:.1f}'
+
             rows.append({
                 'Job ID': j.id,
-                'Exam': j.exam.title if j.exam else '-',
-                'Subject': j.subject or '-',
+                'Exam': exam_title,
+                'Subject': subject_name,
                 'Requested Marks': j.target_marks,
-                'Generated Marks': j.generated_marks,
+                'Generated Marks': j.actual_marks,
                 'Shortfall': j.marks_shortfall,
                 'Status': j.status,
-                'Model Tag': j.resolved_model_tag or 'Ollama Default',
-                'Duration (s)': f'{j.duration_seconds:.1f}' if j.duration_seconds else '-',
+                'Model Tag': j.model or 'Ollama Default',
+                'Duration (s)': duration_val,
             })
 
         return {
@@ -453,14 +482,19 @@ def generate_report_data(report_id: str, institution_id: Optional[int] = None) -
 
     # 8. Institution Benchmark Report (default)
     else:
-        institutes = AdminInstitution.objects.all().order_by('institution_name')
+        institutes = AdminInstitution.objects.annotate(
+            students_count=Count('student_profiles', distinct=True),
+            faculty_count=Count('faculty_profiles', distinct=True),
+            exams_count=Count('exams', distinct=True),
+        ).order_by('institution_name')
+
         chart_data = []
         rows = []
 
         for inst in institutes:
-            stu_c = inst.student_profiles.count()
-            fac_c = inst.faculty_profiles.count()
-            exam_c = inst.exams.count()
+            stu_c = inst.students_count
+            fac_c = inst.faculty_count
+            exam_c = inst.exams_count
 
             chart_data.append({'label': inst.institution_name[:15], 'value': exam_c})
             rows.append({

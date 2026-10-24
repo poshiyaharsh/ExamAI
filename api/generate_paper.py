@@ -25,6 +25,10 @@ from .utils.evaluation_config import (
     OLLAMA_MAX_BATCH_SIZE,
     OLLAMA_MAX_RETRIES,
     OLLAMA_WARMUP_ON_INIT,
+    OLLAMA_REQUEST_TIMEOUT,
+    PAPER_JOB_MAX_SECONDS,
+    OLLAMA_NUM_CTX,
+    OLLAMA_KEEP_ALIVE,
 )
 from .utils.extract_text import (
     chunk_syllabus_by_topics,
@@ -32,7 +36,14 @@ from .utils.extract_text import (
     get_cached_syllabus_data,
     get_relevant_syllabus_chunk,
 )
-from .utils.ollama_client import call_ollama, parse_json_safely, warmup_ollama_model
+from .utils.ollama_client import (
+    call_ollama,
+    parse_json_safely,
+    warmup_ollama_model,
+    resolve_ollama_model,
+    OllamaModelNotFoundError,
+    OllamaConnectionError,
+)
 from .utils.prompts import (
     build_long_answer_step_a_prompt,
     build_long_answer_step_b_prompt,
@@ -403,11 +414,12 @@ def _call_type_batch(
     retry_feedback=None,
     avoid_questions=None,
     pedagogical_angle=None,
+    job=None,
 ):
     """
     Generates standard questions (MCQ, True/False, Fill in blanks, Short Answer) using Ollama JSON Schema.
     """
-    model_tag = MODEL_MAP.get(model_key, model_key)
+    model_tag = resolve_ollama_model(model_key)
     prompt = build_type_generation_prompt(
         question_type=question_type,
         count=count,
@@ -420,24 +432,53 @@ def _call_type_batch(
         pedagogical_angle=pedagogical_angle,
     )
     schema = get_question_type_schema(question_type)
-    num_pred = min(2048, max(512, count * 220 + 256))
+    if question_type == 'fill_blank':
+        num_pred = min(1024, max(512, count * 70 + 128))
+    elif question_type == 'mcq':
+        num_pred = min(2048, max(512, count * 220 + 256))
+    elif question_type == 'short_answer':
+        num_pred = min(1536, max(512, count * 350 + 256))
+    else:
+        num_pred = min(2048, max(512, count * 220 + 256))
 
-    for temperature in (0.2, 0.4):
+    for attempt in range(2):
+        temp = 0.2 if attempt == 0 else 0.3
         try:
-            logger.info('Calling Ollama type=%s count=%s model=%s temp=%.1f', question_type, count, model_tag, temperature)
+            logger.info('Calling Ollama type=%s count=%s model=%s temp=%.1f (attempt %d)', question_type, count, model_tag, temp, attempt + 1)
             raw_response = call_ollama(
                 model=model_tag,
                 prompt=prompt,
                 format_schema=schema,
                 num_predict=num_pred,
-                temperature=temperature,
+                temperature=temp,
             )
             generated_data = parse_json_safely(raw_response)
             questions = _validated_type_questions(generated_data, question_type, default_marks=marks_per_q)
             logger.info('Generated %s of %s %s questions', len(questions), count, question_type)
             return questions[:count]
+        except OllamaModelNotFoundError:
+            logger.warning('Ollama model %s not found. Fast failover to fallback model...', model_tag)
+            fallback_tag = resolve_ollama_model(None)
+            if fallback_tag and fallback_tag != model_tag:
+                model_tag = fallback_tag
+                if job:
+                    job.model = fallback_tag
+                    job.warnings = (job.warnings or []) + [f"Switched model to fallback '{fallback_tag}' because requested model was missing."]
+                    job.save(update_fields=['model', 'warnings'])
+                continue
+            raise
+        except OllamaConnectionError:
+            logger.error('Ollama is not running / connection refused. Aborting batch.')
+            raise
         except Exception as exc:
-            logger.warning('Batch call failed type=%s count=%s temp=%.1f err=%s', question_type, count, temperature, exc)
+            if job:
+                try:
+                    job.refresh_from_db()
+                    job.retry_count = (job.retry_count or 0) + 1
+                    job.save(update_fields=['retry_count'])
+                except Exception:
+                    pass
+            logger.warning('Batch call failed type=%s count=%s attempt=%d err=%s', question_type, count, attempt + 1, exc)
 
     return []
 
@@ -455,9 +496,11 @@ def _generate_type_questions(
     avoid_questions=None,
     pedagogical_angle=None,
     round_offset=0,
+    job=None,
+    deadline=None,
 ):
     canon_type = canonicalize_type(question_type)
-    model_tag = MODEL_MAP.get(model_name, model_name)
+    model_tag = resolve_ollama_model(model_name)
     generated = []
 
     # Handle Long Answer / Subjective with two-step generation
@@ -471,6 +514,14 @@ def _generate_type_questions(
             difficulties.append('medium')
 
         for item_idx in range(1, count + 1):
+            if deadline and time.time() > deadline:
+                logger.warning("Deadline reached during long answer generation; returning %d partial items", len(generated))
+                break
+            if job:
+                job.refresh_from_db()
+                if job.is_cancelled:
+                    break
+
             topic = selected_topics[(item_idx - 1) % len(selected_topics)]
             difficulty = difficulties[(item_idx - 1) % len(difficulties)]
             chunk = get_relevant_syllabus_chunk(syllabus_text, topic, chunks_map, round_offset=round_offset)
@@ -495,9 +546,26 @@ def _generate_type_questions(
         return generated
 
     # Objective & Short Answer generation in small batches
-    batch_size = max(1, min(OLLAMA_MAX_BATCH_SIZE, count))
+    if canon_type == 'fill_blank':
+        batch_size = min(count, 15)
+    elif canon_type == 'mcq':
+        batch_size = min(5, count)
+    elif canon_type == 'short_answer':
+        batch_size = min(2, count)
+    elif canon_type == 'true_false':
+        batch_size = min(8, count)
+    else:
+        batch_size = max(1, min(OLLAMA_MAX_BATCH_SIZE, count))
 
     for batch_idx, start in enumerate(range(0, count, batch_size)):
+        if deadline and time.time() > deadline:
+            logger.warning("Deadline reached during %s generation; returning %d partial items", canon_type, len(generated))
+            break
+        if job:
+            job.refresh_from_db()
+            if job.is_cancelled:
+                break
+
         req_count = min(batch_size, count - start)
         # Select topic for this batch to ensure balanced topic distribution and accurate syllabus chunking
         batch_topic = topics[batch_idx % len(topics)] if topics else ''
@@ -511,32 +579,177 @@ def _generate_type_questions(
             question_type=canon_type,
             count=req_count,
             marks_per_q=marks_per_q,
-            model_key=model_name,
+            model_key=model_tag,
             topics=batch_topics,
             difficulty_distribution=difficulty_distribution,
             syllabus_chunk=batch_chunk,
             avoid_questions=avoid_questions,
             pedagogical_angle=pedagogical_angle,
+            job=job,
         )
         generated.extend(batch)
         shortfall = req_count - len(batch)
-        if shortfall > 0:
+        if shortfall > 0 and (not deadline or time.time() < deadline):
             logger.info("Retrying shortfall of %s %s questions", shortfall, canon_type)
             retry_batch = _call_type_batch(
                 question_type=canon_type,
                 count=shortfall,
                 marks_per_q=marks_per_q,
-                model_key=model_name,
+                model_key=model_tag,
                 topics=batch_topics,
                 difficulty_distribution=difficulty_distribution,
                 syllabus_chunk=batch_chunk,
                 retry_feedback=f"Shortfall: generate {shortfall} more {canon_type} questions.",
                 avoid_questions=avoid_questions,
                 pedagogical_angle=pedagogical_angle,
+                job=job,
             )
             generated.extend(retry_batch[:shortfall])
 
     return generated
+
+
+def _save_generated_exam_questions(
+    job,
+    exam_id,
+    generated_questions,
+    target_marks,
+    planned_marks,
+    initial_generated_marks,
+    dropped_dups,
+    rejected_duplicates_marks,
+    round_idx,
+    warnings,
+    syllabus_text,
+    model_name,
+    has_shortfall=False,
+):
+    from api.utils.db_retry import is_lock_or_deadlock
+    from api.validators.question_bank import compute_text_hash
+    from api.models import Option
+    from api.utils.options import clean_options_list, clean_option_text
+
+    actual_total_marks = int(round(sum(float(q.get('marks', 1)) for q in generated_questions)))
+    marks_shortfall = max(0, target_marks - actual_total_marks)
+    if marks_shortfall > 0:
+        has_shortfall = True
+
+    exam = None
+    for attempt_idx in range(3):
+        try:
+            with transaction.atomic():
+                exam = Exam.objects.select_for_update().get(id=exam_id)
+
+                for question_order, generated_question in enumerate(generated_questions, start=1):
+                    raw_options = generated_question.get('options')
+                    correct_ans = generated_question.get('correct_answer')
+                    q_type = generated_question['type']
+                    clean_opts = clean_options_list(raw_options) if (raw_options and isinstance(raw_options, list)) else None
+
+                    model_ans = generated_question.get('model_answer') or ''
+                    if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 30:
+                        model_ans = _ensure_subjective_model_answer(
+                            generated_question['text'],
+                            generated_question.get('topic') or '',
+                            generated_question['marks'],
+                            syllabus_text,
+                            model_name,
+                        )
+
+                    q_obj = Question.objects.create(
+                        exam=exam,
+                        institution=exam.institution,
+                        department=exam.department,
+                        order=question_order,
+                        question_type=q_type,
+                        difficulty=generated_question.get('difficulty', 'medium'),
+                        text=generated_question['text'],
+                        text_hash=compute_text_hash(generated_question['text']),
+                        status=Question.Status.ACTIVE,
+                        options=clean_opts,
+                        correct_answer=correct_ans,
+                        model_answer=model_ans,
+                        accepted_answers=generated_question.get('accepted_answers') or [],
+                        rubric=generated_question.get('rubric') or [],
+                        word_limit=generated_question.get('word_limit'),
+                        source='ai_generated',
+                        marks=generated_question['marks'],
+                        topic_text=generated_question.get('topic') or '',
+                    )
+
+                    if clean_opts and isinstance(clean_opts, list) and q_type in {'mcq', 'true_false', 'truefalse'}:
+                        opts_to_create = []
+                        correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
+                        for opt_idx, opt_txt in enumerate(clean_opts, start=1):
+                            is_corr = False
+                            clean_opt_str = clean_option_text(opt_txt).strip().lower()
+                            if correct_ans is not None:
+                                if isinstance(correct_ans, list):
+                                    is_corr = clean_opt_str in [clean_option_text(c).strip().lower() for c in correct_ans]
+                                else:
+                                    is_corr = (clean_opt_str == correct_str) or (str(opt_idx - 1) == correct_str) or (
+                                        correct_str in {'a': 0, 'b': 1, 'c': 2, 'd': 3} and opt_idx - 1 == {'a': 0, 'b': 1, 'c': 2, 'd': 3}[correct_str]
+                                    ) or (clean_opt_str == 'true' and correct_str in {'true', 't', '1'}) or (clean_opt_str == 'false' and correct_str in {'false', 'f', '0'})
+                            opts_to_create.append(Option(
+                                question=q_obj,
+                                text=str(opt_txt),
+                                is_correct=is_corr,
+                                order=opt_idx,
+                            ))
+                        if opts_to_create:
+                            Option.objects.bulk_create(opts_to_create)
+
+                exam.total_marks = actual_total_marks
+                exam.target_total_marks = target_marks
+                exam.marks_shortfall = marks_shortfall
+
+                accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
+                if accepted_topics:
+                    exam.topics = accepted_topics
+
+                exam.status = Exam.Status.DRAFT
+                exam.is_reviewed = False
+                exam.error_message = ''
+                exam.save(update_fields=['total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'status', 'is_reviewed', 'error_message', 'updated_at'])
+            break
+        except Exception as e:
+            if is_lock_or_deadlock(e) and attempt_idx < 2:
+                time.sleep(0.1 * (2 ** attempt_idx))
+                continue
+            raise
+
+    final_status = (
+        PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
+        if (has_shortfall or warnings)
+        else PaperGenerationJob.Status.COMPLETED
+    )
+    job.status = final_status
+    job.progress = 100
+    job.current_step = 'Completed with shortfall' if marks_shortfall > 0 else ('Completed with warnings' if warnings else 'Paper generated successfully')
+    job.warnings = warnings
+    job.question_count_generated = len(generated_questions)
+    job.target_marks = target_marks
+    job.actual_marks = actual_total_marks
+    job.marks_shortfall = marks_shortfall
+    job.completed_at = timezone.now()
+    job.save(update_fields=['status', 'progress', 'current_step', 'warnings', 'question_count_generated', 'target_marks', 'actual_marks', 'marks_shortfall', 'completed_at'])
+
+    try:
+        exam_title = exam.title if exam else f"Exam #{exam_id}"
+        Notification.objects.create(
+            user=job.faculty,
+            institution=job.institution,
+            title='Paper Ready' if not has_shortfall else 'Paper Ready with Warnings',
+            message=(
+                f"Exam '{exam_title}' paper generated ({len(generated_questions)} questions)."
+                if not has_shortfall
+                else f"Exam '{exam_title}' generated with a {marks_shortfall}-mark shortfall ({actual_total_marks}/{target_marks} marks). Review the paper and choose how to proceed."
+            ),
+            type=Notification.NotificationType.SUCCESS if not has_shortfall else Notification.NotificationType.WARNING,
+            link=f"/faculty/exams/{exam_id}/edit",
+        )
+    except Exception:
+        pass
 
 
 def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text, blueprint=None):
@@ -550,12 +763,31 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
     job.progress = 10
     job.save(update_fields=['status', 'started_at', 'current_step', 'progress'])
 
+    generated_questions = []
+    dropped_dups = 0
+    dropped_items = []
+    warnings = []
+    round_idx = 0
+    target_marks = int(total_marks)
+    planned_marks = target_marks
+    initial_generated_marks = 0
+    rejected_duplicates_marks = 0
+
     try:
+        resolved_model_tag = resolve_ollama_model(model_name)
+        if resolved_model_tag != job.model:
+            job.model = resolved_model_tag
+            job.save(update_fields=['model'])
+
         # Pre-warm Ollama model to avoid cold-start delay during first inference
         if OLLAMA_WARMUP_ON_INIT:
-            warmup_ollama_model(MODEL_MAP.get(model_name, model_name))
+            warmup_ollama_model(resolved_model_tag)
         counts, planned_total_marks = compute_question_counts(question_types, total_marks, blueprint=blueprint)
+        planned_marks = int(planned_total_marks)
         total_requested = max(sum(counts.values()), 1)
+
+        job_max_seconds = min(PAPER_JOB_MAX_SECONDS, max(300, total_requested * 90))
+        deadline = time.time() + job_max_seconds
 
         # Topic-based syllabus chunking cache
         chunks_map = chunk_syllabus_by_topics(syllabus_text, topics)
@@ -564,7 +796,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         if job.is_cancelled:
             return
 
-        job.current_step = f'Contacting AI model ({model_name})'
+        job.current_step = f'Contacting AI model ({resolved_model_tag})'
         job.progress = 20
         job.save(update_fields=['current_step', 'progress'])
 
@@ -577,15 +809,21 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                     pct = 20 + int(60 * (q_done / total_requested))
                     job.progress = min(pct, 80)
                     job.question_count_generated = q_done
-                    job.save(update_fields=['current_step', 'progress', 'question_count_generated'])
+                    curr_m = sum(float(q.get('marks', 1)) for q in generated_questions)
+                    job.actual_marks = int(curr_m)
+                    job.save(update_fields=['current_step', 'progress', 'question_count_generated', 'actual_marks'])
             except Exception:
                 pass
 
-        generated_questions = []
         type_stats = {}
 
         for question_type, requested_count in counts.items():
             if requested_count > 0:
+                if time.time() > deadline:
+                    logger.warning("Paper generation job %s reached timeout deadline (%ss)", job_id, job_max_seconds)
+                    warnings.append(f"Generation stopped after {int(job_max_seconds // 60)} minutes deadline.")
+                    break
+
                 job.refresh_from_db()
                 if job.is_cancelled:
                     return
@@ -593,22 +831,26 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 marks_per_q = MARKS_PER_TYPE.get(question_type, 1)
                 if blueprint and isinstance(blueprint, dict):
                     cfg = blueprint.get(question_type) or {}
-                    if isinstance(cfg, dict) and cfg.get('marksPerQuestion'):
-                        try:
-                            marks_per_q = float(cfg['marksPerQuestion'])
-                        except (ValueError, TypeError):
-                            pass
+                    if isinstance(cfg, dict):
+                        m_val = cfg.get('marksPerQuestion') or cfg.get('marks')
+                        if m_val is not None:
+                            try:
+                                marks_per_q = float(m_val)
+                            except (ValueError, TypeError):
+                                pass
 
                 type_results = _generate_type_questions(
                     question_type=question_type,
                     count=requested_count,
                     marks_per_q=marks_per_q,
-                    model_name=model_name,
+                    model_name=resolved_model_tag,
                     topics=topics,
                     difficulty_distribution=difficulty_distribution,
                     syllabus_text=syllabus_text,
                     chunks_map=chunks_map,
                     progress_cb=update_job_step,
+                    job=job,
+                    deadline=deadline,
                 )
                 generated_questions.extend(type_results)
                 type_stats[question_type] = {
@@ -636,17 +878,20 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         rejected_duplicates_marks = int(round(sum(float(q['marks']) for q in dropped_items)))
         current_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
 
-        # Closed-loop Top-up Rounds (up to 4 rounds)
-        MAX_TOPUP_ROUNDS = 4
+        # Closed-loop Top-up Rounds (up to 2 rounds max)
+        MAX_TOPUP_ROUNDS = 2
         TOPUP_ANGLES = [
             "Practical scenarios, real-world implementations, and applied problem-solving",
             "Comparative analysis, contrasts, tradeoffs, and distinguishing features",
-            "Causal mechanisms, operational workflows, and underlying system architectures",
-            "Critical evaluation, limitations, boundary conditions, and edge cases",
         ]
 
         round_idx = 0
         while current_total_marks < target_marks and round_idx < MAX_TOPUP_ROUNDS:
+            if time.time() > deadline:
+                logger.warning("Paper generation reached deadline during top-up; preserving current items.")
+                warnings.append("Top-up stopped as time budget reached.")
+                break
+
             job.refresh_from_db()
             if job.is_cancelled:
                 return
@@ -690,17 +935,19 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 marks_per_q = MARKS_PER_TYPE.get(q_type, 1)
                 if blueprint and isinstance(blueprint, dict):
                     cfg = blueprint.get(q_type) or {}
-                    if isinstance(cfg, dict) and cfg.get('marksPerQuestion'):
-                        try:
-                            marks_per_q = float(cfg['marksPerQuestion'])
-                        except (ValueError, TypeError):
-                            pass
+                    if isinstance(cfg, dict):
+                        m_val = cfg.get('marksPerQuestion') or cfg.get('marks')
+                        if m_val is not None:
+                            try:
+                                marks_per_q = float(m_val)
+                            except (ValueError, TypeError):
+                                pass
 
                 topup_batch = _generate_type_questions(
                     question_type=q_type,
                     count=req_c,
                     marks_per_q=marks_per_q,
-                    model_name=model_name,
+                    model_name=resolved_model_tag,
                     topics=topics,
                     difficulty_distribution=difficulty_distribution,
                     syllabus_text=syllabus_text,
@@ -709,6 +956,8 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                     avoid_questions=avoid_list,
                     pedagogical_angle=pedagogical_angle,
                     round_offset=round_idx,
+                    job=job,
+                    deadline=deadline,
                 )
                 topup_batch_all.extend(topup_batch)
 
@@ -785,125 +1034,21 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         job.progress = 92
         job.save(update_fields=['current_step', 'progress'])
 
-        from api.utils.db_retry import is_lock_or_deadlock
-        for attempt_idx in range(3):
-            try:
-                with transaction.atomic():
-                    exam = Exam.objects.select_for_update().get(id=exam_id)
-                    from api.validators.question_bank import compute_text_hash
-                    from api.models import Option
-                    from api.utils.options import clean_options_list, clean_option_text
-
-                    for question_order, generated_question in enumerate(generated_questions, start=1):
-                        raw_options = generated_question.get('options')
-                        correct_ans = generated_question.get('correct_answer')
-                        q_type = generated_question['type']
-                        clean_opts = clean_options_list(raw_options) if (raw_options and isinstance(raw_options, list)) else None
-
-                        model_ans = generated_question.get('model_answer') or ''
-                        if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 30:
-                            model_ans = _ensure_subjective_model_answer(
-                                generated_question['text'],
-                                generated_question.get('topic') or '',
-                                generated_question['marks'],
-                                syllabus_text,
-                                model_name,
-                            )
-
-                        q_obj = Question.objects.create(
-                            exam=exam,
-                            institution=exam.institution,
-                            department=exam.department,
-                            order=question_order,
-                            question_type=q_type,
-                            difficulty=generated_question['difficulty'],
-                            text=generated_question['text'],
-                            text_hash=compute_text_hash(generated_question['text']),
-                            status=Question.Status.ACTIVE,
-                            options=clean_opts,
-                            correct_answer=correct_ans,
-                            model_answer=model_ans,
-                            accepted_answers=generated_question.get('accepted_answers') or [],
-                            rubric=generated_question.get('rubric') or [],
-                            word_limit=generated_question.get('word_limit'),
-                            source='ai_generated',
-                            marks=generated_question['marks'],
-                            topic_text=generated_question.get('topic') or '',
-                        )
-
-                        if clean_opts and isinstance(clean_opts, list) and q_type in {'mcq', 'true_false', 'truefalse'}:
-                            opts_to_create = []
-                            correct_str = str(correct_ans).strip().lower() if correct_ans is not None else ''
-                            for opt_idx, opt_txt in enumerate(clean_opts, start=1):
-                                is_corr = False
-                                clean_opt_str = clean_option_text(opt_txt).strip().lower()
-                                if correct_ans is not None:
-                                    if isinstance(correct_ans, list):
-                                        is_corr = clean_opt_str in [clean_option_text(c).strip().lower() for c in correct_ans]
-                                    else:
-                                        is_corr = (clean_opt_str == correct_str) or (str(opt_idx - 1) == correct_str) or (
-                                            correct_str in {'a': 0, 'b': 1, 'c': 2, 'd': 3} and opt_idx - 1 == {'a': 0, 'b': 1, 'c': 2, 'd': 3}[correct_str]
-                                        ) or (clean_opt_str == 'true' and correct_str in {'true', 't', '1'}) or (clean_opt_str == 'false' and correct_str in {'false', 'f', '0'})
-                                opts_to_create.append(Option(
-                                    question=q_obj,
-                                    text=str(opt_txt),
-                                    is_correct=is_corr,
-                                    order=opt_idx,
-                                ))
-                            if opts_to_create:
-                                Option.objects.bulk_create(opts_to_create)
-
-                    exam.total_marks = actual_total_marks
-                    exam.target_total_marks = target_marks
-                    exam.marks_shortfall = marks_shortfall
-
-                    # Scope Lock: exam topics list contains ONLY topics with at least one accepted question
-                    accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
-                    if accepted_topics:
-                        exam.topics = accepted_topics
-
-                    exam.status = Exam.Status.DRAFT
-                    exam.is_reviewed = False
-                    exam.error_message = ''
-                    exam.save(update_fields=['total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'status', 'is_reviewed', 'error_message', 'updated_at'])
-                break
-            except Exception as e:
-                if is_lock_or_deadlock(e) and attempt_idx < 2:
-                    time.sleep(0.1 * (2 ** attempt_idx))
-                    continue
-                raise
-
-        final_status = (
-            PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
-            if (has_shortfall or warnings)
-            else PaperGenerationJob.Status.COMPLETED
+        _save_generated_exam_questions(
+            job=job,
+            exam_id=exam_id,
+            generated_questions=generated_questions,
+            target_marks=target_marks,
+            planned_marks=planned_marks,
+            initial_generated_marks=initial_generated_marks,
+            dropped_dups=dropped_dups,
+            rejected_duplicates_marks=rejected_duplicates_marks,
+            round_idx=round_idx,
+            warnings=warnings,
+            syllabus_text=syllabus_text,
+            model_name=model_name,
+            has_shortfall=has_shortfall,
         )
-        job.status = final_status
-        job.progress = 100
-        job.current_step = 'Completed with shortfall' if marks_shortfall > 0 else ('Completed with warnings' if warnings else 'Paper generated successfully')
-        job.warnings = warnings
-        job.question_count_generated = len(generated_questions)
-        job.target_marks = target_marks
-        job.actual_marks = actual_total_marks
-        job.marks_shortfall = marks_shortfall
-        job.completed_at = timezone.now()
-        job.save(update_fields=['status', 'progress', 'current_step', 'warnings', 'question_count_generated', 'target_marks', 'actual_marks', 'marks_shortfall', 'completed_at'])
-
-        try:
-            Notification.objects.create(
-                user=job.faculty,
-                institution=job.institution,
-                title='Paper Ready' if not has_shortfall else 'Paper Ready with Warnings',
-                message=(
-                    f"Exam '{exam.title}' paper generated ({len(generated_questions)} questions)."
-                    if not has_shortfall
-                    else f"Exam '{exam.title}' generated with a {marks_shortfall}-mark shortfall ({actual_total_marks}/{target_marks} marks). Review the paper and choose how to proceed."
-                ),
-                notification_type=Notification.NotificationType.SUCCESS if not has_shortfall else Notification.NotificationType.WARNING,
-                link=f"/faculty/exams/{exam.id}/edit",
-            )
-        except Exception:
-            pass
 
     except Exception as exc:
         logger.exception('Background paper generation failed exam_id=%s', exam_id)
@@ -918,6 +1063,28 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
             friendly_err = 'The AI model returned an invalid response format. Please try again.'
         else:
             friendly_err = f'Generation failed: {str(exc)[:120]}'
+
+        if len(generated_questions) > 0:
+            try:
+                warnings.append(f"Generation stopped early: {friendly_err}. Preserved {len(generated_questions)} questions.")
+                _save_generated_exam_questions(
+                    job=job,
+                    exam_id=exam_id,
+                    generated_questions=generated_questions,
+                    target_marks=target_marks,
+                    planned_marks=planned_marks,
+                    initial_generated_marks=initial_generated_marks,
+                    dropped_dups=dropped_dups,
+                    rejected_duplicates_marks=rejected_duplicates_marks,
+                    round_idx=round_idx,
+                    warnings=warnings,
+                    syllabus_text=syllabus_text,
+                    model_name=model_name,
+                    has_shortfall=True,
+                )
+                return
+            except Exception as save_exc:
+                logger.exception('Failed to save partial questions for exam_id=%s: %s', exam_id, save_exc)
 
         Exam.objects.filter(id=exam_id).update(
             status=Exam.Status.FAILED,

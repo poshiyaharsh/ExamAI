@@ -595,6 +595,7 @@ class PaperGenerationJob(models.Model):
 	actual_marks = models.PositiveIntegerField(default=0)
 	marks_shortfall = models.PositiveIntegerField(default=0)
 	off_scope_rejected_count = models.PositiveIntegerField(default=0)
+	retry_count = models.PositiveIntegerField(default=0)
 	source_documents = models.JSONField(default=list, blank=True)
 	is_cancelled = models.BooleanField(default=False)
 	request_hash = models.CharField(max_length=64, blank=True, default='', db_index=True)

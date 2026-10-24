@@ -9,10 +9,9 @@ from rest_framework.views import APIView
 from .models import Exam, PaperGenerationJob, Question
 from .permissions import IsFacultyUser
 from .utils.departments import get_faculty_department
+from .utils.evaluation_config import PAPER_JOB_MAX_SECONDS
 
 logger = logging.getLogger(__name__)
-
-JOB_TIMEOUT_MINUTES = 10
 
 
 def serialize_job(job):
@@ -42,6 +41,7 @@ def serialize_job(job):
         'actual_marks': job.actual_marks,
         'marks_shortfall': job.marks_shortfall,
         'off_scope_rejected_count': job.off_scope_rejected_count,
+        'retry_count': getattr(job, 'retry_count', 0),
         'is_cancelled': job.is_cancelled,
         'created_at': job.created_at.isoformat() if job.created_at else None,
         'started_at': job.started_at.isoformat() if job.started_at else None,
@@ -52,15 +52,45 @@ def serialize_job(job):
 
 def check_and_handle_timeout(job):
     if job.status in [PaperGenerationJob.Status.QUEUED, PaperGenerationJob.Status.RUNNING]:
-        if timezone.now() - job.created_at > timedelta(minutes=JOB_TIMEOUT_MINUTES):
-            job.status = PaperGenerationJob.Status.FAILED
-            job.error_message = f'Generation timed out after {JOB_TIMEOUT_MINUTES} minutes.'
-            job.completed_at = timezone.now()
-            job.save(update_fields=['status', 'error_message', 'completed_at'])
-            if job.exam and job.exam.status == Exam.Status.GENERATING:
-                job.exam.status = Exam.Status.FAILED
-                job.exam.error_message = job.error_message
-                job.exam.save(update_fields=['status', 'error_message'])
+        req_count = job.question_count_requested or 10
+        scaled_timeout = min(PAPER_JOB_MAX_SECONDS, max(300, req_count * 90))
+        ref_time = job.started_at or job.created_at
+        if ref_time and (timezone.now() - ref_time).total_seconds() > scaled_timeout:
+            now = timezone.now()
+            exam = job.exam
+            q_count = exam.questions.filter(is_deleted=False).count() if exam else 0
+            if q_count > 0:
+                questions = exam.questions.filter(is_deleted=False)
+                actual_marks = sum(float(q.marks) for q in questions)
+                target = job.target_marks or (exam.target_total_marks if exam else actual_marks)
+                shortfall = max(0, int(target - actual_marks))
+                job.status = PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
+                job.current_step = 'Completed with partial questions due to timeout'
+                job.warnings = (job.warnings or []) + [
+                    f'Generation timed out after {int(scaled_timeout // 60)} minutes. {q_count} questions ({int(actual_marks)}/{int(target)} marks) were preserved.'
+                ]
+                job.actual_marks = int(actual_marks)
+                job.marks_shortfall = shortfall
+                job.question_count_generated = q_count
+                job.completed_at = now
+                job.save(update_fields=[
+                    'status', 'current_step', 'warnings', 'actual_marks',
+                    'marks_shortfall', 'question_count_generated', 'completed_at'
+                ])
+                if exam:
+                    exam.status = Exam.Status.DRAFT
+                    exam.total_marks = int(actual_marks)
+                    exam.marks_shortfall = shortfall
+                    exam.save(update_fields=['status', 'total_marks', 'marks_shortfall'])
+            else:
+                job.status = PaperGenerationJob.Status.FAILED
+                job.error_message = f'Generation timed out after {int(scaled_timeout // 60)} minutes.'
+                job.completed_at = now
+                job.save(update_fields=['status', 'error_message', 'completed_at'])
+                if exam and exam.status == Exam.Status.GENERATING:
+                    exam.status = Exam.Status.FAILED
+                    exam.error_message = job.error_message
+                    exam.save(update_fields=['status', 'error_message'])
     return job
 
 

@@ -117,7 +117,7 @@ export type FacultyProfileResponse = {
   data: FacultyProfileData;
 };
 
-export type AiModel = "qwen2.5-3b" | "llama3.2-3b" | "phi3-mini";
+export type AiModel = "qwen2.5:3b-instruct" | "llama3.2:3b" | "phi3:mini" | string;
 export type PaperQuestionType = "MCQ" | "Subjective" | "True/False" | "Fill in the Blanks";
 export type PaperDifficulty = "Easy" | "Medium" | "Hard";
 
@@ -186,6 +186,7 @@ export type OllamaStatusResponse = {
   model_installed: boolean;
   message: string;
   models?: string[];
+  primary_model?: string;
 };
 
 export type GeneratedPaperResponse = {
@@ -1184,6 +1185,9 @@ apiClient.interceptors.response.use(
     } catch (refreshError) {
       rejectQueuedRequests(refreshError);
       authStorage.clearSession();
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login";
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

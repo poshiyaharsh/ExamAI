@@ -95,6 +95,11 @@ function SuperAdminConsoleRoot({ secretSlug }: { secretSlug: string }) {
       if (response.status === 404) {
         throw new Error('Endpoint not found');
       }
+      if (response.status === 401 || response.status === 403) {
+        sessionStorage.removeItem(`sa_token_${secretSlug}`);
+        setToken(null);
+        setUser(null);
+      }
       return response;
     },
     [secretSlug, token]

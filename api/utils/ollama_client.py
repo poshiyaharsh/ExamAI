@@ -52,13 +52,27 @@ def get_installed_ollama_models(base_url: str = OLLAMA_BASE_URL, timeout: int = 
         return list(_TAGS_CACHE) if _TAGS_CACHE else []
 
 
+class OllamaModelNotFoundError(RuntimeError):
+    def __init__(self, model_tag, installed=None):
+        self.model_tag = model_tag
+        self.installed = installed or []
+        msg = f"Model '{model_tag}' is not installed."
+        if self.installed:
+            msg += f" Installed: {self.installed}"
+        super().__init__(msg)
+
+
+class OllamaConnectionError(RuntimeError):
+    pass
+
+
 def resolve_ollama_model(
     preferred_model: Optional[str] = None,
     base_url: str = OLLAMA_BASE_URL,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Resolves the best available Ollama model tag based on installed models in /api/tags:
-    1. Canonicalized preferred_model if installed
+    1. Exact full tag or normalized preferred_model if installed
     2. OLLAMA_MODEL if installed
     3. Each model in OLLAMA_FALLBACK_MODELS if installed
     4. First available installed model
@@ -70,6 +84,34 @@ def resolve_ollama_model(
 
     installed_set = set(installed)
 
+    def _find_installed(candidate_tag: Optional[str]) -> Optional[str]:
+        if not candidate_tag:
+            return None
+        clean = str(candidate_tag).strip()
+        # 1. Exact match
+        if clean in installed_set:
+            return clean
+        for inst in installed:
+            if inst.lower() == clean.lower():
+                return inst
+        # 2. Canonicalized tag
+        canonical = canonicalize_model_tag(clean)
+        if canonical in installed_set:
+            return canonical
+        for inst in installed:
+            if inst.lower() == canonical.lower():
+                return inst
+        # 3. Fuzzy match key parts (e.g. qwen2.5-3b -> qwen2.5:3b-instruct)
+        name_clean = clean.lower().replace('ollama-', '').replace(':', '-').replace('_', '-')
+        parts = [p for p in name_clean.split('-') if p]
+        if parts:
+            for inst in installed:
+                inst_clean = inst.lower().replace(':', '-').replace('_', '-')
+                if all(p in inst_clean for p in parts[:2]):
+                    logger.warning("Normalizing model tag '%s' to installed model '%s'", clean, inst)
+                    return inst
+        return None
+
     # 0. Check Super Admin dynamic AIModel registry if available
     try:
         from superadmin.models import AIModel
@@ -77,46 +119,39 @@ def resolve_ollama_model(
         if enabled_qs.exists():
             enabled_names = {m.name: m for m in enabled_qs}
             if preferred_model:
-                canonical_pref = canonicalize_model_tag(preferred_model)
-                for name in enabled_names:
-                    if name.lower() == canonical_pref.lower() or name.split(':')[0] == canonical_pref.split(':')[0]:
-                        if name in installed_set:
-                            return name, None
+                found = _find_installed(preferred_model)
+                if found and found in enabled_names:
+                    return found, None
             default_m = enabled_qs.filter(is_default=True).first()
-            if default_m and default_m.name in installed_set:
-                return default_m.name, None
+            if default_m:
+                found = _find_installed(default_m.name)
+                if found:
+                    return found, None
             for m in enabled_qs:
-                if m.name in installed_set:
-                    return m.name, None
+                found = _find_installed(m.name)
+                if found:
+                    return found, None
     except Exception:
         pass
 
     # 1. Preferred model (e.g. from exam or request)
     if preferred_model:
-        canonical_pref = canonicalize_model_tag(preferred_model)
-        if canonical_pref in installed_set:
-            return canonical_pref, None
-        # Also check without tag or with tag variations
-        for inst in installed:
-            if inst.lower() == canonical_pref.lower() or inst.split(':')[0] == canonical_pref.split(':')[0]:
-                return inst, None
+        found = _find_installed(preferred_model)
+        if found:
+            return found, None
+        logger.warning("Preferred model '%s' is not installed. Installed models: %s", preferred_model, installed)
 
     # 2. Primary configured OLLAMA_MODEL
-    canonical_primary = canonicalize_model_tag(OLLAMA_MODEL)
-    if canonical_primary in installed_set:
-        return canonical_primary, None
-    for inst in installed:
-        if inst.lower() == canonical_primary.lower() or inst.split(':')[0] == canonical_primary.split(':')[0]:
-            return inst, None
+    found = _find_installed(OLLAMA_MODEL)
+    if found:
+        return found, None
 
     # 3. Fallback models in priority order
     for fallback in OLLAMA_FALLBACK_MODELS:
-        canonical_fallback = canonicalize_model_tag(fallback)
-        if canonical_fallback in installed_set:
-            return canonical_fallback, None
-        for inst in installed:
-            if inst.lower() == canonical_fallback.lower() or inst.split(':')[0] == canonical_fallback.split(':')[0]:
-                return inst, None
+        found = _find_installed(fallback)
+        if found:
+            logger.info("Fell back to installed model: '%s'", found)
+            return found, None
 
     # 4. Any installed model as last resort
     if installed:
@@ -165,10 +200,13 @@ def call_ollama_chat(
                 response_data = json.loads(response.read().decode('utf-8'))
         except HTTPError as exc:
             body = exc.read().decode('utf-8', errors='replace').strip()
+            if exc.code == 404 or 'not found' in body.lower():
+                installed = get_installed_ollama_models(force_refresh=True)
+                raise OllamaModelNotFoundError(model, installed=installed) from exc
             detail = f': {body}' if body else ''
             raise RuntimeError(f'Ollama returned HTTP {exc.code} for model tag "{model}"{detail}') from exc
         except URLError as exc:
-            raise RuntimeError(f'Unable to connect to Ollama for model tag "{model}": {exc.reason}') from exc
+            raise OllamaConnectionError(f'Unable to connect to Ollama at {base_url}: {exc.reason}') from exc
         except TimeoutError as exc:
             raise RuntimeError(f'Ollama request timed out after {timeout}s for model tag "{model}".') from exc
         except json.JSONDecodeError as exc:
@@ -246,10 +284,13 @@ def call_ollama(
                 response_data = json.loads(response.read().decode('utf-8'))
         except HTTPError as exc:
             body = exc.read().decode('utf-8', errors='replace').strip()
+            if exc.code == 404 or 'not found' in body.lower():
+                installed = get_installed_ollama_models(force_refresh=True)
+                raise OllamaModelNotFoundError(canonical_tag, installed=installed) from exc
             detail = f': {body}' if body else ''
             raise RuntimeError(f'Ollama returned HTTP {exc.code} for model tag "{canonical_tag}"{detail}') from exc
         except URLError as exc:
-            raise RuntimeError(f'Unable to connect to Ollama for model tag "{canonical_tag}": {exc.reason}') from exc
+            raise OllamaConnectionError(f'Unable to connect to Ollama at {OLLAMA_BASE_URL}: {exc.reason}') from exc
         except TimeoutError as exc:
             raise RuntimeError(f'Ollama request timed out after {eff_timeout}s for model tag "{canonical_tag}".') from exc
         except json.JSONDecodeError as exc:

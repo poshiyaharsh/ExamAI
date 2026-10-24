@@ -70,11 +70,11 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/faculty/settings" },
 ];
 
-const aiModels: AiModel[] = ["qwen2.5-3b", "llama3.2-3b", "phi3-mini"];
-const aiModelLabels: Record<AiModel, string> = {
-  "qwen2.5-3b": "Qwen 2.5 3B (Recommended - Local)",
-  "llama3.2-3b": "Llama 3.2 3B (Local)",
-  "phi3-mini": "Phi-3 Mini (Local)",
+const aiModels: string[] = ["qwen2.5:3b-instruct", "llama3.2:3b", "phi3:mini"];
+const aiModelLabels: Record<string, string> = {
+  "qwen2.5:3b-instruct": "Qwen 2.5 3B (Primary - Local)",
+  "llama3.2:3b": "Llama 3.2 3B (Local)",
+  "phi3:mini": "Phi-3 Mini (Local)",
 };
 
 import {
@@ -201,7 +201,8 @@ export function FacultyGeneratePaper() {
     } catch {}
     return { easy: 30, medium: 50, hard: 20 };
   });
-  const [aiModel, setAiModel] = useState<AiModel>("qwen2.5-3b");
+  const [availableModels, setAvailableModels] = useState<string[]>(aiModels);
+  const [aiModel, setAiModel] = useState<string>("qwen2.5:3b-instruct");
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
   const [parsedSyllabus, setParsedSyllabus] = useState<{
     filename: string;
@@ -276,6 +277,30 @@ export function FacultyGeneratePaper() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  // Fetch installed Ollama models and primary model on mount
+  useEffect(() => {
+    let mounted = true;
+    facultyPaperApi
+      .getOllamaStatus()
+      .then((res) => {
+        if (!mounted) return;
+        if (res.models && res.models.length > 0) {
+          setAvailableModels(res.models);
+          if (res.primary_model && res.models.includes(res.primary_model)) {
+            setAiModel(res.primary_model);
+          } else if (!res.models.includes(aiModel)) {
+            setAiModel(res.models[0]);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not fetch Ollama models from backend:", err);
+      });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Check for saved scoped draft on mount
@@ -648,13 +673,14 @@ export function FacultyGeneratePaper() {
       return;
     }
 
-    const activeBlueprint: Record<string, { count: number; marks: number }> = {};
+    const activeBlueprint: Record<string, { count: number; marks: number; marksPerQuestion: number }> = {};
     const activeTypes: string[] = [];
     (Object.keys(blueprint) as (keyof BlueprintState)[]).forEach((typeKey) => {
       if (blueprint[typeKey].enabled && blueprint[typeKey].count > 0) {
         activeBlueprint[typeKey] = {
           count: blueprint[typeKey].count,
           marks: blueprint[typeKey].marks,
+          marksPerQuestion: blueprint[typeKey].marks,
         };
         activeTypes.push(typeKey);
       }
@@ -1979,15 +2005,70 @@ export function FacultyGeneratePaper() {
                   <span className="text-[11px] text-slate-500 font-medium block mb-1">Local AI Engine</span>
                   <select
                     value={aiModel}
-                    onChange={(e) => setAiModel(e.target.value as AiModel)}
+                    onChange={(e) => setAiModel(e.target.value)}
                     className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-hidden"
                   >
-                    {aiModels.map((m) => (
+                    {availableModels.map((m) => (
                       <option key={m} value={m}>
-                        {m}
+                        {aiModelLabels[m] || m}
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* Plan Preview Table */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                  <span>Generation Blueprint & Question Plan</span>
+                  <span className="text-[11px] font-medium text-slate-500">Target: {targetMarksNum} Marks</span>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[11px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Question Type</th>
+                        <th className="py-2.5 px-3 text-center">Target Count</th>
+                        <th className="py-2.5 px-3 text-center">Marks / Question</th>
+                        <th className="py-2.5 px-3 text-right">Total Marks</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {(Object.keys(blueprint) as (keyof BlueprintState)[])
+                        .filter((typeKey) => blueprint[typeKey].enabled && blueprint[typeKey].count > 0)
+                        .map((typeKey) => {
+                          const cfg = blueprint[typeKey];
+                          const typeInfo = questionTypeDetails[typeKey];
+                          const totalForType = cfg.count * cfg.marks;
+                          return (
+                            <tr key={typeKey} className="hover:bg-slate-50/50">
+                              <td className="py-2.5 px-3 font-medium text-slate-800">
+                                {typeInfo?.label || typeKey}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
+                                {cfg.count}
+                              </td>
+                              <td className="py-2.5 px-3 text-center text-slate-600">
+                                {cfg.marks}M
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-slate-900">
+                                {totalForType}M
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                    <tfoot className="bg-slate-50/80 border-t border-slate-200 font-bold text-slate-900">
+                      <tr>
+                        <td className="py-2.5 px-3">Total Planned</td>
+                        <td className="py-2.5 px-3 text-center">{blueprintSummary.totalQuestions} Qs</td>
+                        <td className="py-2.5 px-3 text-center">-</td>
+                        <td className={`py-2.5 px-3 text-right ${blueprintSummary.blueprintMarks === targetMarksNum ? "text-emerald-700" : "text-amber-700 font-extrabold"}`}>
+                          {blueprintSummary.blueprintMarks} / {targetMarksNum}M
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
                 </div>
               </div>
 
@@ -2005,7 +2086,7 @@ export function FacultyGeneratePaper() {
                     onClick={handleProposeBalance}
                     className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-amber-700 shrink-0 self-start sm:self-auto cursor-pointer"
                   >
-                    <RefreshCw className="h-3 w-3" /> Balance to {targetMarksNum} Marks
+                    <RefreshCw className="h-3 w-3" /> Auto-Align to {targetMarksNum} Marks
                   </button>
                 </div>
               )}

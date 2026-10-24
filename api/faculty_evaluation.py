@@ -171,7 +171,7 @@ class FacultyReevaluateAnswerView(FacultyEvaluationBaseView):
         with transaction.atomic():
             att = StudentAttempt.objects.select_for_update().get(id=answer.attempt_id)
             all_ans = list(StudentAnswer.objects.select_related('question').filter(attempt=att))
-            att.total_score = round(sum((a.score_awarded or 0.0) for a in all_ans), 2)
+            att.total_score = round(sum(float(a.score_awarded or 0.0) for a in all_ans), 2)
             has_pending = any(
                 a.evaluation_status in [
                     StudentAnswer.EvaluationStatus.PENDING_REVIEW,
@@ -292,7 +292,7 @@ class FacultyManualGradeAnswerView(FacultyEvaluationBaseView):
             # Recalculate attempt total score
             att = StudentAttempt.objects.select_for_update().get(id=answer.attempt_id)
             all_ans = list(StudentAnswer.objects.select_related('question').filter(attempt=att))
-            att.total_score = round(sum((a.score_awarded or 0.0) for a in all_ans), 2)
+            att.total_score = round(sum(float(a.score_awarded or 0.0) for a in all_ans), 2)
             has_pending = any(
                 a.evaluation_status in [
                     StudentAnswer.EvaluationStatus.PENDING_REVIEW,

@@ -542,3 +542,28 @@ class PublicStatsAPIView(APIView):
         )
 
 
+class InstalledAiModelsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from api.utils.ollama_client import get_installed_ollama_models, resolve_ollama_model
+        from api.utils.evaluation_config import OLLAMA_MODEL
+
+        installed = get_installed_ollama_models(force_refresh=True)
+        primary, _ = resolve_ollama_model(OLLAMA_MODEL)
+        if not primary and installed:
+            primary = installed[0]
+
+        connected = len(installed) > 0
+        return Response(
+            {
+                'status': 'success',
+                'connected': connected,
+                'models': installed,
+                'primary_model': primary or OLLAMA_MODEL,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+

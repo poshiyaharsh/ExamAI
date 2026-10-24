@@ -127,7 +127,7 @@ class Command(BaseCommand):
             with transaction.atomic():
                 att = StudentAttempt.objects.select_for_update().get(id=att_id)
                 all_ans = list(StudentAnswer.objects.select_related('question').filter(attempt=att))
-                new_total = sum((a.score_awarded or 0.0) for a in all_ans)
+                new_total = sum(float(a.score_awarded or 0.0) for a in all_ans)
                 has_pending = any(
                     a.evaluation_status in [
                         StudentAnswer.EvaluationStatus.PENDING_REVIEW,

@@ -398,7 +398,9 @@ export function SuperAdminAIModule({ saFetch, onTriggerReauth }: SuperAdminAIMod
                   <td className="py-3.5 px-4 min-w-0">
                     <div className="flex items-center gap-2">
                       {m.is_default && (
-                        <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" title="System Default Model" />
+                        <span title="System Default Model" className="inline-flex shrink-0">
+                          <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                        </span>
                       )}
                       <p className="font-bold text-white text-xs truncate" title={m.name}>
                         {m.name}

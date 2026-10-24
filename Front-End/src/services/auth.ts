@@ -102,6 +102,16 @@ export const authStorage = {
     const storage = getSessionStorage();
     if (storage) {
       storage.removeItem(AUTH_STORAGE_KEY);
+      try {
+        for (let i = storage.length - 1; i >= 0; i--) {
+          const key = storage.key(i);
+          if (key && (key.startsWith("sa_token_") || key.startsWith("sa_"))) {
+            storage.removeItem(key);
+          }
+        }
+      } catch {
+        // Ignore storage iteration errors
+      }
     }
     try {
       if (typeof window !== "undefined" && window.localStorage) {

@@ -36,7 +36,7 @@ def evaluate_attempt_subjectives(attempt_id, force=False):
                     attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
                     all_answers = list(StudentAnswer.objects.select_related('question').filter(attempt=attempt))
                     attempt.total_score = sum(
-                        (ans.score_awarded or 0.0)
+                        float(ans.score_awarded or 0.0)
                         for ans in all_answers
                     )
                     has_pending = any(

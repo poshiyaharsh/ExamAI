@@ -67,6 +67,7 @@ from .views import (
     ChangePasswordAPIView,
     DepartmentListAPIView,
     ForgotPasswordAPIView,
+    InstalledAiModelsAPIView,
     InstitutionListAPIView,
     LogoutAPIView,
     PublicStatsAPIView,
@@ -76,6 +77,8 @@ from .views import (
 )
 
 urlpatterns = [
+    path('ai/installed-models', InstalledAiModelsAPIView.as_view(), name='ai-installed-models-no-slash'),
+    path('ai/installed-models/', InstalledAiModelsAPIView.as_view(), name='ai-installed-models'),
     path('public/stats', PublicStatsAPIView.as_view(), name='public-stats-no-slash'),
     path('public/stats/', PublicStatsAPIView.as_view(), name='public-stats'),
     path('admin/dashboard', AdminDashboardView.as_view(), name='api-admin-dashboard-no-slash'),

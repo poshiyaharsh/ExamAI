@@ -1,5 +1,6 @@
 import datetime
 import logging
+from typing import Any
 import jwt
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -14,7 +15,7 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
-def generate_super_admin_token(user: User, session_id: str | None = None) -> str:
+def generate_super_admin_token(user: Any, session_id: str | None = None) -> str:
     """Generate a signed JWT token strictly scoped to super_admin."""
     now = timezone.now()
     lifetime_seconds = getattr(settings, 'SUPER_ADMIN_SESSION_AGE', 900)  # 15 minutes default
@@ -110,3 +111,4 @@ class SuperAdminAuthentication(authentication.BaseAuthentication):
         request.super_admin_profile = profile
 
         return (user, payload)
+

@@ -248,7 +248,7 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
 
         # 4. Compute totals
         marks_obtained = sum(
-            (ans.score_awarded or 0)
+            float(ans.score_awarded or 0)
             for ans in existing_answers.values()
         )
         exam_total = float(attempt.max_score or exam.total_marks or sum(q.marks for q in questions) or 1)

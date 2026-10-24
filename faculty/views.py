@@ -538,14 +538,23 @@ class OllamaStatusAPIView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
 
     def get(self, request):
-        service = OllamaService()
-        status_data = service.get_status(OLLAMA_UI_MODEL, timeout=5)
+        from api.utils.ollama_client import get_installed_ollama_models, resolve_ollama_model
+        from api.utils.evaluation_config import OLLAMA_MODEL
+
+        installed = get_installed_ollama_models(force_refresh=True)
+        primary, _ = resolve_ollama_model(OLLAMA_MODEL)
+        if not primary and installed:
+            primary = installed[0]
+
+        connected = len(installed) > 0
         return Response(
             {
                 'status': 'success',
-                'connected': status_data['connected'],
-                'model_installed': status_data['model_installed'],
-                'message': status_data['message'],
+                'connected': connected,
+                'model_installed': connected,
+                'models': installed,
+                'primary_model': primary or OLLAMA_MODEL,
+                'message': 'Ollama: Connected' if connected else 'Ollama is unreachable. Please ensure Ollama is running.',
             },
             status=status.HTTP_200_OK,
         )

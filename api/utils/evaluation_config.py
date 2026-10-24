@@ -12,14 +12,16 @@ OLLAMA_FALLBACK_MODELS: List[str] = [
     for m in os.getenv('OLLAMA_FALLBACK_MODELS', 'llama3.2:3b,phi3:mini').split(',')
     if m.strip()
 ]
-OLLAMA_TIMEOUT: int = int(os.getenv('OLLAMA_TIMEOUT', '120'))
-OLLAMA_CALL_TIMEOUT: int = int(os.getenv('OLLAMA_CALL_TIMEOUT', '90'))
-OLLAMA_JOB_TIMEOUT: int = int(os.getenv('OLLAMA_JOB_TIMEOUT', '360'))
+OLLAMA_REQUEST_TIMEOUT: int = int(os.getenv('OLLAMA_REQUEST_TIMEOUT', os.getenv('OLLAMA_TIMEOUT', '240')))
+OLLAMA_TIMEOUT: int = OLLAMA_REQUEST_TIMEOUT
+OLLAMA_CALL_TIMEOUT: int = int(os.getenv('OLLAMA_CALL_TIMEOUT', '120'))
+PAPER_JOB_MAX_SECONDS: int = int(os.getenv('PAPER_JOB_MAX_SECONDS', '2700'))
+OLLAMA_JOB_TIMEOUT: int = PAPER_JOB_MAX_SECONDS
 OLLAMA_NUM_CTX: int = int(os.getenv('OLLAMA_NUM_CTX', '4096'))
 OLLAMA_KEEP_ALIVE: str = os.getenv('OLLAMA_KEEP_ALIVE', '30m').strip()
-OLLAMA_TEMPERATURE: float = float(os.getenv('OLLAMA_TEMPERATURE', '0.2'))
+OLLAMA_TEMPERATURE: float = float(os.getenv('OLLAMA_TEMPERATURE', '0.3'))
 OLLAMA_MAX_PARALLEL: int = int(os.getenv('OLLAMA_MAX_PARALLEL', '1'))
-OLLAMA_MAX_BATCH_SIZE: int = int(os.getenv('OLLAMA_MAX_BATCH_SIZE', '6'))
+OLLAMA_MAX_BATCH_SIZE: int = int(os.getenv('OLLAMA_MAX_BATCH_SIZE', '5'))
 OLLAMA_LONG_ANSWER_BATCH_SIZE: int = int(os.getenv('OLLAMA_LONG_ANSWER_BATCH_SIZE', '1'))
 OLLAMA_LONG_ANSWER_SINGLE_PASS: bool = os.getenv('OLLAMA_LONG_ANSWER_SINGLE_PASS', 'true').strip().lower() in ('true', '1', 'yes')
 OLLAMA_MAX_RETRIES: int = int(os.getenv('OLLAMA_MAX_RETRIES', '2'))
@@ -59,11 +61,14 @@ TAG_ALIASES = {
 
 
 def canonicalize_model_tag(tag: Optional[str]) -> str:
-    """Normalize model tag or UI key to canonical Ollama tag."""
+    """Normalize model tag or UI key to canonical Ollama tag, logging a warning if normalized."""
     if not tag:
         return OLLAMA_MODEL
     clean = str(tag).strip().lower()
-    return TAG_ALIASES.get(clean, TAG_ALIASES.get(clean.replace(':', '-'), clean))
+    canonical = TAG_ALIASES.get(clean, TAG_ALIASES.get(clean.replace(':', '-'), clean))
+    if canonical != clean and clean not in TAG_ALIASES.values():
+        logger.warning("Normalizing model tag '%s' to '%s'", tag, canonical)
+    return canonical
 
 
 def route_model_for_type(question_type: str, user_selected_model: Optional[str] = None) -> str:
