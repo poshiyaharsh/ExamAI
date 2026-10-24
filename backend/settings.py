@@ -129,6 +129,7 @@ if DB_ENGINE == 'mysql':
             'HOST': os.getenv('DB_HOST', '127.0.0.1'),
             'PORT': os.getenv('DB_PORT', '3306'),
             'CONN_MAX_AGE': 60,
+            'CONN_HEALTH_CHECKS': True,
             'OPTIONS': {
                 'charset': 'utf8mb4',
                 'init_command': (
@@ -144,13 +145,22 @@ if DB_ENGINE == 'mysql':
         }
     }
 else:
+    sqlite_path = os.getenv('SQLITE_PATH')
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+            'NAME': Path(sqlite_path) if sqlite_path else (BASE_DIR / 'db.sqlite3'),
             'OPTIONS': {
                 'timeout': 20,
                 'transaction_mode': 'IMMEDIATE',
+                'init_command': (
+                    "PRAGMA journal_mode=WAL; "
+                    "PRAGMA synchronous=NORMAL; "
+                    "PRAGMA busy_timeout=20000; "
+                    "PRAGMA foreign_keys=ON; "
+                    "PRAGMA cache_size=-65536; "
+                    "PRAGMA temp_store=MEMORY;"
+                ),
             },
         }
     }

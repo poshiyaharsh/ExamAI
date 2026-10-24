@@ -339,6 +339,7 @@ class Question(models.Model):
 			models.Index(fields=['institution', 'exam']),
 			models.Index(fields=['institution', 'department', 'status', 'is_deleted']),
 			models.Index(fields=['exam', 'order']),
+			models.Index(fields=['institution', 'subject', 'question_type', 'difficulty', 'is_deleted', 'last_used_at'], name='q_bank_reuse_idx'),
 		]
 
 	def save(self, *args, **kwargs):
@@ -456,6 +457,7 @@ class StudentAttempt(models.Model):
 			models.Index(fields=['institution', 'student']),
 			models.Index(fields=['institution', 'exam']),
 			models.Index(fields=['expires_at']),
+			models.Index(fields=['institution', 'student', 'status'], name='att_inst_stud_status_idx'),
 		]
 
 	def save(self, *args, **kwargs):

@@ -17,9 +17,19 @@ from rest_framework.views import APIView
 
 from .models import Exam, Notification, PaperGenerationJob, Question
 from .permissions import IsFacultyUser
-from .utils.blueprint_allocator import compute_blueprint_total
+from .utils.blueprint_allocator import compute_blueprint_total, to_decimal
+from .utils.generation_pipeline import (
+    PAPER_HARD_DEADLINE,
+    PAPER_LLM_BUDGET,
+    BudgetManager,
+    DuplicateDetector,
+    ExtractiveGenerator,
+    QuestionBankService,
+    launch_background_subjective_answers,
+)
 from .utils.evaluation_config import (
     FACULTY_DEBUG_MODE,
+    OLLAMA_FALLBACK_MODELS,
     OLLAMA_LONG_ANSWER_BATCH_SIZE,
     OLLAMA_LONG_ANSWER_SINGLE_PASS,
     OLLAMA_MAX_BATCH_SIZE,
@@ -357,46 +367,25 @@ def _generate_single_long_answer(
         question_item['marks'] = marks_per_q
         question_item['rubric'] = repair_rubric_marks(question_item.get('rubric'), marks_per_q)
 
-        # Step B: Generate Comprehensive Model Answer
+        # Step B: Fast structured rubric outline (model answer is enriched asynchronously by background task)
         if progress_cb:
-            progress_cb(f"Long answer {item_idx}/{total_items}: generating model answer")
+            progress_cb(f"Long answer {item_idx}/{total_items}: structured rubric outline ready")
 
-        model_answer = ""
-        for attempt in range(OLLAMA_MAX_RETRIES + 1):
-            try:
-                prompt_b = build_long_answer_step_b_prompt(
-                    question_text=question_item['text'],
-                    topic=question_item['topic'],
-                    marks=question_item['marks'],
-                    rubric=question_item['rubric'],
-                    syllabus_chunk=syllabus_chunk,
-                    word_limit=question_item.get('word_limit', 350),
-                )
-                raw_b = call_ollama(
-                    model=model_tag,
-                    prompt=prompt_b,
-                    format_schema=get_question_type_schema('long_answer_step_b'),
-                    num_predict=1024,
-                    temperature=0.2,
-                )
-                parsed_b = parse_json_safely(raw_b)
-                ans = parsed_b.get('model_answer', '') if isinstance(parsed_b, dict) else ''
-                if ans and len(str(ans).split()) >= 30:
-                    model_answer = str(ans).strip()
-                    break
-            except Exception as exc:
-                logger.warning("Long answer Step B attempt %s failed: %s", attempt + 1, exc)
+        rubric_points = []
+        for r in (question_item.get('rubric') or []):
+            crit = r.get('criteria') or r.get('criterion') or 'Key technical requirement'
+            m = r.get('marks', 1)
+            rubric_points.append(f"- {crit} ({m} Marks)")
+        rubric_str = "\n".join(rubric_points) if rubric_points else f"- Core technical breakdown and evaluation ({marks_per_q} Marks)"
 
-        if not model_answer or len(model_answer.split()) < 30:
-            logger.info("Using secondary structured model answer synthesizer for question: %s", question_item['text'][:60])
-            model_answer = _ensure_subjective_model_answer(
-                question_item['text'],
-                question_item['topic'],
-                question_item['marks'],
-                syllabus_chunk,
-                model_name=None,
-            )
-
+        model_answer = (
+            f"Model Answer Outline ({marks_per_q} Marks):\n\n"
+            f"1. Key Conceptual Overview:\n"
+            f"Comprehensive technical overview of '{question_item['text']}' covering foundational concepts, architecture, and principles.\n\n"
+            f"2. Marking Scheme / Key Points:\n"
+            f"{rubric_str}\n\n"
+            f"(Model answer: generating in background...)"
+        )
         question_item['model_answer'] = model_answer
 
     # Grounding check: verify source evidence exists in syllabus chunk
@@ -520,6 +509,7 @@ def _generate_type_questions(
     round_offset=0,
     job=None,
     deadline=None,
+    budget=None,
 ):
     canon_type = canonicalize_type(question_type)
     if job:
@@ -543,8 +533,8 @@ def _generate_type_questions(
             difficulties.append('medium')
 
         for item_idx in range(1, count + 1):
-            if deadline and time.time() > deadline:
-                logger.warning("Deadline reached during long answer generation; returning %d partial items", len(generated))
+            if (deadline and time.time() > deadline) or (budget and not budget.can_afford_llm_call(model_tag)):
+                logger.warning("Deadline or budget reached during long answer generation; returning %d partial items", len(generated))
                 break
             if job:
                 job.refresh_from_db()
@@ -578,17 +568,17 @@ def _generate_type_questions(
     if canon_type == 'fill_blank':
         batch_size = min(count, 15)
     elif canon_type == 'mcq':
-        batch_size = min(5, count)
+        batch_size = min(8 if count >= 8 else 5, count)
     elif canon_type == 'short_answer':
-        batch_size = min(2, count)
+        batch_size = min(3, count)
     elif canon_type == 'true_false':
         batch_size = min(8, count)
     else:
         batch_size = max(1, min(OLLAMA_MAX_BATCH_SIZE, count))
 
     for batch_idx, start in enumerate(range(0, count, batch_size)):
-        if deadline and time.time() > deadline:
-            logger.warning("Deadline reached during %s generation; returning %d partial items", canon_type, len(generated))
+        if (deadline and time.time() > deadline) or (budget and not budget.can_afford_llm_call(model_tag)):
+            logger.warning("Deadline or budget reached during %s generation; returning %d partial items", canon_type, len(generated))
             break
         if job:
             job.refresh_from_db()
@@ -658,9 +648,10 @@ def _save_generated_exam_questions(
     from api.models import Option
     from api.utils.options import clean_options_list, clean_option_text
 
-    actual_total_marks = int(round(sum(float(q.get('marks', 1)) for q in generated_questions)))
-    marks_shortfall = max(0, target_marks - actual_total_marks)
-    if marks_shortfall > 0:
+    actual_total_marks = sum(to_decimal(q.get('marks', 1)) for q in generated_questions)
+    target_marks_dec = to_decimal(target_marks)
+    marks_shortfall = max(to_decimal(0), target_marks_dec - actual_total_marks)
+    if marks_shortfall > to_decimal(0):
         has_shortfall = True
 
     exam = None
@@ -676,13 +667,12 @@ def _save_generated_exam_questions(
                     clean_opts = clean_options_list(raw_options) if (raw_options and isinstance(raw_options, list)) else None
 
                     model_ans = generated_question.get('model_answer') or ''
-                    if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 30:
-                        model_ans = _ensure_subjective_model_answer(
-                            generated_question['text'],
-                            generated_question.get('topic') or '',
-                            generated_question['marks'],
-                            syllabus_text,
-                            model_name,
+                    if q_type in {'subjective', 'long_answer'} and len(model_ans.split()) < 15:
+                        model_ans = (
+                            f"Model Answer Outline ({generated_question.get('marks', 10)} Marks):\n\n"
+                            f"1. Conceptual Overview:\n"
+                            f"Comprehensive technical overview addressing '{generated_question['text']}'.\n\n"
+                            f"(Model answer: generating in background...)"
                         )
 
                     q_obj = Question.objects.create(
@@ -701,8 +691,8 @@ def _save_generated_exam_questions(
                         accepted_answers=generated_question.get('accepted_answers') or [],
                         rubric=generated_question.get('rubric') or [],
                         word_limit=generated_question.get('word_limit'),
-                        source='ai_generated',
-                        marks=generated_question['marks'],
+                        source=generated_question.get('source', 'ai_generated'),
+                        marks=to_decimal(generated_question['marks']),
                         topic_text=generated_question.get('topic') or '',
                     )
 
@@ -726,10 +716,10 @@ def _save_generated_exam_questions(
                                 order=opt_idx,
                             ))
                         if opts_to_create:
-                            Option.objects.bulk_create(opts_to_create)
+                            Option.objects.bulk_create(opts_to_create, batch_size=500)
 
                 exam.total_marks = actual_total_marks
-                exam.target_total_marks = target_marks
+                exam.target_total_marks = target_marks_dec
                 exam.marks_shortfall = marks_shortfall
 
                 accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
@@ -740,6 +730,9 @@ def _save_generated_exam_questions(
                 exam.is_reviewed = False
                 exam.error_message = ''
                 exam.save(update_fields=['total_marks', 'target_total_marks', 'marks_shortfall', 'topics', 'status', 'is_reviewed', 'error_message', 'updated_at'])
+            
+            # Decoupled background generation for full subjective answers
+            launch_background_subjective_answers(exam_id)
             break
         except Exception as e:
             if is_lock_or_deadlock(e) and attempt_idx < 2:
@@ -757,9 +750,9 @@ def _save_generated_exam_questions(
     job.current_step = 'Completed with shortfall' if marks_shortfall > 0 else ('Completed with warnings' if warnings else 'Paper generated successfully')
     job.warnings = warnings
     job.question_count_generated = len(generated_questions)
-    job.target_marks = target_marks
-    job.actual_marks = actual_total_marks
-    job.marks_shortfall = marks_shortfall
+    job.target_marks = int(target_marks_dec)
+    job.actual_marks = int(actual_total_marks)
+    job.marks_shortfall = int(marks_shortfall)
     job.completed_at = timezone.now()
     job.save(update_fields=['status', 'progress', 'current_step', 'warnings', 'question_count_generated', 'target_marks', 'actual_marks', 'marks_shortfall', 'completed_at'])
 
@@ -817,8 +810,23 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         planned_marks = int(planned_total_marks)
         total_requested = max(sum(counts.values()), 1)
 
-        job_max_seconds = min(PAPER_JOB_MAX_SECONDS, max(300, total_requested * 90))
-        deadline = time.time() + job_max_seconds
+        budget = BudgetManager(hard_deadline=PAPER_HARD_DEADLINE, llm_budget=PAPER_LLM_BUDGET)
+        deadline = time.time() + PAPER_HARD_DEADLINE
+
+        # Exclude recent exams for the same faculty and subject to prevent repeats across papers
+        recent_exam_ids = []
+        if job.exam:
+            recent_exam_ids = list(Exam.objects.filter(
+                created_by=job.faculty,
+                institution=job.institution,
+                subject=job.exam.subject or '',
+            ).exclude(id=exam_id).order_by('-created_at')[:3].values_list('id', flat=True))
+
+        dup_detector = DuplicateDetector()
+        if recent_exam_ids:
+            recent_qs = Question.objects.filter(exam_id__in=recent_exam_ids, is_deleted=False).values('text', 'options', 'correct_answer', 'question_type')
+            for rq in recent_qs:
+                dup_detector.add(rq)
 
         # Topic-based syllabus chunking cache
         chunks_map = chunk_syllabus_by_topics(syllabus_text, topics)
@@ -827,7 +835,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         if job.is_cancelled:
             return
 
-        job.current_step = f'Contacting AI model ({resolved_model_tag})'
+        job.current_step = f'Checking question bank and syllabus ({resolved_model_tag})'
         job.progress = 20
         job.save(update_fields=['current_step', 'progress'])
 
@@ -846,14 +854,82 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
             except Exception:
                 pass
 
+        # --- TIER 0: QUESTION BANK REUSE (INSTANT, ZERO LLM CALLS) ---
+        for question_type in list(counts.keys()):
+            req_c = counts[question_type]
+            if req_c <= 0:
+                continue
+            bank_candidates = QuestionBankService.get_reusable_questions(
+                institution_id=job.institution_id,
+                subject_id=job.exam.subject_id if hasattr(job.exam, 'subject_id') else None,
+                question_type=question_type,
+                difficulty='medium',
+                needed_count=req_c,
+                exclude_exam_ids=recent_exam_ids,
+            )
+            for bq in bank_candidates:
+                is_dup, _ = dup_detector.is_duplicate(bq)
+                if not is_dup:
+                    dup_detector.add(bq)
+                    generated_questions.append(bq)
+                    counts[question_type] -= 1
+                    logger.info("Tier 0 Bank supplied question: %s", bq.get('text', '')[:40])
+
+        # --- TIER 1: EXTRACTIVE GENERATOR (DETERMINISTIC, INSTANT, ZERO LLM CALLS) ---
+        if syllabus_text:
+            extract_candidates = ExtractiveGenerator.extract_candidates_from_text(syllabus_text)
+            if extract_candidates:
+                if 'fill_blank' in counts and counts['fill_blank'] > 0:
+                    fb_needed = counts['fill_blank']
+                    m_val = MARKS_PER_TYPE.get('fill_blank', 1)
+                    if blueprint and isinstance(blueprint, dict) and 'fill_blank' in blueprint:
+                        m_val = blueprint['fill_blank'].get('marksPerQuestion', m_val)
+                    fb_items = ExtractiveGenerator.generate_fill_blank(extract_candidates, fb_needed, marks_per_q=float(m_val))
+                    for q in fb_items:
+                        is_dup, _ = dup_detector.is_duplicate(q)
+                        if not is_dup:
+                            dup_detector.add(q)
+                            generated_questions.append(q)
+                            counts['fill_blank'] -= 1
+                    logger.info("Tier 1 Extractive satisfied fill_blank; %d remain", counts['fill_blank'])
+
+                if 'true_false' in counts and counts['true_false'] > 0:
+                    tf_needed = counts['true_false']
+                    m_val = MARKS_PER_TYPE.get('true_false', 1)
+                    if blueprint and isinstance(blueprint, dict) and 'true_false' in blueprint:
+                        m_val = blueprint['true_false'].get('marksPerQuestion', m_val)
+                    tf_items = ExtractiveGenerator.generate_true_false(extract_candidates, tf_needed, marks_per_q=float(m_val))
+                    for q in tf_items:
+                        is_dup, _ = dup_detector.is_duplicate(q)
+                        if not is_dup:
+                            dup_detector.add(q)
+                            generated_questions.append(q)
+                            counts['true_false'] -= 1
+                    logger.info("Tier 1 Extractive satisfied true_false; %d remain", counts['true_false'])
+
+        # --- TIER 2: LLM BATCH GENERATION (MCQ & SUBJECTIVE STEMS/RUBRICS) ---
         type_stats = {}
 
-        for question_type, requested_count in counts.items():
+        for question_type, requested_count in list(counts.items()):
             if requested_count > 0:
-                if time.time() > deadline:
-                    logger.warning("Paper generation job %s reached timeout deadline (%ss)", job_id, job_max_seconds)
-                    warnings.append(f"Generation stopped after {int(job_max_seconds // 60)} minutes deadline.")
-                    break
+                if not budget.can_afford_llm_call(resolved_model_tag) or time.time() > deadline:
+                    logger.warning("LLM budget exhausted (elapsed: %.1fs); attempting Tier 3 fallback for %s", budget.elapsed_seconds, question_type)
+                    if syllabus_text and question_type in ('mcq', 'fill_blank', 'true_false'):
+                        extract_candidates = ExtractiveGenerator.extract_candidates_from_text(syllabus_text)
+                        if extract_candidates:
+                            m_val = MARKS_PER_TYPE.get(question_type, 1)
+                            em_items = ExtractiveGenerator.generate_fill_blank(extract_candidates, requested_count, marks_per_q=float(m_val))
+                            for q in em_items:
+                                q['type'] = question_type
+                                q['needs_review'] = True
+                                is_dup, _ = dup_detector.is_duplicate(q)
+                                if not is_dup:
+                                    dup_detector.add(q)
+                                    generated_questions.append(q)
+                                    requested_count -= 1
+                    if requested_count > 0:
+                        warnings.append(f"LLM time budget reached; {requested_count} {question_type} question(s) marked as shortfall.")
+                        break
 
                 job.refresh_from_db()
                 if job.is_cancelled:
@@ -882,8 +958,32 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                     progress_cb=update_job_step,
                     job=job,
                     deadline=deadline,
+                    budget=budget,
                 )
-                generated_questions.extend(type_results)
+                for q in type_results:
+                    is_dup, reason = dup_detector.is_duplicate(q)
+                    if not is_dup:
+                        dup_detector.add(q)
+                        generated_questions.append(q)
+                    else:
+                        dropped_dups += 1
+                        dropped_items.append(q)
+                        logger.info("Duplicate question rejected: %s (%s)", q.get('text', '')[:40], reason)
+
+                shortfall_c = requested_count - len(type_results)
+                if shortfall_c > 0 and syllabus_text and question_type in ('mcq', 'fill_blank', 'true_false'):
+                    extract_candidates = ExtractiveGenerator.extract_candidates_from_text(syllabus_text)
+                    if extract_candidates:
+                        em_items = ExtractiveGenerator.generate_fill_blank(extract_candidates, shortfall_c, marks_per_q=float(marks_per_q))
+                        for q in em_items:
+                            q['type'] = question_type
+                            q['needs_review'] = True
+                            is_dup, _ = dup_detector.is_duplicate(q)
+                            if not is_dup:
+                                dup_detector.add(q)
+                                generated_questions.append(q)
+                                shortfall_c -= 1
+
                 type_stats[question_type] = {
                     'requested': requested_count,
                     'generated': len(type_results),
@@ -893,11 +993,6 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         job.refresh_from_db()
         if job.is_cancelled:
             return
-
-        # Initial batch deduplication (Round 0)
-        generated_questions, dropped_dups, dropped_items = deduplicate_questions(
-            generated_questions, similarity_threshold=0.85, return_dropped_list=True
-        )
 
         if not generated_questions:
             raise ValueError('AI model returned zero valid questions.')
@@ -918,7 +1013,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
 
         round_idx = 0
         while current_total_marks < target_marks and round_idx < MAX_TOPUP_ROUNDS:
-            if time.time() > deadline:
+            if not budget.can_afford_llm_call(resolved_model_tag) or time.time() > deadline:
                 logger.warning("Paper generation reached deadline during top-up; preserving current items.")
                 warnings.append("Top-up stopped as time budget reached.")
                 break
@@ -996,18 +1091,24 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 logger.info("Top-up round %s yielded zero valid items; stopping top-up", round_idx)
                 break
 
-            # Deduplicate combined set
-            combined_candidates = generated_questions + topup_batch_all
-            new_unique, new_dropped_count, new_dropped_items = deduplicate_questions(
-                combined_candidates, similarity_threshold=0.85, return_dropped_list=True
-            )
+            # Deduplicate top-up items against accepted questions
+            valid_topup = []
+            new_dropped_count = 0
+            new_dropped_items = []
+            for q in topup_batch_all:
+                is_dup, reason = dup_detector.is_duplicate(q)
+                if not is_dup:
+                    dup_detector.add(q)
+                    valid_topup.append(q)
+                else:
+                    new_dropped_count += 1
+                    new_dropped_items.append(q)
 
-            added_count = len(new_unique) - len(generated_questions)
-            if added_count <= 0:
+            if not valid_topup:
                 logger.info("Top-up round %s yielded only duplicate items; stopping top-up", round_idx)
                 break
 
-            generated_questions = new_unique
+            generated_questions.extend(valid_topup)
             current_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
             dropped_dups += new_dropped_count
             rejected_duplicates_marks += int(round(sum(float(q['marks']) for q in new_dropped_items)))
@@ -1016,6 +1117,8 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
             if current_total_marks >= target_marks:
                 logger.info("Top-up round %s reached target marks (%s/%s)", round_idx, current_total_marks, target_marks)
                 break
+
+
 
         job.current_step = 'Validating generated questions'
         job.progress = 88

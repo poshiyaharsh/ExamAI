@@ -18,6 +18,7 @@ __pycache__/
 db.sqlite3*
 data.json
 data_exact.json
+data_*.json
 db_backup*.json
 *.backup*
 *.json.bak

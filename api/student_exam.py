@@ -456,12 +456,11 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
 
         with transaction.atomic():
-            attempt = (
-                StudentAttempt.objects.select_for_update()
-                .filter(id=attempt_id, student=request.user, institution=tenant)
-                .select_related('exam', 'institution')
-                .first()
-            )
+            from django.db import connection
+            attempt_qs = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant)
+            if getattr(connection.features, 'has_select_for_update', False):
+                attempt_qs = attempt_qs.select_for_update()
+            attempt = attempt_qs.select_related('exam', 'institution').first()
             if not attempt:
                 return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -506,13 +505,22 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
                 submit_reason = 'time_up'
 
             auto_submitted = (submit_reason in {'time_up', 'violations', 'window_closed'}) or time_up or window_closed
-            attempt.status = StudentAttempt.Status.AUTO_SUBMITTED if auto_submitted else StudentAttempt.Status.SUBMITTED
-            attempt.submit_reason = submit_reason
-            attempt.submitted_at = now
-            attempt.save(update_fields=['status', 'submit_reason', 'submitted_at'])
+            target_status = StudentAttempt.Status.AUTO_SUBMITTED if auto_submitted else StudentAttempt.Status.SUBMITTED
 
-            from .utils.scoring import calculate_and_save_attempt_score
-            calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
+            # Atomic conditional update (guarantees exactly one request scores and transitions)
+            rows_updated = StudentAttempt.objects.filter(
+                id=attempt.id,
+                status=StudentAttempt.Status.IN_PROGRESS,
+            ).update(
+                status=target_status,
+                submit_reason=submit_reason,
+                submitted_at=now,
+            )
+
+            if rows_updated > 0:
+                attempt.refresh_from_db()
+                from .utils.scoring import calculate_and_save_attempt_score
+                calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
 
         attempt.refresh_from_db()
         data = StudentAttemptSerializer(attempt).data
@@ -533,12 +541,11 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
 
         with transaction.atomic():
-            attempt = (
-                StudentAttempt.objects.select_for_update()
-                .filter(id=attempt_id, student=request.user, institution=tenant)
-                .select_related('exam')
-                .first()
-            )
+            from django.db import connection
+            attempt_qs = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant)
+            if getattr(connection.features, 'has_select_for_update', False):
+                attempt_qs = attempt_qs.select_for_update()
+            attempt = attempt_qs.select_related('exam').first()
             if not attempt:
                 return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -572,13 +579,20 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
             # Auto-submit if exceeded max warnings (e.g. 4th violation when max_warnings=3)
             if attempt.violation_count >= max_warnings + 1:
                 now = timezone.now()
-                attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
-                attempt.submitted_at = now
-                attempt.submit_reason = 'violations'
-                attempt.save(update_fields=['violation_count', 'status', 'submitted_at', 'submit_reason'])
+                rows_updated = StudentAttempt.objects.filter(
+                    id=attempt.id,
+                    status=StudentAttempt.Status.IN_PROGRESS,
+                ).update(
+                    status=StudentAttempt.Status.AUTO_SUBMITTED,
+                    submit_reason='violations',
+                    submitted_at=now,
+                    violation_count=attempt.violation_count,
+                )
 
-                from .utils.scoring import calculate_and_save_attempt_score
-                calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+                if rows_updated > 0:
+                    attempt.refresh_from_db()
+                    from .utils.scoring import calculate_and_save_attempt_score
+                    calculate_and_save_attempt_score(attempt, is_auto_submit=True)
 
                 return Response({
                     'auto_submitted': True,

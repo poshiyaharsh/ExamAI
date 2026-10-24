@@ -431,21 +431,49 @@ npm run dev
 
 ## Database Management
 
-### MySQL Configuration & Character Set
-ExamAI uses MySQL 8.4 LTS InnoDB with:
-- **Character Set**: `utf8mb4` (Full 4-byte unicode support for emojis, mathematical notation, multilingual questions).
-- **Collation**: `utf8mb4_0900_ai_ci` (Accent-insensitive, case-insensitive sorting).
-- **Transaction Isolation**: `READ COMMITTED` (Eliminates phantom lock delays while ensuring strict concurrency).
-- **Timezone**: `+00:00` (UTC match with Django `USE_TZ = True`).
+### Dual-Engine Database Architecture (MySQL & SQLite)
+ExamAI supports zero-downtime switching between **MySQL (MariaDB)** and **SQLite** via a single environment variable:
 
-### Instant Rollback to SQLite
-If MySQL is temporarily unavailable, you can switch back to the local SQLite database instantly with zero code changes:
-1. Open `.env`
-2. Change:
-   ```env
-   DB_ENGINE=sqlite
-   ```
-3. Restart your Django server. The application will immediately read from `db.sqlite3`.
+```env
+# Switch database engine: 'sqlite' (local development) or 'mysql' (production)
+DB_ENGINE=sqlite
+```
+
+#### 1. SQLite Optimization (WAL Mode for Concurrency)
+When `DB_ENGINE=sqlite`, ExamAI automatically configures SQLite for multi-threaded concurrency using high-performance PRAGMAs:
+- `PRAGMA journal_mode=WAL;` (Write-Ahead Logging: readers never block writers, and writers never block readers).
+- `PRAGMA synchronous=NORMAL;` (Optimized filesystem sync latency).
+- `PRAGMA busy_timeout=20000;` (20-second busy timeout eliminating "database is locked" errors).
+- `PRAGMA foreign_keys=ON;` (Strict relational integrity checking).
+- `PRAGMA cache_size=-65536;` (64MB dedicated in-memory page cache).
+
+> **Load-Test Proven**: In a simulated load test with 20 concurrent students posting heartbeats and autosaving answers during active paper generation writes, SQLite in WAL mode recorded **0 lock errors** with a P95 latency of 167ms (see [`db_comparison.md`](db_comparison.md)).
+
+#### 2. Synchronizing Data Between MySQL and SQLite (Zero Data Loss)
+Export from MySQL and import to SQLite:
+```powershell
+# Step A: Dump data from MySQL in UTF-8
+$env:DB_ENGINE="mysql"
+$env:PYTHONUTF8="1"
+.\.venv\Scripts\python.exe -Xutf8 manage.py dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.permission --exclude admin.logentry --exclude sessions.session --indent 2 --output data_mysql.json
+
+# Step B: Apply migrations on clean SQLite
+$env:DB_ENGINE="sqlite"
+.\.venv\Scripts\python.exe manage.py migrate
+
+# Step C: Load data into SQLite
+.\.venv\Scripts\python.exe manage.py loaddata data_mysql.json
+```
+
+Export from SQLite and import to MySQL:
+```powershell
+$env:DB_ENGINE="sqlite"
+$env:PYTHONUTF8="1"
+.\.venv\Scripts\python.exe -Xutf8 manage.py dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.permission --exclude admin.logentry --exclude sessions.session --indent 2 --output data_sqlite.json
+
+$env:DB_ENGINE="mysql"
+.\.venv\Scripts\python.exe manage.py loaddata data_sqlite.json
+```
 
 ### Operational Maintenance Scripts
 Located in [`scripts/`](file:///e:/03%20Study/Django/Mini-Project/scripts):
@@ -545,19 +573,25 @@ For the complete schema, request payloads, and parameter definitions, refer to [
 
 ## Automated Paper Generation Engine
 
-The paper generation engine ([`api/paper_engine/`](file:///e:/03%20Study/Django/Mini-Project/api/paper_engine)) provides automated exam paper synthesis with mathematical guarantees:
+The paper generation engine ([`api/utils/generation_pipeline.py`](file:///e:/03%20Study/Django/Mini-Project/api/utils/generation_pipeline.py) & [`api/generate_paper.py`](file:///e:/03%20Study/Django/Mini-Project/api/generate_paper.py)) provides automated, grounded exam synthesis with a **strict under 5-minute guarantee (<300s)**:
 
-1. **Request Hashing**: Incoming blueprints (topics, difficulty mix, question types, total marks) are hashed using SHA-256 (`compute_request_hash`).
-2. **Multi-Tenant Caching**: Repeat requests serve the cached paper snapshot in **under 200ms**.
-3. **Candidate Pool Querying**: Retrieves available questions scoped strictly to the faculty member's institution and department.
-4. **7-Tier Deduplication Pipeline**:
-   - **Tier 1 (Exact ID)**: Rejects identical question records.
-   - **Tier 2 (Normalized Hash)**: Matches normalized SHA-256 question text hashes.
-   - **Tier 3 (Near-Duplicate Text)**: Decomposes text into character 3-shingles and applies token Jaccard similarity (`SequenceMatcher ≥ 0.85`).
-   - **Tier 4 (Same Concept)**: Rejects questions on the same topic with `≥75%` option text overlap.
-   - **Tier 5 (Intra-Question Options)**: Validates that question options are distinct.
-   - **Tier 6 (Cross-Paper Repeat Avoidance)**: Excludes questions used in the faculty member's recent exams over the past 30 days (with logged relaxation if the candidate pool is exhausted).
-5. **Balancing & Validation**: Ensures exact total marks match, checks difficulty tolerance, and produces a structured `ValidationReport` attached to the exam record.
+1. **Hard Time Budget (`BudgetManager`)**:
+   - `PAPER_HARD_DEADLINE = 300 s` (5-minute hard stop; jobs are never left running).
+   - `PAPER_LLM_BUDGET = 210 s` (LLM inference cutoff reserve).
+   - Predicts duration per call using calibrated tokens/sec; switches remaining slots to fast tiers if budget is low.
+2. **Tiered Generation Architecture**:
+   - **Tier 0 (Question Bank)**: Reuses validated questions from the same institution and subject, while excluding the faculty's last N exams (default: 3).
+   - **Tier 1 (Extractive Generator)**: Deterministically produces Fill-in-the-Blank and True/False questions directly from syllabus sentences in **<0.05 seconds** with **zero LLM calls**.
+   - **Tier 2 (Batched LLM)**: Generates MCQs and subjective questions using local Ollama models (`qwen2.5:3b-instruct`) with prompt prefix caching and compact schemas.
+   - **Tier 3 (Emergency Extractive Fallback)**: Automatically converts syllabus sentences into questions with distractors if the LLM budget is exhausted.
+   - **Decoupled Background Model Answers**: 10-mark subjective questions synthesize rubric outlines immediately without blocking; full 250+ word academic model answers are asynchronously enriched in background threads.
+3. **Multi-Layer Duplicate Detector (`DuplicateDetector`)**:
+   - Normalized SHA-256 hash matching.
+   - Token Jaccard overlap ($\ge 0.70$).
+   - Sequence matcher ratio ($\ge 0.85$).
+   - Same correct answer with stem similarity ($\ge 0.50$).
+   - Intra-question option deduplication.
+4. **Exact Decimal Arithmetic**: All mark allocations and aggregates use Python `Decimal` (`to_decimal`), preventing floating-point precision drift.
 
 ---
 
