@@ -560,6 +560,32 @@ class OllamaStatusAPIView(APIView):
         )
 
 
+class FacultyAIModelsView(APIView):
+    """
+    Returns dynamically installed Ollama models with metadata (labels, sizes, recommended flag)
+    scoped for faculty exams and paper generation.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def get(self, request):
+        from api.utils.ollama_models import get_available_models_metadata, get_installed_models, OLLAMA_MODEL
+        installed = get_installed_models(force_refresh=True)
+        models_meta = get_available_models_metadata()
+        ollama_online = len(installed) > 0
+        return Response(
+            {
+                'status': 'success',
+                'ollama_online': ollama_online,
+                'default_model': OLLAMA_MODEL,
+                'primary_model': OLLAMA_MODEL,
+                'models': models_meta,
+                'installed_tags': installed,
+                'message': 'Connected to Ollama' if ollama_online else 'Ollama is unreachable. Please ensure the local Ollama service is running.',
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class FacultySignupAPIView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]

@@ -84,6 +84,7 @@ import {
   allocateBlueprintToTarget,
   rebalanceBlueprintToTarget,
   balanceBlueprintSmallestChange,
+  estimateExamTime,
   ALL_QUESTION_TYPES,
 } from "../../utils/blueprintAllocator";
 
@@ -202,6 +203,18 @@ export function FacultyGeneratePaper() {
     return { easy: 30, medium: 50, hard: 20 };
   });
   const [availableModels, setAvailableModels] = useState<string[]>(aiModels);
+  const [modelMetadata, setModelMetadata] = useState<
+    Array<{
+      name: string;
+      label: string;
+      size: string;
+      parameter_size: string;
+      recommended: boolean;
+      is_installed: boolean;
+    }>
+  >([]);
+  const [isOllamaDown, setIsOllamaDown] = useState(false);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [aiModel, setAiModel] = useState<string>("qwen2.5:3b-instruct");
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
   const [parsedSyllabus, setParsedSyllabus] = useState<{
@@ -279,28 +292,38 @@ export function FacultyGeneratePaper() {
       .catch(() => {});
   }, []);
 
-  // Fetch installed Ollama models and primary model on mount
-  useEffect(() => {
-    let mounted = true;
-    facultyPaperApi
-      .getOllamaStatus()
-      .then((res) => {
-        if (!mounted) return;
-        if (res.models && res.models.length > 0) {
-          setAvailableModels(res.models);
-          if (res.primary_model && res.models.includes(res.primary_model)) {
-            setAiModel(res.primary_model);
-          } else if (!res.models.includes(aiModel)) {
-            setAiModel(res.models[0]);
-          }
+  const fetchInstalledAiModels = async () => {
+    setIsFetchingModels(true);
+    try {
+      const res = await facultyPaperApi.getAiModels();
+      if (res.models && res.models.length > 0) {
+        setModelMetadata(res.models);
+        const tags = res.models.map((m) => m.name);
+        setAvailableModels(tags);
+        setIsOllamaDown(!res.ollama_online);
+        const rec = res.models.find((m) => m.recommended);
+        if (rec) {
+          setAiModel(rec.name);
+        } else if (!tags.includes(aiModel)) {
+          setAiModel(tags[0]);
         }
-      })
-      .catch((err) => {
-        console.warn("Could not fetch Ollama models from backend:", err);
-      });
-    return () => {
-      mounted = false;
-    };
+      } else {
+        setAvailableModels([]);
+        setModelMetadata([]);
+        setIsOllamaDown(true);
+      }
+    } catch {
+      setAvailableModels([]);
+      setModelMetadata([]);
+      setIsOllamaDown(true);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  // Fetch installed Ollama models with metadata on mount
+  useEffect(() => {
+    fetchInstalledAiModels();
   }, []);
 
   // Check for saved scoped draft on mount
@@ -410,6 +433,18 @@ export function FacultyGeneratePaper() {
     const h = Math.max(0, totalQ - e - m);
     return { easy: e, medium: m, hard: h };
   }, [blueprintSummary.totalQuestions, difficultyMode, difficultyMix]);
+
+  const timeFitEstimate = useMemo(() => {
+    return estimateExamTime(blueprint);
+  }, [blueprint]);
+
+  const timeFitWarning = useMemo(() => {
+    const durMin = Number(duration) || 60;
+    if (timeFitEstimate > durMin) {
+      return `Estimated completion time (${timeFitEstimate} mins) exceeds exam duration (${durMin} mins). Consider reducing question counts or increasing duration.`;
+    }
+    return null;
+  }, [timeFitEstimate, duration]);
 
   const handleDifficultySliderChange = (changed: "easy" | "medium" | "hard", val: number) => {
     const clamped = Math.max(0, Math.min(100, Math.round(val)));
@@ -2000,20 +2035,47 @@ export function FacultyGeneratePaper() {
                   </div>
                 </div>
 
-                {/* Local AI Model Dropdown */}
+                {/* Local AI Model Dropdown / Status */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-[11px] text-slate-500 font-medium block mb-1">Local AI Engine</span>
-                  <select
-                    value={aiModel}
-                    onChange={(e) => setAiModel(e.target.value)}
-                    className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-hidden"
-                  >
-                    {availableModels.map((m) => (
-                      <option key={m} value={m}>
-                        {aiModelLabels[m] || m}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] text-slate-500 font-medium">Local AI Model</span>
+                    {isFetchingModels && <RefreshCw className="h-3 w-3 animate-spin text-blue-600" />}
+                  </div>
+                  {isOllamaDown ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                        <span>Ollama Offline</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={fetchInstalledAiModels}
+                        className="w-full text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-md py-1 transition-all"
+                      >
+                        Retry Connection
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-hidden"
+                    >
+                      {modelMetadata.length > 0 ? (
+                        modelMetadata.map((m) => (
+                          <option key={m.name} value={m.name}>
+                            {m.label} {m.size ? `(${m.size})` : ""} {m.recommended ? "★ Primary" : ""}
+                          </option>
+                        ))
+                      ) : (
+                        availableModels.map((m) => (
+                          <option key={m} value={m}>
+                            {aiModelLabels[m] || m}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  )}
                 </div>
               </div>
 
@@ -2088,6 +2150,16 @@ export function FacultyGeneratePaper() {
                   >
                     <RefreshCw className="h-3 w-3" /> Auto-Align to {targetMarksNum} Marks
                   </button>
+                </div>
+              )}
+
+              {/* Time Fit Warning Alert */}
+              {timeFitWarning && (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50/80 p-3.5 text-xs text-amber-900">
+                  <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                  <span>
+                    <strong>Time-Fit Alert:</strong> {timeFitWarning}
+                  </span>
                 </div>
               )}
             </div>

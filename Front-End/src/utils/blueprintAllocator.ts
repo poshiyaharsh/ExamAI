@@ -352,3 +352,24 @@ export function balanceBlueprintSmallestChange(
     explanation: `Rebalanced question counts across enabled types to equal ${target} marks.`,
   };
 }
+
+export const QUESTION_TIME_MINUTES: Record<keyof BlueprintState, number> = {
+  mcq: 1.0,
+  true_false: 1.0,
+  fill_blank: 1.0,
+  short_answer: 4.0,
+  long_answer: 10.0,
+};
+
+export function estimateExamTime(blueprint: BlueprintState): number {
+  if (!blueprint) return 0;
+  let total = 0;
+  for (const key of ALL_QUESTION_TYPES) {
+    const cfg = blueprint[key];
+    if (cfg && cfg.enabled && cfg.count > 0) {
+      total += cfg.count * (QUESTION_TIME_MINUTES[key] || 1.0);
+    }
+  }
+  return Math.round(total * 10) / 10;
+}
+

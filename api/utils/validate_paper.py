@@ -62,52 +62,29 @@ def compute_question_counts(question_types, total_marks, blueprint=None):
     """
     Computes exact question counts per type and marks.
     If blueprint is provided (from wizard), respects blueprint counts and marks per type.
-    Otherwise computes proportional defaults.
+    Otherwise allocates deterministically using allocate_blueprint_to_target.
     """
+    from .blueprint_allocator import allocate_blueprint_to_target, compute_blueprint_total, to_decimal
+
+    target_dec = to_decimal(total_marks)
     if blueprint and isinstance(blueprint, dict):
         counts = {}
-        type_marks = {}
         for q_type, config in blueprint.items():
             if isinstance(config, dict) and config.get('enabled', True):
                 c = int(config.get('count', 0))
-                m = float(config.get('marksPerQuestion', config.get('marks', 1)))
                 if c > 0:
                     c_type = canonicalize_type(q_type)
                     counts[c_type] = c
-                    type_marks[c_type] = m
-        if counts:
-            actual_total = sum(counts[t] * type_marks[t] for t in counts)
-            return counts, actual_total
+        actual_total = compute_blueprint_total(blueprint)
+        return counts, float(actual_total)
 
     selected_types = [canonicalize_type(t) for t in (question_types or ['mcq'])]
-    has_objective = any(t in {'mcq', 'true_false', 'fill_blank'} for t in selected_types)
-    has_subjective = any(t in {'short_answer', 'long_answer'} for t in selected_types)
+    alloc_res = allocate_blueprint_to_target(target_dec, enabled_types=selected_types)
+    allocated_bp = alloc_res[0]
+    counts = {t: allocated_bp[t]['count'] for t in selected_types if allocated_bp.get(t, {}).get('count', 0) > 0}
+    actual_total = compute_blueprint_total(allocated_bp)
+    return counts, float(actual_total)
 
-    objective_budget = total_marks // 2 if has_objective and has_subjective else total_marks if has_objective else 0
-    subjective_budget = total_marks - objective_budget if has_subjective else 0
-
-    counts = {}
-    if 'long_answer' in selected_types:
-        counts['long_answer'] = max(1, subjective_budget // 10) if subjective_budget >= 10 else (1 if has_subjective else 0)
-        subjective_budget -= counts['long_answer'] * 10
-    if 'short_answer' in selected_types:
-        counts['short_answer'] = max(1, subjective_budget // 5) if subjective_budget >= 5 else (1 if has_subjective else 0)
-        subjective_budget -= counts['short_answer'] * 5
-
-    remaining_objective = total_marks - (counts.get('long_answer', 0) * 10 + counts.get('short_answer', 0) * 5)
-    obj_types = [t for t in selected_types if t in {'mcq', 'true_false', 'fill_blank'}]
-    if obj_types and remaining_objective > 0:
-        base = remaining_objective // len(obj_types)
-        rem = remaining_objective % len(obj_types)
-        for idx, t in enumerate(obj_types):
-            counts[t] = base + (1 if idx < rem else 0)
-
-    actual_total = (
-        counts.get('long_answer', 0) * 10
-        + counts.get('short_answer', 0) * 5
-        + sum(c for t, c in counts.items() if t not in {'long_answer', 'short_answer'})
-    )
-    return counts, actual_total
 
 
 def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):

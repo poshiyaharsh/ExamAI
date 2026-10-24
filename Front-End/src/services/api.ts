@@ -1568,6 +1568,24 @@ export const facultyPaperApi = {
     });
     return response.data;
   },
+  getAiModels: async (): Promise<{
+    status: string;
+    ollama_online: boolean;
+    default_model: string;
+    models: Array<{
+      name: string;
+      label: string;
+      size: string;
+      parameter_size: string;
+      recommended: boolean;
+      is_installed: boolean;
+    }>;
+    installed_tags: string[];
+    message: string;
+  }> => {
+    const response = await apiClient.get("/api/faculty/ai-models/");
+    return response.data;
+  },
   generateExam: async (payload: {
     title: string;
     durationMinutes: number;

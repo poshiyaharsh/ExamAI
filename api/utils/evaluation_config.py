@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,10 @@ TAG_ALIASES = {
 }
 
 
-def canonicalize_model_tag(tag: Optional[str]) -> str:
+def canonicalize_model_tag(tag: Any) -> str:
     """Normalize model tag or UI key to canonical Ollama tag, logging a warning if normalized."""
+    if isinstance(tag, (tuple, list)):
+        tag = tag[0] if tag else None
     if not tag:
         return OLLAMA_MODEL
     clean = str(tag).strip().lower()

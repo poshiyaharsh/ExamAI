@@ -16,6 +16,7 @@ from .exam_management import (
     SwapQuestionView,
 )
 from .faculty_dashboard import FacultyDashboardView
+from faculty.views import FacultyAIModelsView
 from .faculty_monitor import FacultyLiveMonitorView
 from .faculty_evaluation import (
     FacultyAttemptDetailView,
@@ -86,6 +87,7 @@ urlpatterns = [
     path('admin/exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='api-admin-exam-live-roster'),
     path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
+    path('faculty/ai-models/', FacultyAIModelsView.as_view(), name='api-faculty-ai-models'),
     path('faculty/syllabus/parse/', ParseSyllabusView.as_view(), name='faculty-syllabus-parse'),
     path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
     path('faculty/exams/<int:exam_id>/generate-missing/', GenerateMissingQuestionsView.as_view(), name='faculty-exam-generate-missing'),

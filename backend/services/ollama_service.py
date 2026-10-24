@@ -99,7 +99,8 @@ class OllamaService:
             }
 
     def model_for(self, ui_model):
-        return MODEL_MAP.get(ui_model, '')
+        from api.utils.ollama_models import normalize_model_name
+        return normalize_model_name(ui_model)
 
     @staticmethod
     def _strip_json_wrapper(content):

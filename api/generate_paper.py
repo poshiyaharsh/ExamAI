@@ -36,13 +36,19 @@ from .utils.extract_text import (
     get_cached_syllabus_data,
     get_relevant_syllabus_chunk,
 )
+from .utils.ollama_models import (
+    get_installed_models,
+    normalize_model_name,
+    resolve_model,
+    LEGACY_MODEL_MAP,
+    OllamaModelNotFoundError,
+    OllamaConnectionError,
+)
 from .utils.ollama_client import (
     call_ollama,
     parse_json_safely,
     warmup_ollama_model,
     resolve_ollama_model,
-    OllamaModelNotFoundError,
-    OllamaConnectionError,
 )
 from .utils.prompts import (
     build_long_answer_step_a_prompt,
@@ -62,11 +68,8 @@ from .utils.validate_paper import (
 
 logger = logging.getLogger(__name__)
 
-MODEL_MAP = {
-    'qwen2.5-3b': 'qwen2.5:3b-instruct',
-    'llama3.2-3b': 'llama3.2:3b',
-    'phi3-mini': 'phi3:mini',
-}
+# Single source of truth alias map
+MODEL_MAP = dict(LEGACY_MODEL_MAP)
 MAX_BATCH_SIZE = 8
 MARKS_PER_TYPE = {
     'mcq': 1,
@@ -419,7 +422,7 @@ def _call_type_batch(
     """
     Generates standard questions (MCQ, True/False, Fill in blanks, Short Answer) using Ollama JSON Schema.
     """
-    model_tag = resolve_ollama_model(model_key)
+    model_tag = resolve_model(model_key)
     prompt = build_type_generation_prompt(
         question_type=question_type,
         count=count,
@@ -458,7 +461,26 @@ def _call_type_batch(
             return questions[:count]
         except OllamaModelNotFoundError:
             logger.warning('Ollama model %s not found. Fast failover to fallback model...', model_tag)
-            fallback_tag = resolve_ollama_model(None)
+            fallback_tag = None
+            try:
+                installed = get_installed_models(force_refresh=True)
+                for fb in OLLAMA_FALLBACK_MODELS:
+                    norm_fb = normalize_model_name(fb, installed=installed)
+                    if norm_fb in installed and norm_fb != model_tag:
+                        fallback_tag = norm_fb
+                        break
+                if not fallback_tag:
+                    for inst in installed:
+                        if inst != model_tag:
+                            fallback_tag = inst
+                            break
+            except Exception:
+                fallback_tag = None
+            if not fallback_tag:
+                try:
+                    fallback_tag = resolve_model(None)
+                except Exception:
+                    fallback_tag = None
             if fallback_tag and fallback_tag != model_tag:
                 model_tag = fallback_tag
                 if job:
@@ -500,7 +522,14 @@ def _generate_type_questions(
     deadline=None,
 ):
     canon_type = canonicalize_type(question_type)
-    model_tag = resolve_ollama_model(model_name)
+    if job:
+        try:
+            job.refresh_from_db()
+            if job.is_cancelled or job.status == PaperGenerationJob.Status.CANCELLED:
+                return []
+        except Exception:
+            pass
+    model_tag = resolve_model(model_name)
     generated = []
 
     # Handle Long Answer / Subjective with two-step generation
@@ -563,7 +592,7 @@ def _generate_type_questions(
             break
         if job:
             job.refresh_from_db()
-            if job.is_cancelled:
+            if job.is_cancelled or job.status == PaperGenerationJob.Status.CANCELLED:
                 break
 
         req_count = min(batch_size, count - start)
@@ -751,6 +780,8 @@ def _save_generated_exam_questions(
     except Exception:
         pass
 
+    return len(generated_questions)
+
 
 def _run_generation(job_id, exam_id, model_name, topics, question_types, total_marks, difficulty_distribution, syllabus_text, blueprint=None):
     job = PaperGenerationJob.objects.filter(id=job_id).first()
@@ -774,7 +805,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
     rejected_duplicates_marks = 0
 
     try:
-        resolved_model_tag = resolve_ollama_model(model_name)
+        resolved_model_tag = resolve_model(model_name)
         if resolved_model_tag != job.model:
             job.model = resolved_model_tag
             job.save(update_fields=['model'])
@@ -1153,17 +1184,24 @@ class GeneratePaperView(APIView):
             topics = _as_list(request.data.get('topics'), request.data, 'topics')
             question_types = _as_list(request.data.get('question_types'), request.data, 'question_types')
             difficulty_distribution = _as_dict(request.data.get('difficulty_distribution') or request.data.get('difficulty_mix') or {})
-            model_alias = str(request.data.get('ai_model', '')).strip()
-            model_name = model_alias
+            raw_ai_model = request.data.get('ai_model')
+            model_alias = str(raw_ai_model).strip() if raw_ai_model is not None else ''
             if not title or duration_minutes <= 0 or total_marks <= 0:
                 raise ValueError('title, duration_minutes, and total_marks must be valid positive values.')
             if not topics or not question_types:
                 raise ValueError('topics and question_types are required.')
-            if model_name and model_name not in MODEL_MAP:
-                raise ValueError('ai_model must be qwen2.5-3b, llama3.2-3b, or phi3-mini.')
+
+            installed_models = get_installed_models()
+            model_name = None
+            if model_alias:
+                try:
+                    model_name = resolve_model(model_alias, strict=True)
+                except (OllamaModelNotFoundError, OllamaConnectionError) as exc:
+                    installed_str = ', '.join(installed_models) if installed_models else 'None (Ollama unreachable)'
+                    raise ValueError(f"Requested model '{model_alias}' is not installed in Ollama. Installed: [{installed_str}]")
         except (TypeError, ValueError) as exc:
             logger.warning('GeneratePaperView rejected payload: %s', exc)
-            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': str(exc), 'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Blueprint parsing and validation upfront
         raw_bp = request.data.get('blueprint')
@@ -1175,16 +1213,22 @@ class GeneratePaperView(APIView):
                 blueprint = None
 
         if blueprint and isinstance(blueprint, dict):
+            from .utils.blueprint_allocator import compute_blueprint_total, suggest_valid_blueprints, to_decimal
             planned_total_marks = compute_blueprint_total(blueprint)
-            if planned_total_marks != total_marks:
-                diff = total_marks - planned_total_marks
+            target_dec = to_decimal(total_marks)
+            if planned_total_marks != target_dec:
+                diff = target_dec - planned_total_marks
+                suggestions = suggest_valid_blueprints(total_marks, current_blueprint=blueprint, duration_minutes=duration_minutes)
+                planned_str = f"{int(planned_total_marks)}" if planned_total_marks == int(planned_total_marks) else f"{planned_total_marks}"
+                target_str = f"{int(target_dec)}" if target_dec == int(target_dec) else f"{target_dec}"
                 return Response(
                     {
-                        'detail': f"Blueprint total marks ({planned_total_marks}) do not match target marks ({total_marks}). Difference: {diff:+d}.",
-                        'blueprint_marks': planned_total_marks,
-                        'target_marks': total_marks,
-                        'difference': diff,
-                        'mismatch': abs(diff),
+                        'detail': f"Blueprint total marks ({planned_str}) do not match target marks ({target_str}). Difference: {diff:+f}.",
+                        'blueprint_marks': float(planned_total_marks),
+                        'target_marks': float(target_dec),
+                        'difference': float(diff),
+                        'mismatch': abs(float(diff)),
+                        'suggested_plans': suggestions,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -1301,7 +1345,7 @@ class GeneratePaperView(APIView):
         except PoolExhaustedError as pool_err:
             logger.info("Candidate pool exhausted for fast generation: %s. Checking AI fallback.", pool_err)
             # If no AI model or syllabus provided, return clear 422 error immediately
-            if not model_name or model_name not in MODEL_MAP:
+            if not model_name:
                 return Response(
                     {
                         'detail': pool_err.message,
@@ -1325,6 +1369,9 @@ class GeneratePaperView(APIView):
                 'char_count': len(syllabus_text),
                 'uploaded_at': timezone.now().isoformat(),
             })
+
+        if not model_name:
+            model_name = resolve_model(None)
 
         try:
             exam = Exam.objects.create(
@@ -1440,9 +1487,12 @@ class ParseSyllabusView(APIView):
             })
 
         try:
+            from .tenant import get_user_institution
             from .utils.extract_text import get_cached_syllabus_data
+            tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+            inst_id = tenant_inst.id if tenant_inst else None
             fn = getattr(syllabus_file, 'name', 'syllabus')
-            cached = get_cached_syllabus_data(syllabus_file, fn)
+            cached = get_cached_syllabus_data(syllabus_file, fn, institution_id=inst_id)
             text = cached['text']
             hierarchy = cached.get('hierarchy', {})
             units = hierarchy.get('units', [])
@@ -1740,7 +1790,7 @@ class RegenerateQuestionView(APIView):
         valid_topics = [t for t in selected_topics if str(t).lower() in exam.source_syllabus_text.lower()]
         target_topic = valid_topics[0] if valid_topics else selected_topics[0]
 
-        model_key = exam.ai_model_used or 'llama3.2-3b'
+        model_key = resolve_model(exam.ai_model_used) if exam.ai_model_used else resolve_model(None)
         q_type = question.question_type
         marks_per_q = float(question.marks)
 

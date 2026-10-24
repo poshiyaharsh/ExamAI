@@ -21,49 +21,13 @@ logger = logging.getLogger(__name__)
 # Single-execution lock to ensure evaluations run one at a time on CPU/RAM
 _EVAL_INFERENCE_LOCK = threading.Lock()
 
-# Cache for /api/tags
-_TAGS_CACHE: List[str] = []
-_TAGS_CACHE_TIME: float = 0.0
-_TAGS_CACHE_TTL: float = 60.0  # seconds
-
-
-def get_installed_ollama_models(base_url: str = OLLAMA_BASE_URL, timeout: int = 5, force_refresh: bool = False) -> List[str]:
-    """
-    Fetch installed Ollama model tags from GET /api/tags.
-    Results are cached in memory for 60 seconds.
-    If Ollama is unreachable, logs a warning and returns an empty list without crashing.
-    """
-    global _TAGS_CACHE, _TAGS_CACHE_TIME
-    now = time.time()
-    if not force_refresh and _TAGS_CACHE and (now - _TAGS_CACHE_TIME < _TAGS_CACHE_TTL):
-        return list(_TAGS_CACHE)
-
-    tags_url = f"{base_url.rstrip('/')}/api/tags"
-    req = Request(tags_url, headers={'Accept': 'application/json'}, method='GET')
-    try:
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            models = [m.get('name', '') for m in data.get('models', []) if m.get('name')]
-            _TAGS_CACHE = models
-            _TAGS_CACHE_TIME = now
-            return list(models)
-    except Exception as exc:
-        logger.warning("Could not reach Ollama at %s to fetch tags: %s", tags_url, exc)
-        return list(_TAGS_CACHE) if _TAGS_CACHE else []
-
-
-class OllamaModelNotFoundError(RuntimeError):
-    def __init__(self, model_tag, installed=None):
-        self.model_tag = model_tag
-        self.installed = installed or []
-        msg = f"Model '{model_tag}' is not installed."
-        if self.installed:
-            msg += f" Installed: {self.installed}"
-        super().__init__(msg)
-
-
-class OllamaConnectionError(RuntimeError):
-    pass
+from .ollama_models import (
+    get_installed_models as get_installed_ollama_models,
+    normalize_model_name,
+    resolve_model,
+    OllamaModelNotFoundError,
+    OllamaConnectionError,
+)
 
 
 def resolve_ollama_model(
@@ -71,94 +35,19 @@ def resolve_ollama_model(
     base_url: str = OLLAMA_BASE_URL,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    Resolves the best available Ollama model tag based on installed models in /api/tags:
-    1. Exact full tag or normalized preferred_model if installed
-    2. OLLAMA_MODEL if installed
-    3. Each model in OLLAMA_FALLBACK_MODELS if installed
-    4. First available installed model
+    Resolves the best available Ollama model tag based on installed models in /api/tags.
+    Delegates to the single-source-of-truth ollama_models module.
     Returns (resolved_tag, None) on success, or (None, failure_reason) on failure.
     """
-    installed = get_installed_ollama_models(base_url=base_url)
-    if not installed:
-        return None, f"Ollama is unreachable or has no installed models at {base_url}."
-
-    installed_set = set(installed)
-
-    def _find_installed(candidate_tag: Optional[str]) -> Optional[str]:
-        if not candidate_tag:
-            return None
-        clean = str(candidate_tag).strip()
-        # 1. Exact match
-        if clean in installed_set:
-            return clean
-        for inst in installed:
-            if inst.lower() == clean.lower():
-                return inst
-        # 2. Canonicalized tag
-        canonical = canonicalize_model_tag(clean)
-        if canonical in installed_set:
-            return canonical
-        for inst in installed:
-            if inst.lower() == canonical.lower():
-                return inst
-        # 3. Fuzzy match key parts (e.g. qwen2.5-3b -> qwen2.5:3b-instruct)
-        name_clean = clean.lower().replace('ollama-', '').replace(':', '-').replace('_', '-')
-        parts = [p for p in name_clean.split('-') if p]
-        if parts:
-            for inst in installed:
-                inst_clean = inst.lower().replace(':', '-').replace('_', '-')
-                if all(p in inst_clean for p in parts[:2]):
-                    logger.warning("Normalizing model tag '%s' to installed model '%s'", clean, inst)
-                    return inst
-        return None
-
-    # 0. Check Super Admin dynamic AIModel registry if available
     try:
-        from superadmin.models import AIModel
-        enabled_qs = AIModel.objects.filter(is_enabled=True, status='ready')
-        if enabled_qs.exists():
-            enabled_names = {m.name: m for m in enabled_qs}
-            if preferred_model:
-                found = _find_installed(preferred_model)
-                if found and found in enabled_names:
-                    return found, None
-            default_m = enabled_qs.filter(is_default=True).first()
-            if default_m:
-                found = _find_installed(default_m.name)
-                if found:
-                    return found, None
-            for m in enabled_qs:
-                found = _find_installed(m.name)
-                if found:
-                    return found, None
-    except Exception:
-        pass
-
-    # 1. Preferred model (e.g. from exam or request)
-    if preferred_model:
-        found = _find_installed(preferred_model)
-        if found:
-            return found, None
-        logger.warning("Preferred model '%s' is not installed. Installed models: %s", preferred_model, installed)
-
-    # 2. Primary configured OLLAMA_MODEL
-    found = _find_installed(OLLAMA_MODEL)
-    if found:
-        return found, None
-
-    # 3. Fallback models in priority order
-    for fallback in OLLAMA_FALLBACK_MODELS:
-        found = _find_installed(fallback)
-        if found:
-            logger.info("Fell back to installed model: '%s'", found)
-            return found, None
-
-    # 4. Any installed model as last resort
-    if installed:
-        return installed[0], None
-
-    return None, f"No matching Ollama model found. Installed: {installed}"
-
+        tag = resolve_model(preferred_model, base_url=base_url)
+        return tag, None
+    except OllamaConnectionError as ce:
+        return None, str(ce)
+    except OllamaModelNotFoundError as me:
+        return None, str(me)
+    except Exception as exc:
+        return None, str(exc)
 
 def call_ollama_chat(
     model: str,
@@ -174,6 +63,9 @@ def call_ollama_chat(
     Calls POST /api/chat with stream=false, format='json', and keep_alive.
     Uses a thread lock to ensure one evaluation executes at a time.
     """
+    if isinstance(model, (tuple, list)):
+        model = model[0]
+    model = str(model).strip()
     chat_url = f"{base_url.rstrip('/')}/api/chat"
     payload_data = {
         'model': model,

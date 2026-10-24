@@ -143,7 +143,17 @@ class FacultyProfileDepartmentUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
 
-ALLOWED_AI_MODELS = ('ollama-qwen2.5-3b', 'ollama-llama3.2-3b', 'ollama-phi3-mini')
+ALLOWED_AI_MODELS = (
+    'qwen2.5:3b-instruct',
+    'llama3.2:3b',
+    'phi3:mini',
+    'ollama-qwen2.5-3b',
+    'ollama-llama3.2-3b',
+    'ollama-phi3-mini',
+    'qwen2.5-3b',
+    'llama3.2-3b',
+    'phi3-mini',
+)
 ALLOWED_QUESTION_TYPES = ('MCQ', 'Subjective', 'True/False', 'Fill in the Blanks')
 ALLOWED_DIFFICULTIES = ('Easy', 'Medium', 'Hard')
 
