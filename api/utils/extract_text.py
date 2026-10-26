@@ -650,3 +650,45 @@ def extract_syllabus_content(
         'detected_subjects': data.get('hierarchy', {}).get('detected_domains', []),
         'chunks': data.get('chunks', {}),
     }
+
+
+def validate_topics_against_syllabus(topics: List[str], syllabus_text: str) -> Tuple[bool, List[str]]:
+    """
+    Validates that every topic in `topics` belongs to `syllabus_text`.
+    Performs normalized matching (casefold, alphanumeric tokens).
+    Returns (is_valid: bool, alien_topics: List[str]).
+    """
+    if not syllabus_text or not str(syllabus_text).strip():
+        return True, []
+
+    norm_text = " " + " ".join(re.findall(r'\w+', syllabus_text.lower())) + " "
+    alien_topics = []
+
+    for t in topics:
+        clean_t = str(t).strip()
+        if not clean_t:
+            continue
+        # Extract meaningful tokens (length >= 3)
+        tokens = [w for w in re.findall(r'\w+', clean_t.lower()) if len(w) >= 3]
+        if not tokens:
+            short_tokens = re.findall(r'\w+', clean_t.lower())
+            if short_tokens and all(f" {st} " in norm_text for st in short_tokens):
+                continue
+            alien_topics.append(clean_t)
+            continue
+
+        # Strip unit/chapter prefix words: unit, chapter, module, ch, part, section
+        core_tokens = [w for w in tokens if w not in {'unit', 'chapter', 'module', 'part', 'section', 'topic', 'ch'}]
+        tokens_to_match = core_tokens if core_tokens else tokens
+
+        phrase = " " + " ".join(tokens_to_match) + " "
+        if phrase in norm_text:
+            continue
+
+        matched_tokens = [w for w in tokens_to_match if f" {w} " in norm_text]
+        match_ratio = len(matched_tokens) / len(tokens_to_match) if tokens_to_match else 0
+        if match_ratio < 0.6:
+            alien_topics.append(clean_t)
+
+    return (len(alien_topics) == 0), alien_topics
+

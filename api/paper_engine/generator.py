@@ -226,6 +226,12 @@ def generate_exam_paper(
         if options_to_create:
             Option.objects.bulk_create(options_to_create)
 
+        # Update exam.topics to ONLY contain topics that have at least one accepted question
+        accepted_topics = sorted(list({q.topic_text for q in saved_questions if q.topic_text}))
+        if accepted_topics:
+            exam.topics = accepted_topics
+            exam.save(update_fields=['topics'])
+
     # 8. Serialize Result
     exam.refresh_from_db()
     data = ExamDetailSerializer(exam).data

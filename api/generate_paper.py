@@ -777,6 +777,8 @@ def _save_generated_exam_questions(
                 accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
                 if accepted_topics:
                     exam.topics = accepted_topics
+                elif topics:
+                    exam.topics = topics[:1]
 
                 exam.status = Exam.Status.DRAFT
                 exam.is_reviewed = False
@@ -1462,6 +1464,20 @@ class GeneratePaperView(APIView):
                 )
         else:
             logger.debug('No syllabus uploaded; generation will use topics only.')
+
+        # Validate that every submitted topic belongs to the uploaded syllabus document
+        if syllabus_text and str(syllabus_text).strip() and topics:
+            from .utils.extract_text import validate_topics_against_syllabus
+            is_valid, alien_topics = validate_topics_against_syllabus(topics, syllabus_text)
+            if not is_valid:
+                alien_str = ", ".join(f"'{t}'" for t in alien_topics)
+                return Response(
+                    {
+                        'detail': f"The following topic(s) do not belong to the uploaded syllabus material: {alien_str}. Please select only topics found in the uploaded document.",
+                        'invalid_topics': alien_topics,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         idempotency_key = request.headers.get('Idempotency-Key') or request.data.get('idempotency_key')
         force_regenerate = str(request.data.get('force_regenerate', '')).lower() in ('true', '1', 'yes')

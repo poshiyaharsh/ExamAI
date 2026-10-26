@@ -162,7 +162,7 @@ export function FacultyGeneratePaper() {
   const [totalMarks, setTotalMarks] = useState("100");
   const [startsAt, setStartsAt] = useState(defaultSchedule.startsAt);
   const [endsAt, setEndsAt] = useState(defaultSchedule.endsAt);
-  const [topics, setTopics] = useState<string[]>([""]);
+  const [topics, setTopics] = useState<string[]>([]);
 
   // Scoped draft detection and dirty tracking
   const [detectedDraft, setDetectedDraft] = useState<WizardDraftData | null>(null);
@@ -519,17 +519,37 @@ export function FacultyGeneratePaper() {
 
   const handleAutoAlignMarks = handleProposeBalance;
 
+  const checkTopicExistsInPreview = (topic: string, previewText?: string) => {
+    if (!previewText || !topic) return true;
+    const tClean = topic.toLowerCase().trim();
+    const tokens = tClean.split(/\s+/).filter((w) => w.length >= 3 && !["unit", "chapter", "module", "section", "part", "ch"].includes(w));
+    if (tokens.length === 0) return true;
+    const pLower = previewText.toLowerCase();
+    return tokens.some((w) => pLower.includes(w));
+  };
+
+  const handleRemoveSyllabusFile = () => {
+    setSyllabusFile(null);
+    setParsedSyllabus(null);
+    setTopics([]);
+    setIsDirty(true);
+    toast.info("Syllabus document removed and scope topics cleared.");
+  };
+
   const handleSyllabusFileSelected = async (file: File) => {
     setSyllabusFile(file);
     setIsParsingSyllabus(true);
     try {
       const res = await facultyPaperApi.parseSyllabus(file);
       setParsedSyllabus(res);
-      // Clean reset: populate topics strictly with newly uploaded document's detected units
-      // This prevents cross-exam state pollution (e.g., mixing Java and OS topics)
+      // Clean replacement: strictly populate topics with newly uploaded document's detected units
+      // Never merges with previous exam or old topics
       if (res.topics && res.topics.length > 0) {
-        setTopics(res.topics);
+        setTopics([...res.topics]);
+      } else {
+        setTopics([]);
       }
+      setIsDirty(true);
       if (res.has_multiple_subjects) {
         toast.warning(
           `Multiple subjects detected (${res.detected_domains?.join(", ") || "Mixed subjects"}). Please uncheck units that do NOT belong to this exam!`,
@@ -542,6 +562,8 @@ export function FacultyGeneratePaper() {
       }
     } catch (err: any) {
       toast.error(extractApiErrorMessage(err, "Failed to extract syllabus content."));
+      setParsedSyllabus(null);
+      setTopics([]);
     } finally {
       setIsParsingSyllabus(false);
     }
@@ -607,7 +629,7 @@ export function FacultyGeneratePaper() {
     setSubjectName(detectedDraft.subjectName || "");
     setDuration(detectedDraft.duration || "60");
     setTotalMarks(detectedDraft.totalMarks || "100");
-    setTopics(detectedDraft.topics && detectedDraft.topics.length ? detectedDraft.topics : [""]);
+    setTopics(detectedDraft.topics && detectedDraft.topics.length ? detectedDraft.topics : []);
     if (detectedDraft.examId) setExamId(detectedDraft.examId);
     if (detectedDraft.currentStep) setCurrentStep(detectedDraft.currentStep);
 
@@ -645,7 +667,9 @@ export function FacultyGeneratePaper() {
       setTotalMarks("100");
       setStartsAt(nextSched.startsAt);
       setEndsAt(nextSched.endsAt);
-      setTopics([""]);
+      setTopics([]);
+      setSyllabusFile(null);
+      setParsedSyllabus(null);
       setQuestions([]);
       setExamId(null);
       clearScopedWizardDraft(currentUser?.id);
@@ -663,7 +687,6 @@ export function FacultyGeneratePaper() {
     if (isNaN(dur) || dur <= 0) return "Duration must be greater than 0.";
     const tm = Number(totalMarks);
     if (isNaN(tm) || tm < 1 || tm > 500) return "Target Total Marks must be an integer between 1 and 500.";
-    if (cleanTopics.length === 0) return "At least one topic is required.";
     if (scheduleAnalysis.status === "error") {
       return scheduleAnalysis.message;
     }
@@ -735,8 +758,14 @@ export function FacultyGeneratePaper() {
             hard: difficultyMode === "hard" ? 100 : 0,
           };
 
+    if (cleanTopics.length === 0) {
+      toast.error("Please upload a syllabus or select at least one topic for this exam.");
+      return;
+    }
+
     setIsGenerating(true);
     setGenerationProgress(25);
+    clearScopedWizardDraft(currentUser?.id);
 
     try {
       setGenerationProgress(50);
@@ -744,7 +773,7 @@ export function FacultyGeneratePaper() {
         title: examTitle.trim(),
         durationMinutes: Number(duration),
         totalMarks: Number(totalMarks),
-        topics: cleanTopics.length ? cleanTopics : (parsedSyllabus?.topics?.length ? parsedSyllabus.topics : ["Core Syllabus"]),
+        topics: cleanTopics,
         questionTypes: activeTypes,
         difficultyDistribution: diffDistribution,
         blueprint: activeBlueprint,
@@ -752,7 +781,7 @@ export function FacultyGeneratePaper() {
         syllabus: syllabusFile,
         avoidRepeats,
         subject: subjectName.trim() || undefined,
-        selectedTopics: cleanTopics.length ? cleanTopics : undefined,
+        selectedTopics: cleanTopics,
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
         ends_at: endsAt ? new Date(endsAt).toISOString() : null,
         display_timezone: "Asia/Kolkata",
@@ -1295,7 +1324,10 @@ export function FacultyGeneratePaper() {
               {/* Topics */}
               <div className="sm:col-span-2">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-semibold text-slate-700">Syllabus Topics *</label>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700">Syllabus Topics (Optional here)</label>
+                    <span className="text-[11px] text-slate-500">You can add topics manually now, or upload your syllabus in Step 2 to detect them automatically.</span>
+                  </div>
                   <button
                     type="button"
                     onClick={handleAddTopic}
@@ -1304,18 +1336,24 @@ export function FacultyGeneratePaper() {
                     <Plus className="h-3.5 w-3.5" /> Add Topic
                   </button>
                 </div>
-                <div className="space-y-2">
-                  {topics.map((t, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        autoComplete="off"
-                        value={t}
-                        onChange={(e) => handleTopicChange(idx, e.target.value)}
-                        placeholder={`Topic ${idx + 1} (e.g., OSI Layer 4 Transport Protocols)`}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
-                      />
-                      {topics.length > 1 && (
+                {topics.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-center">
+                    <p className="text-xs text-slate-500">
+                      No topics added yet. Upload a syllabus document in Step 2 to auto-extract units, or click <strong>Add Topic</strong> above to specify manual topics.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {topics.map((t, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          autoComplete="off"
+                          value={t}
+                          onChange={(e) => handleTopicChange(idx, e.target.value)}
+                          placeholder={`Topic ${idx + 1} (e.g., OSI Layer 4 Transport Protocols)`}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                        />
                         <button
                           type="button"
                           onClick={() => handleRemoveTopic(idx)}
@@ -1323,10 +1361,10 @@ export function FacultyGeneratePaper() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1577,18 +1615,28 @@ export function FacultyGeneratePaper() {
                         {parsedSyllabus.detected_topics_count} syllabus units/topics automatically identified.
                       </p>
                     </div>
-                    <label className="cursor-pointer text-xs font-semibold text-blue-600 hover:underline">
-                      Replace File
-                      <input
-                        type="file"
-                        accept=".pdf,.docx,.doc,.txt"
-                        className="sr-only"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleSyllabusFileSelected(file);
-                        }}
-                      />
-                    </label>
+                    <div className="flex items-center gap-2">
+                      <label className="cursor-pointer text-xs font-semibold text-blue-600 hover:underline">
+                        Replace File
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.doc,.txt"
+                          className="sr-only"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleSyllabusFileSelected(file);
+                          }}
+                        />
+                      </label>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        type="button"
+                        onClick={handleRemoveSyllabusFile}
+                        className="text-xs font-semibold text-rose-600 hover:underline inline-flex items-center gap-1"
+                      >
+                        <Trash2 className="h-3 w-3" /> Remove
+                      </button>
+                    </div>
                   </div>
 
                   {/* Multi-subject warning banner */}
@@ -1628,7 +1676,7 @@ export function FacultyGeneratePaper() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setTopics(parsedSyllabus.topics)}
+                            onClick={() => setTopics([...parsedSyllabus.topics])}
                             className="text-[11px] font-semibold text-blue-600 hover:underline"
                           >
                             Select All
@@ -1669,6 +1717,52 @@ export function FacultyGeneratePaper() {
                           );
                         })}
                       </div>
+
+                      {/* Manual topics labeled with badge and validated against document preview */}
+                      {cleanTopics.filter((t) => !parsedSyllabus.topics.some((st) => st.toLowerCase() === t.toLowerCase())).length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-200">
+                          <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-1.5">
+                            Custom / Manual Topics
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {cleanTopics
+                              .filter((t) => !parsedSyllabus.topics.some((st) => st.toLowerCase() === t.toLowerCase()))
+                              .map((mt, mtIdx) => {
+                                const existsInDoc = checkTopicExistsInPreview(mt, parsedSyllabus.preview_snippet);
+                                return (
+                                  <div
+                                    key={mtIdx}
+                                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium border ${
+                                      existsInDoc
+                                        ? "bg-purple-50 text-purple-800 border-purple-200"
+                                        : "bg-amber-50 text-amber-800 border-amber-300"
+                                    }`}
+                                  >
+                                    <span className="text-[10px] uppercase font-bold px-1 py-0.2 rounded bg-purple-200/60 text-purple-900">
+                                      Manual
+                                    </span>
+                                    <span>{mt}</span>
+                                    {!existsInDoc && (
+                                      <span
+                                        title="Warning: Not detected in uploaded document. Server validates topics strictly belong to syllabus."
+                                        className="text-amber-600"
+                                      >
+                                        <AlertCircle className="h-3.5 w-3.5" />
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => setTopics((prev) => prev.filter((item) => item !== mt))}
+                                      className="ml-1 text-slate-400 hover:text-rose-600"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2757,7 +2851,9 @@ export function FacultyGeneratePaper() {
             setTotalMarks("100");
             setStartsAt(nextSched.startsAt);
             setEndsAt(nextSched.endsAt);
-            setTopics([""]);
+            setTopics([]);
+            setSyllabusFile(null);
+            setParsedSyllabus(null);
             setQuestions([]);
             setExamId(null);
             setActiveJobId(null);
