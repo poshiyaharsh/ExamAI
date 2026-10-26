@@ -8,6 +8,8 @@ import {
   Calendar,
   Check,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Copy,
   Cpu,
@@ -20,8 +22,10 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Trash2,
   X,
@@ -92,11 +96,18 @@ export function FacultyExamHistory() {
   const [suggestingAnswerId, setSuggestingAnswerId] = useState<number | null>(null);
   const [finalizingAttempt, setFinalizingAttempt] = useState(false);
 
-  // Manual Edit State
-  const [editingAnswerId, setEditingAnswerId] = useState<number | null>(null);
-  const [manualScore, setManualScore] = useState<string>("");
-  const [manualFeedback, setManualFeedback] = useState<string>("");
-  const [savingGrade, setSavingGrade] = useState(false);
+  // Evaluation Override & Review State
+  const [editingQuestionId, setEditingQuestionId] = useState<number | null>(null);
+  const [overrideMarks, setOverrideMarks] = useState<string>("");
+  const [overrideCorrectness, setOverrideCorrectness] = useState<"correct" | "partial" | "wrong">("correct");
+  const [overrideComment, setOverrideComment] = useState<string>("");
+  const [overrideReason, setOverrideReason] = useState<string>("");
+  const [savingOverride, setSavingOverride] = useState(false);
+  const [resettingQuestionId, setResettingQuestionId] = useState<number | null>(null);
+  const [approvingAsIs, setApprovingAsIs] = useState(false);
+  const [reopeningReview, setReopeningReview] = useState(false);
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false);
+  const [expandedAuditQuestionId, setExpandedAuditQuestionId] = useState<number | null>(null);
 
   const loadData = async () => {
     try {
@@ -277,51 +288,158 @@ export function FacultyExamHistory() {
     }
   };
 
-  const startManualGrade = (answer: any) => {
-    setEditingAnswerId(answer.id);
-    setManualScore(answer.score_awarded !== null ? String(answer.score_awarded) : "0");
-    setManualFeedback(answer.ai_feedback || "");
+  const startOverride = (ans: any) => {
+    setEditingQuestionId(ans.question_id);
+    const currMarks = ans.effective_marks ?? (ans.score_awarded ?? 0);
+    setOverrideMarks(String(currMarks));
+    const corr = ans.effective_is_correct || (ans.is_correct ? "correct" : currMarks > 0 ? "partial" : "wrong");
+    setOverrideCorrectness(corr === "partial" ? "partial" : corr === "wrong" ? "wrong" : "correct");
+    setOverrideComment(ans.final_comment || ans.teacher_feedback || "");
+    setOverrideReason("");
   };
 
-  const saveManualGrade = async (answerId: number, maxMarks: number) => {
-    const num = parseFloat(manualScore);
+  const handleSaveOverride = async (ans: any) => {
+    if (!selectedAttemptId || !attemptDetail) return;
+    const num = parseFloat(overrideMarks);
     if (isNaN(num)) {
       toast.error("Please enter a valid numeric score.");
       return;
     }
+    const maxMarks = Number(ans.marks || 1);
     if (num < 0 || num > maxMarks) {
       toast.error(`Score must be between 0 and ${maxMarks} marks.`);
       return;
     }
-    setSavingGrade(true);
+
+    const autoMarks = ans.auto_marks !== null && ans.auto_marks !== undefined ? Number(ans.auto_marks) : (ans.score_awarded ?? 0);
+    const autoCorr = ans.auto_is_correct || (ans.is_correct ? "correct" : "wrong");
+    const isDeviating = num !== autoMarks || overrideCorrectness !== autoCorr;
+    if (isDeviating && !overrideReason.trim()) {
+      toast.error("Reason is required when changing marks away from auto evaluation.");
+      return;
+    }
+
+    setSavingOverride(true);
     try {
-      await facultyExamApi.manualGradeAnswer(answerId, num, manualFeedback);
-      toast.success("Manual grade saved!");
-      setEditingAnswerId(null);
-      if (selectedAttemptId) {
-        await handleOpenAttemptDetail(selectedAttemptId);
+      await facultyExamApi.overrideQuestionGrade(selectedAttemptId, ans.question_id, {
+        final_marks: num,
+        final_is_correct: overrideCorrectness,
+        final_comment: overrideComment.trim(),
+        reason: overrideReason.trim(),
+        version: attemptDetail.version,
+      });
+      toast.success("Question grade overridden successfully!");
+      setEditingQuestionId(null);
+      await handleOpenAttemptDetail(selectedAttemptId);
+      if (selectedExam) {
+        const attemptsRes = await facultyExamApi.getExamAttempts(selectedExam.id);
+        setAttempts(attemptsRes.attempts || []);
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to save manual grade.");
+      if (err?.response?.status === 409) {
+        toast.error("Conflict: Attempt was updated by another session. Refreshed with latest data.");
+        await handleOpenAttemptDetail(selectedAttemptId);
+      } else {
+        toast.error(err?.response?.data?.detail || "Failed to save question override.");
+      }
     } finally {
-      setSavingGrade(false);
+      setSavingOverride(false);
     }
   };
 
-  const handleFinalizeAttemptGrading = async (attemptId: number) => {
-    setFinalizingAttempt(true);
+  const handleResetOverride = async (questionId: number) => {
+    if (!selectedAttemptId || !attemptDetail) return;
+    setResettingQuestionId(questionId);
     try {
-      await facultyExamApi.finalizeAttemptGrading(attemptId);
-      toast.success("Attempt grading finalized! Status updated to Graded.");
+      await facultyExamApi.resetQuestionGrade(selectedAttemptId, questionId, {
+        version: attemptDetail.version,
+      });
+      toast.success("Question reset to automatic evaluation!");
+      setEditingQuestionId(null);
+      await handleOpenAttemptDetail(selectedAttemptId);
+      if (selectedExam) {
+        const attemptsRes = await facultyExamApi.getExamAttempts(selectedExam.id);
+        setAttempts(attemptsRes.attempts || []);
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        toast.error("Conflict: Attempt was updated by another session. Refreshed with latest data.");
+        await handleOpenAttemptDetail(selectedAttemptId);
+      } else {
+        toast.error(err?.response?.data?.detail || "Failed to reset question override.");
+      }
+    } finally {
+      setResettingQuestionId(null);
+    }
+  };
+
+  const handleApproveAsIs = async (attemptId: number) => {
+    if (!attemptDetail) return;
+    setApprovingAsIs(true);
+    try {
+      await facultyExamApi.approveAsIsAttempt(attemptId, attemptDetail.version);
+      toast.success("Attempt approved as-is and grading finalized!");
       await handleOpenAttemptDetail(attemptId);
       if (selectedExam) {
         const attemptsRes = await facultyExamApi.getExamAttempts(selectedExam.id);
         setAttempts(attemptsRes.attempts || []);
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to finalize attempt grading.");
+      if (err?.response?.status === 409) {
+        toast.error("Conflict: Attempt was updated by another session. Refreshed with latest data.");
+        await handleOpenAttemptDetail(attemptId);
+      } else {
+        toast.error(err?.response?.data?.detail || "Failed to approve attempt.");
+      }
+    } finally {
+      setApprovingAsIs(false);
+    }
+  };
+
+  const handleFinalizeAttemptGrading = async (attemptId: number) => {
+    if (!attemptDetail) return;
+    setFinalizingAttempt(true);
+    try {
+      await facultyExamApi.finalizeAttemptGrading(attemptId, attemptDetail.version);
+      toast.success("Attempt review finalized! Student notified.");
+      setShowFinalizeModal(false);
+      await handleOpenAttemptDetail(attemptId);
+      if (selectedExam) {
+        const attemptsRes = await facultyExamApi.getExamAttempts(selectedExam.id);
+        setAttempts(attemptsRes.attempts || []);
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        toast.error("Conflict: Attempt was updated by another session. Refreshed with latest data.");
+        await handleOpenAttemptDetail(attemptId);
+      } else {
+        toast.error(err?.response?.data?.detail || "Failed to finalize review.");
+      }
     } finally {
       setFinalizingAttempt(false);
+    }
+  };
+
+  const handleReopenReview = async (attemptId: number) => {
+    if (!attemptDetail) return;
+    setReopeningReview(true);
+    try {
+      await facultyExamApi.reopenAttemptReview(attemptId, attemptDetail.version);
+      toast.success("Review reopened for editing.");
+      await handleOpenAttemptDetail(attemptId);
+      if (selectedExam) {
+        const attemptsRes = await facultyExamApi.getExamAttempts(selectedExam.id);
+        setAttempts(attemptsRes.attempts || []);
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        toast.error("Conflict: Attempt was updated by another session. Refreshed with latest data.");
+        await handleOpenAttemptDetail(attemptId);
+      } else {
+        toast.error(err?.response?.data?.detail || "Failed to reopen review.");
+      }
+    } finally {
+      setReopeningReview(false);
     }
   };
 
@@ -850,78 +968,269 @@ export function FacultyExamHistory() {
                     <div className="py-12 text-center text-sm text-rose-600">Failed to load attempt details.</div>
                   ) : (
                     <div className="space-y-4">
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-muted/40 border border-border">
-                        <div>
-                          <div className="text-sm font-medium text-foreground flex items-center gap-2">
-                            <span>Status:</span>
-                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider border ${
-                              attemptDetail.status === "evaluated" 
-                                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                                : "bg-amber-50 text-amber-700 border-amber-200"
+                      {/* Sticky Review Header */}
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200 shadow-2xs">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-bold text-foreground">
+                              {attemptDetail.student_name}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              ({attemptDetail.student_email || "No email"})
+                            </span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider border ${
+                              attemptDetail.review_status === "finalized"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                : attemptDetail.review_status === "in_review"
+                                ? "bg-indigo-50 text-indigo-700 border-indigo-300"
+                                : "bg-amber-50 text-amber-700 border-amber-300"
                             }`}>
-                              {attemptDetail.status === "evaluated" ? "Grading Finalized" : "Pending Review"}
+                              {attemptDetail.review_status === "finalized"
+                                ? "Finalized"
+                                : attemptDetail.review_status === "in_review"
+                                ? "In Review"
+                                : "Provisional (Auto-Evaluated)"}
                             </span>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            Total Score: <strong className="text-primary font-bold text-sm">{attemptDetail.total_score}</strong> / {attemptDetail.exam_total_marks} marks
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={finalizingAttempt}
-                            onClick={() => void handleFinalizeAttemptGrading(attemptDetail.attempt_id)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-all"
-                            title="Confirm grades and mark attempt as evaluated for student view"
-                          >
-                            {finalizingAttempt ? (
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                            <span>Auto Total: <strong className="text-foreground">{attemptDetail.auto_total ?? 0}</strong></span>
+                            <span>·</span>
+                            <span>Live Score: <strong className="text-primary font-bold text-sm">{attemptDetail.final_total ?? attemptDetail.total_score}</strong> / {attemptDetail.exam_total_marks} marks</span>
+                            <span>·</span>
+                            <span>{Math.round(((attemptDetail.final_total ?? attemptDetail.total_score) / (attemptDetail.exam_total_marks || 1)) * 100)}%</span>
+                            {attemptDetail.finalized_at && (
                               <>
-                                <Loader2 className="h-4 w-4 animate-spin" /> Finalizing...
-                              </>
-                            ) : (
-                              <>
-                                <CheckCircle className="h-4 w-4" /> Finalize Grading
+                                <span>·</span>
+                                <span className="text-emerald-700">Reviewed {attemptDetail.reviewed_by ? `by ${attemptDetail.reviewed_by}` : ""} on {new Date(attemptDetail.finalized_at).toLocaleDateString()}</span>
                               </>
                             )}
-                          </button>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {attemptDetail.review_status !== "finalized" ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={approvingAsIs || finalizingAttempt}
+                                onClick={() => void handleApproveAsIs(attemptDetail.attempt_id)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 px-3 py-2 text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50"
+                                title="Approve automatic marks as is without overrides"
+                              >
+                                {approvingAsIs ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                                )}
+                                Approve As Is
+                              </button>
+                              <button
+                                type="button"
+                                disabled={finalizingAttempt || approvingAsIs}
+                                onClick={() => setShowFinalizeModal(true)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-xs font-bold shadow-sm transition-colors disabled:opacity-50"
+                                title="Confirm review and notify student"
+                              >
+                                <CheckCircle className="h-4 w-4" /> Finalize Review
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={reopeningReview}
+                              onClick={() => void handleReopenReview(attemptDetail.attempt_id)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 px-3 py-2 text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50"
+                              title="Reopen review to make further corrections"
+                            >
+                              {reopeningReview ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-4 w-4" />
+                              )}
+                              Reopen Review
+                            </button>
+                          )}
                         </div>
                       </div>
 
-                      <div className="space-y-3">
+                      {/* Finalize Confirmation Modal */}
+                      {showFinalizeModal && (
+                        <div className="fixed inset-0 z-60 bg-black/50 flex items-center justify-center p-4">
+                          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl border border-border">
+                            <div className="flex items-center gap-3">
+                              <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                                <CheckCircle className="h-6 w-6" />
+                              </div>
+                              <div>
+                                <h3 className="font-bold text-base text-foreground">Finalize Evaluation Review</h3>
+                                <p className="text-xs text-muted-foreground mt-0.5">Publish final marks and notify student</p>
+                              </div>
+                            </div>
+                            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Student:</span>
+                                <strong className="text-foreground">{attemptDetail.student_name}</strong>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Auto Total:</span>
+                                <span>{attemptDetail.auto_total ?? 0} marks</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Final Total:</span>
+                                <strong className="text-emerald-700 font-bold">{attemptDetail.final_total ?? attemptDetail.total_score} / {attemptDetail.exam_total_marks} marks</strong>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Overridden Questions:</span>
+                                <span className="font-semibold text-purple-700">
+                                  {attemptDetail.answers?.filter((a: any) => a.overridden)?.length ?? 0} of {attemptDetail.answers?.length ?? 0}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              This replaces the provisional result with final marks. The student will be notified and can view the updated marks and comments for any overridden questions.
+                            </p>
+                            <div className="flex items-center justify-end gap-2 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowFinalizeModal(false)}
+                                className="px-3.5 py-2 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                disabled={finalizingAttempt}
+                                onClick={() => void handleFinalizeAttemptGrading(attemptDetail.attempt_id)}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                              >
+                                {finalizingAttempt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                                Confirm & Finalize
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Question Cards */}
+                      <div className="space-y-4">
                         {attemptDetail.answers?.map((ans: any, idx: number) => {
                           const qType = String(ans.question_type || "").toLowerCase().trim();
                           const isFillBlank = qType === "fill_blank" || qType === "fillblank";
                           const isSubjective = ["subjective", "short_answer", "long_answer"].includes(qType);
+                          const isMCQ = ["mcq", "true_false", "truefalse"].includes(qType);
+                          const isOverridden = Boolean(ans.overridden);
+                          const isEditing = editingQuestionId === ans.question_id;
+                          const effectiveMarks = ans.effective_marks ?? (ans.score_awarded ?? 0);
+                          const effectiveCorr = ans.effective_is_correct || (ans.is_correct ? "correct" : effectiveMarks > 0 ? "partial" : "wrong");
 
                           return (
-                            <div key={ans.id} className="rounded-xl border border-border bg-white p-4 shadow-sm space-y-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
-                                    Q{idx + 1} · {ans.question_type} ({ans.marks} Marks)
-                                  </span>
-                                  <p className="text-sm font-medium text-foreground mt-0.5">{ans.question_text}</p>
+                            <div
+                              key={ans.id}
+                              className={`rounded-xl border p-4 shadow-2xs space-y-3 transition-colors ${
+                                isOverridden
+                                  ? "border-purple-300 bg-purple-50/20"
+                                  : "border-border bg-white"
+                              }`}
+                            >
+                              {/* Question Header */}
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                                <div className="space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-bold uppercase text-muted-foreground tracking-wider">
+                                      Q{idx + 1} · {ans.question_type} ({ans.marks} Marks)
+                                    </span>
+                                    {/* Auto Pill */}
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                                      ans.auto_is_correct === "correct"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                        : ans.auto_is_correct === "partial"
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : "bg-rose-50 text-rose-700 border-rose-200"
+                                    }`}>
+                                      Auto: {ans.auto_is_correct || (ans.is_correct ? "correct" : "wrong")} ({ans.auto_marks ?? 0}m)
+                                    </span>
+                                    {/* Overridden Pill */}
+                                    {isOverridden && (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300">
+                                        Overridden: {ans.final_is_correct} ({ans.final_marks}m)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-sm font-semibold text-foreground mt-1">{ans.question_text}</p>
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  {ans.is_correct === true && <CheckCircle className="h-5 w-5 text-emerald-600" />}
-                                  {ans.is_correct === false && <XCircle className="h-5 w-5 text-rose-600" />}
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <div className="text-right">
+                                    <span className="text-[10px] uppercase font-bold text-muted-foreground block">Effective</span>
+                                    <strong className="text-base font-bold text-primary">
+                                      {effectiveMarks} / {ans.marks}
+                                    </strong>
+                                  </div>
+                                  {effectiveCorr === "correct" ? (
+                                    <CheckCircle className="h-5 w-5 text-emerald-600 shrink-0" />
+                                  ) : effectiveCorr === "partial" ? (
+                                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+                                  ) : (
+                                    <XCircle className="h-5 w-5 text-rose-600 shrink-0" />
+                                  )}
                                 </div>
                               </div>
 
-                              <div className="rounded-lg bg-muted/30 p-3 text-xs sm:text-sm">
-                                <span className="font-medium text-muted-foreground block mb-1">Student Answer:</span>
-                                <p className="text-foreground whitespace-pre-wrap">{ans.student_answer || "(No answer was submitted)"}</p>
-                              </div>
+                              {/* MCQ Options Display */}
+                              {isMCQ && ans.options && ans.options.length > 0 && (
+                                <div className="space-y-1.5 pt-2 border-t border-border">
+                                  <span className="text-xs font-semibold text-muted-foreground">Options:</span>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                    {ans.options.map((opt: string, optIdx: number) => {
+                                      const letter = String.fromCharCode(65 + optIdx);
+                                      const isSubmitted = String(ans.student_answer || "").trim().toLowerCase() === opt.toLowerCase() ||
+                                                          String(ans.student_answer || "").trim().toUpperCase() === letter;
+                                      const isCorrectOpt = String(ans.correct_answer || "").trim().toLowerCase() === opt.toLowerCase() ||
+                                                           String(ans.correct_answer || "").trim().toUpperCase() === letter;
+
+                                      return (
+                                        <div
+                                          key={optIdx}
+                                          className={`p-2.5 rounded-lg border flex items-center justify-between gap-2 ${
+                                            isCorrectOpt
+                                              ? "border-emerald-300 bg-emerald-50/70 text-emerald-950 font-medium"
+                                              : isSubmitted
+                                              ? "border-rose-300 bg-rose-50/50 text-rose-950"
+                                              : "border-border bg-slate-50/50 text-foreground"
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-bold text-[11px] text-muted-foreground">{letter}.</span>
+                                            <span>{opt}</span>
+                                          </div>
+                                          <div className="flex items-center gap-1 shrink-0">
+                                            {isCorrectOpt && (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-200/80 text-emerald-800">
+                                                Key
+                                              </span>
+                                            )}
+                                            {isSubmitted && (
+                                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">
+                                                Student
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Fill in the Blank details */}
                               {isFillBlank && (
                                 <div className="space-y-2 pt-2 border-t border-border">
                                   {ans.blank_answers && ans.blank_answers.length > 0 && (
                                     <div className="rounded-lg bg-purple-50/60 border border-purple-200 p-3 text-xs text-purple-950">
-                                      <span className="font-bold block mb-1.5 text-purple-900">Student Blanks Submitted:</span>
+                                      <span className="font-bold block mb-1 text-purple-900">Student Blanks:</span>
                                       <div className="flex flex-wrap gap-2">
                                         {ans.blank_answers.map((b: string, bIdx: number) => (
-                                          <span key={bIdx} className="px-2.5 py-1 rounded-md bg-white border border-purple-300 font-mono text-xs shadow-2xs">
+                                          <span key={bIdx} className="px-2.5 py-1 rounded-md bg-white border border-purple-300 font-mono text-xs">
                                             Blank #{bIdx + 1}: <strong className="text-purple-800">{b || "(empty)"}</strong>
                                           </span>
                                         ))}
@@ -941,129 +1250,259 @@ export function FacultyExamHistory() {
                                 </div>
                               )}
 
-                              {/* Subjective, Short Answer, Long Answer */}
+                              {/* Subjective Model Answer & Rubric */}
                               {isSubjective && (
-                                <div className="space-y-3 pt-2 border-t border-border">
+                                <div className="space-y-2 pt-2 border-t border-border text-xs">
                                   {ans.model_answer && (
-                                    <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-700">
+                                    <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-slate-700">
                                       <strong className="text-slate-900 block mb-0.5">Model Answer / Key Points:</strong>
                                       <p className="whitespace-pre-wrap">{ans.model_answer}</p>
                                     </div>
                                   )}
                                   {ans.rubric && (
-                                    <div className="text-xs text-slate-600 bg-slate-50/50 p-2 rounded-lg border border-slate-200/60">
+                                    <div className="rounded-lg bg-slate-50/60 border border-slate-200/60 p-2 text-slate-600">
                                       <strong className="text-slate-800">Grading Rubric:</strong>{" "}
                                       {typeof ans.rubric === "string" ? ans.rubric : JSON.stringify(ans.rubric)}
                                     </div>
                                   )}
+                                </div>
+                              )}
 
-                                  {/* AI Suggestion Banner if Available */}
-                                  {ans.ai_suggested_score !== null && ans.ai_suggested_score !== undefined && (
-                                    <div className="rounded-xl bg-indigo-50/70 border border-indigo-200 p-3 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
-                                      <div className="space-y-0.5">
-                                        <span className="font-bold flex items-center gap-1.5 text-indigo-900">
-                                          <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
-                                          AI Suggestion (Optional): {ans.ai_suggested_score} / {ans.marks} Marks
-                                        </span>
-                                        {ans.ai_suggested_feedback && (
-                                          <p className="text-indigo-800 leading-relaxed">{ans.ai_suggested_feedback}</p>
-                                        )}
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          startManualGrade(ans);
-                                          setManualScore(String(ans.ai_suggested_score));
-                                          setManualFeedback(ans.ai_suggested_feedback || "");
-                                        }}
-                                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 shrink-0 transition-colors"
-                                      >
-                                        <Check className="h-3.5 w-3.5" /> Accept Suggestion
-                                      </button>
+                              {/* Student Submitted Answer */}
+                              <div className="rounded-lg bg-muted/30 p-3 text-xs sm:text-sm">
+                                <span className="font-medium text-muted-foreground block mb-1">Student Answer:</span>
+                                <p className="text-foreground whitespace-pre-wrap">{ans.student_answer || "(No answer was submitted)"}</p>
+                              </div>
+
+                              {/* Auto Evaluation Feedback */}
+                              <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div>
+                                  <span className="font-semibold text-slate-700">
+                                    Automatic Evaluation ({ans.auto_source === "rules" ? "Deterministic Rules" : "AI"}):
+                                  </span>
+                                  <p className="text-muted-foreground mt-0.5">{ans.auto_feedback || ans.ai_feedback || "None"}</p>
+                                </div>
+                                <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                  Awarded: <strong className="text-foreground">{ans.auto_marks ?? 0}m</strong>
+                                </span>
+                              </div>
+
+                              {/* Faculty Override Card (if overridden) */}
+                              {isOverridden && (
+                                <div className="rounded-lg bg-purple-50/70 border border-purple-200 p-3 text-xs text-purple-950 space-y-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-bold flex items-center gap-1.5 text-purple-900">
+                                      <Edit3 className="h-3.5 w-3.5 text-purple-700" />
+                                      Faculty Override Applied: {ans.final_marks} / {ans.marks} Marks ({ans.final_is_correct})
                                     </div>
+                                    <button
+                                      type="button"
+                                      disabled={resettingQuestionId === ans.question_id}
+                                      onClick={() => void handleResetOverride(ans.question_id)}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-purple-300 text-purple-800 hover:bg-purple-100 font-semibold text-[11px] shadow-2xs transition-colors disabled:opacity-50"
+                                      title="Revert override back to automatic evaluation"
+                                    >
+                                      {resettingQuestionId === ans.question_id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <RotateCcw className="h-3 w-3" />
+                                      )}
+                                      Reset to Auto
+                                    </button>
+                                  </div>
+                                  {ans.final_comment && (
+                                    <p className="text-purple-900">
+                                      <strong className="text-purple-950">Faculty Comment:</strong> {ans.final_comment}
+                                    </p>
                                   )}
+                                  <div className="text-[11px] text-purple-700">
+                                    Updated {ans.overridden_by ? `by ${ans.overridden_by}` : ""} {ans.overridden_at ? `on ${new Date(ans.overridden_at).toLocaleString()}` : ""}
+                                  </div>
+                                </div>
+                              )}
 
-                                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs font-semibold text-muted-foreground">Score:</span>
-                                      <strong className="text-sm font-bold text-primary">{ans.score_awarded ?? 0} / {ans.marks}</strong>
-                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border ${ans.evaluation_status === "reviewed" ? "bg-purple-50 text-purple-700 border-purple-200" : ans.evaluation_status === "evaluated_ai" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                                        {ans.evaluation_status}
-                                      </span>
+                              {/* Action Buttons Row */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border">
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => isEditing ? setEditingQuestionId(null) : startOverride(ans)}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted/60 transition-colors"
+                                  >
+                                    <Edit3 className="h-3.5 w-3.5 text-primary" />
+                                    {isOverridden ? "Edit Override" : "Override Evaluation"}
+                                  </button>
+                                  {isSubjective && (
+                                    <button
+                                      type="button"
+                                      disabled={suggestingAnswerId === ans.id}
+                                      onClick={() => void handleSuggestGrade(ans.id)}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+                                    >
+                                      {suggestingAnswerId === ans.id ? (
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                                      )}
+                                      AI Suggest
+                                    </button>
+                                  )}
+                                </div>
+
+                                {ans.audit_history && ans.audit_history.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedAuditQuestionId(expandedAuditQuestionId === ans.question_id ? null : ans.question_id)}
+                                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground font-medium transition-colors"
+                                  >
+                                    <History className="h-3.5 w-3.5" />
+                                    Change Log ({ans.audit_history.length})
+                                    {expandedAuditQuestionId === ans.question_id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Override Editing Form */}
+                              {isEditing && (
+                                <div className="mt-3 p-4 rounded-xl border border-primary/30 bg-primary/5 space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-primary uppercase tracking-wider">
+                                      Faculty Evaluation Override
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingQuestionId(null)}
+                                      className="text-xs text-muted-foreground hover:text-foreground"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {/* Correctness Segmented Control */}
+                                    <div className="space-y-1">
+                                      <label className="text-xs font-semibold text-foreground">Marking Decision</label>
+                                      <div className="grid grid-cols-3 gap-1 rounded-lg bg-white p-1 border border-border">
+                                        <button
+                                          type="button"
+                                          onClick={() => setOverrideCorrectness("correct")}
+                                          className={`py-1 text-xs font-bold rounded-md transition-all ${
+                                            overrideCorrectness === "correct"
+                                              ? "bg-emerald-600 text-white shadow-xs"
+                                              : "text-muted-foreground hover:text-foreground"
+                                          }`}
+                                        >
+                                          Right
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setOverrideCorrectness("partial")}
+                                          className={`py-1 text-xs font-bold rounded-md transition-all ${
+                                            overrideCorrectness === "partial"
+                                              ? "bg-amber-500 text-white shadow-xs"
+                                              : "text-muted-foreground hover:text-foreground"
+                                          }`}
+                                        >
+                                          Partial
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setOverrideCorrectness("wrong")}
+                                          className={`py-1 text-xs font-bold rounded-md transition-all ${
+                                            overrideCorrectness === "wrong"
+                                              ? "bg-rose-600 text-white shadow-xs"
+                                              : "text-muted-foreground hover:text-foreground"
+                                          }`}
+                                        >
+                                          Wrong
+                                        </button>
+                                      </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        disabled={suggestingAnswerId === ans.id}
-                                        onClick={() => void handleSuggestGrade(ans.id)}
-                                        className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-1 text-xs font-semibold disabled:opacity-50 transition-colors"
-                                        title="Generate an AI score and feedback suggestion (non-blocking)"
-                                      >
-                                        {suggestingAnswerId === ans.id ? (
-                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                          <Sparkles className="h-3.5 w-3.5" />
-                                        )}
-                                        AI Suggest
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => startManualGrade(ans)}
-                                        className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors"
-                                      >
-                                        <Edit3 className="h-3.5 w-3.5" /> Manual Grade
-                                      </button>
+                                    {/* Marks Input */}
+                                    <div className="space-y-1">
+                                      <label className="text-xs font-semibold text-foreground">
+                                        Marks Awarded (Max: {ans.marks})
+                                      </label>
+                                      <input
+                                        type="number"
+                                        value={overrideMarks}
+                                        onChange={(e) => setOverrideMarks(e.target.value)}
+                                        min={0}
+                                        max={ans.marks}
+                                        step={0.5}
+                                        className="w-full rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                                        placeholder={`0 - ${ans.marks}`}
+                                      />
                                     </div>
                                   </div>
 
-                                  {ans.ai_feedback && (
-                                    <div className="rounded-lg bg-primary/5 border border-primary/10 p-2.5 text-xs text-muted-foreground">
-                                      <strong className="text-foreground font-medium">Feedback:</strong> {ans.ai_feedback}
-                                    </div>
-                                  )}
+                                  {/* Comment for Student */}
+                                  <div className="space-y-1">
+                                    <label className="text-xs font-semibold text-foreground">
+                                      Faculty Comment (Visible to student once finalized)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={overrideComment}
+                                      onChange={(e) => setOverrideComment(e.target.value)}
+                                      className="w-full rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                                      placeholder="Explain evaluation or acceptable alternative..."
+                                    />
+                                  </div>
 
-                                  {editingAnswerId === ans.id && (
-                                    <div className="mt-2 p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-xs font-semibold text-primary">Override / Edit Grade</span>
-                                        <button
-                                          type="button"
-                                          onClick={() => setEditingAnswerId(null)}
-                                          className="text-muted-foreground hover:text-foreground text-xs"
-                                        >
-                                          Cancel
-                                        </button>
+                                  {/* Audit Log Reason */}
+                                  <div className="space-y-1">
+                                    <label className="text-xs font-semibold text-foreground">
+                                      Reason for Override <span className="text-rose-500 font-bold">*</span> (Audit Log)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={overrideReason}
+                                      onChange={(e) => setOverrideReason(e.target.value)}
+                                      className="w-full rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                                      placeholder="Required when deviating from auto evaluation..."
+                                    />
+                                  </div>
+
+                                  <div className="flex items-center justify-end gap-2 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingQuestionId(null)}
+                                      className="px-3 py-1.5 rounded-lg border border-border text-xs text-foreground hover:bg-muted"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={savingOverride}
+                                      onClick={() => void handleSaveOverride(ans)}
+                                      className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 shadow-xs"
+                                    >
+                                      {savingOverride ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                                      Save Override
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Audit Log Drawer */}
+                              {expandedAuditQuestionId === ans.question_id && ans.audit_history && ans.audit_history.length > 0 && (
+                                <div className="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2 text-xs">
+                                  <span className="font-bold text-slate-800 block">Change History</span>
+                                  <div className="space-y-1.5">
+                                    {ans.audit_history.map((log: any) => (
+                                      <div key={log.id} className="p-2 rounded bg-white border border-slate-200 text-xs text-slate-700 space-y-0.5">
+                                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                          <span><strong>{log.changed_by}</strong> on {new Date(log.created_at).toLocaleString()}</span>
+                                          <span className="font-mono">{log.old_marks}m ({log.old_correctness}) → {log.new_marks}m ({log.new_correctness})</span>
+                                        </div>
+                                        <div className="text-slate-900">
+                                          <strong>Reason:</strong> {log.reason}
+                                        </div>
                                       </div>
-                                      <div className="flex items-center gap-3">
-                                        <input
-                                          type="number"
-                                          value={manualScore}
-                                          onChange={(e) => setManualScore(e.target.value)}
-                                          max={ans.marks}
-                                          min={0}
-                                          step={0.5}
-                                          className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
-                                          placeholder="Score"
-                                        />
-                                        <input
-                                          type="text"
-                                          value={manualFeedback}
-                                          onChange={(e) => setManualFeedback(e.target.value)}
-                                          className="flex-1 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
-                                          placeholder="Feedback comments"
-                                        />
-                                        <button
-                                          type="button"
-                                          disabled={savingGrade}
-                                          onClick={() => void saveManualGrade(ans.id, ans.marks)}
-                                          className="bg-primary text-white text-xs px-3 py-1.5 rounded-md hover:opacity-90 disabled:opacity-50"
-                                        >
-                                          {savingGrade ? "Saving..." : "Save"}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
+                                    ))}
+                                  </div>
                                 </div>
                               )}
                             </div>

@@ -98,7 +98,7 @@ def finalize_student_attempt(attempt, submit_reason='violations', buffered_answe
     # 4. Score the attempt
     try:
         attempt.refresh_from_db()
-        calculate_and_save_attempt_score(attempt, is_auto_submit=(submit_reason != 'manual'))
+        calculate_and_save_attempt_score(attempt, is_auto_submit=(submit_reason != 'manual'), trigger_ai=True)
         if attempt.needs_finalize:
             StudentAttempt.objects.filter(id=attempt.id).update(needs_finalize=False)
             attempt.needs_finalize = False

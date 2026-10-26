@@ -144,7 +144,7 @@ def is_objective_answer_correct(question, answer_text):
     return False
 
 
-def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
+def calculate_and_save_attempt_score(attempt, is_auto_submit=False, trigger_ai=False):
     """
     Single source of truth for calculating and saving student attempt scores.
     Evaluates objective questions, computes marks obtained, total marks, percentage,
@@ -226,15 +226,28 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
                 answer.score_awarded = score
                 answer.is_correct = is_corr
                 answer.ai_feedback = fb
+                answer.auto_marks = score
+                answer.auto_is_correct = bool(is_corr)
+                answer.auto_feedback = fb
+                answer.auto_source = 'rule'
+                answer.auto_evaluated_at = now
+                answer.ai_status = 'ready'
                 answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
                 answer.evaluation_provider = "deterministic"
                 answer.evaluation_model = "exact_match"
                 answers_to_update.append(answer)
             elif canon_type in {"mcq", "true_false"}:
                 correct = is_objective_answer_correct(q, answer.answer_text)
+                score = q.marks if correct else 0.0
                 answer.is_correct = correct
-                answer.score_awarded = q.marks if correct else 0.0
+                answer.score_awarded = score
                 answer.ai_feedback = "Correct" if correct else "Incorrect"
+                answer.auto_marks = score
+                answer.auto_is_correct = bool(correct)
+                answer.auto_feedback = answer.ai_feedback
+                answer.auto_source = 'rule'
+                answer.auto_evaluated_at = now
+                answer.ai_status = 'ready'
                 answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
                 answer.evaluation_provider = "deterministic"
                 answer.evaluation_model = "exact_match"
@@ -245,15 +258,27 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
                     answer.is_correct = False
                     answer.score_awarded = 0.0
                     answer.ai_feedback = "No answer provided."
+                    answer.auto_marks = 0.0
+                    answer.auto_is_correct = False
+                    answer.auto_feedback = "No answer provided."
+                    answer.auto_source = 'empty'
+                    answer.auto_evaluated_at = now
+                    answer.ai_status = 'ready'
                     answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
                     answer.evaluation_provider = "empty_check"
                     answer.evaluation_model = "none"
                     answers_to_update.append(answer)
                 else:
-                    # Student provided an answer: mark pending manual grading by faculty
+                    # Student provided an answer: mark pending AI evaluation
                     answer.is_correct = None
                     answer.score_awarded = 0.0
-                    answer.ai_feedback = "Answer submitted. Pending faculty grading."
+                    answer.ai_feedback = "Answer submitted. Evaluation in progress."
+                    answer.auto_marks = 0.0
+                    answer.auto_is_correct = None
+                    answer.auto_feedback = "Pending AI evaluation."
+                    answer.auto_source = 'ai'
+                    answer.auto_evaluated_at = now
+                    answer.ai_status = 'running'
                     answer.evaluation_status = StudentAnswer.EvaluationStatus.PENDING_REVIEW
                     answer.evaluation_provider = "pending"
                     answer.evaluation_model = "none"
@@ -267,6 +292,12 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
                     "is_correct",
                     "score_awarded",
                     "ai_feedback",
+                    "auto_marks",
+                    "auto_is_correct",
+                    "auto_feedback",
+                    "auto_source",
+                    "auto_evaluated_at",
+                    "ai_status",
                     "evaluation_status",
                     "evaluation_provider",
                     "evaluation_model",
@@ -274,8 +305,12 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
             )
 
         # 4. Compute totals
+        auto_obtained = sum(
+            float(ans.auto_marks or 0.0)
+            for ans in existing_answers.values()
+        )
         marks_obtained = sum(
-            float(ans.score_awarded or 0)
+            float(ans.effective_marks if getattr(ans, 'overridden', False) else (ans.score_awarded or 0.0))
             for ans in existing_answers.values()
         )
         exam_total = float(attempt.max_score or exam.total_marks or sum(q.marks for q in questions) or 1)
@@ -293,9 +328,21 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
             attempt.status = StudentAttempt.Status.EVALUATED
 
         attempt.total_score = marks_obtained
-        attempt.save(update_fields=["submitted_at", "status", "total_score"])
+        attempt.auto_total = auto_obtained
+        attempt.final_total = marks_obtained
+        if not attempt.review_status or attempt.review_status == StudentAttempt.ReviewStatus.AUTO_EVALUATED:
+            attempt.review_status = StudentAttempt.ReviewStatus.AUTO_EVALUATED
+        attempt.save(update_fields=["submitted_at", "status", "total_score", "auto_total", "final_total", "review_status"])
 
-    # Finalization is decoupled from AI: no automated AI evaluation is triggered on submit
+    # If subjective questions exist and AI evaluation requested, dispatch background thread
+    if trigger_ai and subjective_answers:
+        try:
+            import threading
+            from ..evaluation import evaluate_attempt_subjectives
+            threading.Thread(target=evaluate_attempt_subjectives, args=(attempt.id,), daemon=True).start()
+        except Exception as exc:
+            logger.warning("Failed to start background subjective evaluation thread: %s", exc)
+
     return {
         "marks_obtained": marks_obtained,
         "total_marks": exam_total,

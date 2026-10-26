@@ -249,14 +249,22 @@ class StudentExamSerializer(serializers.ModelSerializer):
 class StudentAnswerSerializer(serializers.ModelSerializer):
     question_text = serializers.CharField(source='question.text', read_only=True)
     question_type = serializers.CharField(source='question.question_type', read_only=True)
+    marks = serializers.FloatField(source='question.marks', read_only=True)
     correct_answer = serializers.SerializerMethodField()
     is_correct = serializers.SerializerMethodField()
     score_awarded = serializers.SerializerMethodField()
     ai_feedback = serializers.SerializerMethodField()
+    is_overridden = serializers.BooleanField(source='overridden', read_only=True)
+    faculty_comment = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentAnswer
-        fields = ('question', 'question_text', 'question_type', 'correct_answer', 'answer_text', 'blank_answers', 'is_correct', 'score_awarded', 'ai_feedback')
+        fields = (
+            'question', 'question_text', 'question_type', 'marks',
+            'correct_answer', 'answer_text', 'blank_answers',
+            'is_correct', 'score_awarded', 'ai_feedback',
+            'is_overridden', 'faculty_comment',
+        )
 
     def _can_reveal_answers(self, obj):
         attempt = getattr(obj, 'attempt', None)
@@ -273,13 +281,24 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
 
     def get_is_correct(self, obj):
         if self._can_reveal_answers(obj):
+            if obj.overridden:
+                if obj.final_is_correct == 'correct':
+                    return True
+                elif obj.final_is_correct == 'wrong':
+                    return False
+                return None
             return obj.is_correct
         return None
 
     def get_score_awarded(self, obj):
         if self._can_reveal_answers(obj):
-            return obj.score_awarded
+            return obj.effective_marks
         return None
+
+    def get_faculty_comment(self, obj):
+        if self._can_reveal_answers(obj) and obj.overridden:
+            return obj.final_comment or ''
+        return ''
 
     def get_ai_feedback(self, obj):
         if self._can_reveal_answers(obj):
@@ -295,6 +314,7 @@ class StudentAttemptSerializer(serializers.ModelSerializer):
     exam_title = serializers.CharField(source='exam.title', read_only=True)
     exam_total_marks = serializers.SerializerMethodField()
     result_status = serializers.SerializerMethodField()
+    is_provisional = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentAttempt
@@ -302,6 +322,7 @@ class StudentAttemptSerializer(serializers.ModelSerializer):
             'id', 'exam', 'exam_title', 'exam_total_marks', 'attempt_number',
             'started_at', 'submitted_at', 'expires_at', 'status', 'submit_reason',
             'violation_count', 'max_score', 'total_score', 'answers', 'result_status',
+            'review_status', 'finalized_at', 'is_provisional',
         )
 
     def get_exam_total_marks(self, obj):
@@ -309,6 +330,9 @@ class StudentAttemptSerializer(serializers.ModelSerializer):
             return float(obj.max_score or obj.exam.total_marks or 0.0)
         except (ValueError, TypeError):
             return 0.0
+
+    def get_is_provisional(self, obj):
+        return getattr(obj, 'review_status', '') != StudentAttempt.ReviewStatus.FINALIZED
 
     def get_result_status(self, obj):
         from .utils.results import compute_attempt_result_status

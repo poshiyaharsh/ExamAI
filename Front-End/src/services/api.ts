@@ -442,15 +442,23 @@ export type StudentAttempt = {
   violation_count?: number;
   max_score?: number;
   total_score: number;
+  review_status?: "auto_evaluated" | "in_review" | "finalized";
+  finalized_at?: string | null;
+  is_provisional?: boolean;
+  result_status?: any;
   answers: Array<{
     question: number;
     question_text: string;
-    question_type: "mcq" | "truefalse" | "fillblank" | "subjective";
+    question_type: "mcq" | "truefalse" | "fillblank" | "subjective" | string;
+    marks?: number;
     correct_answer: string | number | boolean | null;
     answer_text: string;
+    blank_answers?: string[];
     is_correct: boolean | null;
     score_awarded: number | null;
     ai_feedback: string;
+    is_overridden?: boolean;
+    faculty_comment?: string;
   }>;
 };
 
@@ -1824,8 +1832,28 @@ export const facultyExamApi = {
     const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/re-evaluate/`, { force });
     return response.data;
   },
-  finalizeAttemptGrading: async (attemptId: number): Promise<any> => {
-    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/finalize/`, {});
+  finalizeAttemptGrading: async (attemptId: number, version?: number): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/finalize/`, { version });
+    return response.data;
+  },
+  approveAsIsAttempt: async (attemptId: number, version?: number): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/approve-as-is/`, { version });
+    return response.data;
+  },
+  reopenAttemptReview: async (attemptId: number, version?: number): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/reopen/`, { version });
+    return response.data;
+  },
+  overrideQuestionGrade: async (
+    attemptId: number,
+    questionId: number,
+    data: { final_marks: number; final_is_correct?: string; final_comment?: string; reason?: string; version?: number }
+  ): Promise<any> => {
+    const response = await apiClient.patch<any>(`/api/faculty/attempts/${attemptId}/questions/${questionId}/override/`, data);
+    return response.data;
+  },
+  resetQuestionGrade: async (attemptId: number, questionId: number, data?: { version?: number }): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/questions/${questionId}/reset/`, data || {});
     return response.data;
   },
   reevaluateAnswer: async (answerId: number, force: boolean = false): Promise<any> => {

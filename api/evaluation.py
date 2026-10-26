@@ -13,6 +13,10 @@ def evaluate_attempt_subjectives(attempt_id, force=False):
     close_old_connections()
     try:
         attempt = StudentAttempt.objects.select_related('exam').get(id=attempt_id)
+    except StudentAttempt.DoesNotExist:
+        logger.info("Attempt ID=%s no longer exists, skipping subjective evaluation", attempt_id)
+        return
+    try:
         answers = list(
             StudentAnswer.objects.select_related('question')
             .filter(attempt=attempt, question__question_type__in=['subjective', 'short_answer', 'long_answer'])
@@ -35,23 +39,25 @@ def evaluate_attempt_subjectives(attempt_id, force=False):
                 with transaction.atomic():
                     attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
                     all_answers = list(StudentAnswer.objects.select_related('question').filter(attempt=attempt))
-                    attempt.total_score = sum(
-                        float(ans.score_awarded or 0.0)
+                    attempt.auto_total = round(sum(
+                        float(ans.auto_marks or 0.0)
                         for ans in all_answers
-                    )
+                    ), 2)
+                    attempt.final_total = round(sum(
+                        float(ans.effective_marks)
+                        for ans in all_answers
+                    ), 2)
+                    attempt.total_score = attempt.final_total
                     has_pending = any(
-                        ans.evaluation_status in [
-                            StudentAnswer.EvaluationStatus.PENDING_REVIEW,
-                            StudentAnswer.EvaluationStatus.FAILED,
-                        ]
+                        getattr(ans, 'ai_status', '') == 'pending'
                         for ans in all_answers
                         if ans.question.question_type in ['subjective', 'short_answer', 'long_answer']
                     )
                     if has_pending:
                         attempt.status = StudentAttempt.Status.SUBMITTED
-                    else:
+                    elif attempt.status != StudentAttempt.Status.AUTO_SUBMITTED:
                         attempt.status = StudentAttempt.Status.EVALUATED
-                    attempt.save(update_fields=['total_score', 'status'])
+                    attempt.save(update_fields=['auto_total', 'final_total', 'total_score', 'status'])
                 break
             except Exception as e:
                 if is_lock_or_deadlock(e) and attempt_idx < 2:

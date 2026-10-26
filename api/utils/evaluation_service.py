@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from django.db import transaction
+from django.utils import timezone
 
 from .evaluation_config import (
     CLOUD_API_KEY,
@@ -275,20 +276,33 @@ def evaluate_subjective_chain(answer_obj: Any, force: bool = False) -> Dict[str,
 
     # Empty answer handling
     if not clean_ans:
-        answer_obj.score_awarded = 0.0
-        answer_obj.is_correct = False
-        answer_obj.ai_feedback = "No answer was submitted."
-        answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_RULES
-        answer_obj.evaluation_provider = "rules"
-        answer_obj.evaluation_model = "empty_check"
+        now = timezone.now()
+        answer_obj.auto_marks = 0.0
+        answer_obj.auto_is_correct = False
+        answer_obj.auto_feedback = "No answer was submitted."
+        answer_obj.auto_source = "empty"
+        answer_obj.auto_evaluated_at = now
+        answer_obj.ai_status = 'ready'
+
+        update_fields = [
+            'auto_marks', 'auto_is_correct', 'auto_feedback',
+            'auto_source', 'auto_evaluated_at', 'ai_status',
+            'technical_error',
+        ]
+        if not getattr(answer_obj, 'overridden', False):
+            answer_obj.score_awarded = 0.0
+            answer_obj.is_correct = False
+            answer_obj.ai_feedback = "No answer was submitted."
+            answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_RULES
+            answer_obj.evaluation_provider = "rules"
+            answer_obj.evaluation_model = "empty_check"
+            update_fields.extend(['score_awarded', 'is_correct', 'ai_feedback', 'evaluation_status', 'evaluation_provider', 'evaluation_model'])
+
         answer_obj.technical_error = ""
-        answer_obj.save(update_fields=[
-            'score_awarded', 'is_correct', 'ai_feedback',
-            'evaluation_status', 'evaluation_provider', 'evaluation_model', 'technical_error'
-        ])
+        answer_obj.save(update_fields=update_fields)
         return {
             'status': answer_obj.evaluation_status,
-            'score': 0.0,
+            'score': answer_obj.effective_marks,
             'feedback': answer_obj.ai_feedback,
             'provider': 'rules',
             'model': 'empty_check',
@@ -304,23 +318,38 @@ def evaluate_subjective_chain(answer_obj: Any, force: bool = False) -> Dict[str,
             preferred_model=preferred_model,
         )
         if success:
-            answer_obj.score_awarded = score
-            answer_obj.is_correct = (score >= (0.4 * float(question.marks or 10)))
-            answer_obj.ai_feedback = feedback
+            now = timezone.now()
+            is_corr_bool = (score >= (0.4 * float(question.marks or 10)))
+
+            answer_obj.auto_marks = score
+            answer_obj.auto_is_correct = is_corr_bool
+            answer_obj.auto_feedback = feedback
+            answer_obj.auto_source = 'ai'
+            answer_obj.auto_evaluated_at = now
+            answer_obj.ai_status = 'ready'
             answer_obj.ai_suggested_score = score
             answer_obj.ai_suggested_feedback = feedback
-            answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_AI
-            answer_obj.evaluation_provider = "ollama"
-            answer_obj.evaluation_model = model_used
             answer_obj.technical_error = ""
-            answer_obj.save(update_fields=[
-                'score_awarded', 'is_correct', 'ai_feedback',
-                'ai_suggested_score', 'ai_suggested_feedback',
-                'evaluation_status', 'evaluation_provider', 'evaluation_model', 'technical_error'
-            ])
+
+            update_fields = [
+                'auto_marks', 'auto_is_correct', 'auto_feedback',
+                'auto_source', 'auto_evaluated_at', 'ai_status',
+                'ai_suggested_score', 'ai_suggested_feedback', 'technical_error',
+            ]
+
+            if not getattr(answer_obj, 'overridden', False):
+                answer_obj.score_awarded = score
+                answer_obj.is_correct = is_corr_bool
+                answer_obj.ai_feedback = feedback
+                answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_AI
+                answer_obj.evaluation_provider = "ollama"
+                answer_obj.evaluation_model = model_used
+                update_fields.extend(['score_awarded', 'is_correct', 'ai_feedback', 'evaluation_status', 'evaluation_provider', 'evaluation_model'])
+
+            answer_obj.save(update_fields=update_fields)
             return {
                 'status': answer_obj.evaluation_status,
-                'score': score,
+                'score': answer_obj.effective_marks,
                 'feedback': feedback,
                 'provider': 'ollama',
                 'model': model_used,
@@ -332,20 +361,36 @@ def evaluate_subjective_chain(answer_obj: Any, force: bool = False) -> Dict[str,
     if 'rules' in EVAL_PROVIDER_ORDER:
         try:
             score, feedback = evaluate_with_rules(question, clean_ans)
-            answer_obj.score_awarded = score
-            answer_obj.is_correct = (score >= (0.4 * float(question.marks or 10)))
-            answer_obj.ai_feedback = feedback
-            answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_RULES
-            answer_obj.evaluation_provider = "rules"
-            answer_obj.evaluation_model = "keyword_matcher"
+            now = timezone.now()
+            is_corr_bool = (score >= (0.4 * float(question.marks or 10)))
+
+            answer_obj.auto_marks = score
+            answer_obj.auto_is_correct = is_corr_bool
+            answer_obj.auto_feedback = feedback
+            answer_obj.auto_source = 'rule'
+            answer_obj.auto_evaluated_at = now
+            answer_obj.ai_status = 'ready'
             answer_obj.technical_error = ollama_error
-            answer_obj.save(update_fields=[
-                'score_awarded', 'is_correct', 'ai_feedback',
-                'evaluation_status', 'evaluation_provider', 'evaluation_model', 'technical_error'
-            ])
+
+            update_fields = [
+                'auto_marks', 'auto_is_correct', 'auto_feedback',
+                'auto_source', 'auto_evaluated_at', 'ai_status',
+                'technical_error',
+            ]
+
+            if not getattr(answer_obj, 'overridden', False):
+                answer_obj.score_awarded = score
+                answer_obj.is_correct = is_corr_bool
+                answer_obj.ai_feedback = feedback
+                answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.EVALUATED_RULES
+                answer_obj.evaluation_provider = "rules"
+                answer_obj.evaluation_model = "keyword_matcher"
+                update_fields.extend(['score_awarded', 'is_correct', 'ai_feedback', 'evaluation_status', 'evaluation_provider', 'evaluation_model'])
+
+            answer_obj.save(update_fields=update_fields)
             return {
                 'status': answer_obj.evaluation_status,
-                'score': score,
+                'score': answer_obj.effective_marks,
                 'feedback': feedback,
                 'provider': 'rules',
                 'model': 'keyword_matcher',
@@ -355,20 +400,34 @@ def evaluate_subjective_chain(answer_obj: Any, force: bool = False) -> Dict[str,
             ollama_error += f"; Rules error: {exc}"
 
     # Provider 3: Ultimate safe fallback (Pending Review)
-    answer_obj.score_awarded = 0.0
-    answer_obj.is_correct = False
-    answer_obj.ai_feedback = "Answer submitted successfully. Pending teacher evaluation."
-    answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.PENDING_REVIEW
-    answer_obj.evaluation_provider = "pending"
-    answer_obj.evaluation_model = "none"
+    now = timezone.now()
+    answer_obj.auto_marks = 0.0
+    answer_obj.auto_is_correct = False
+    answer_obj.auto_feedback = "Answer submitted successfully. Pending evaluation."
+    answer_obj.auto_source = 'ai'
+    answer_obj.auto_evaluated_at = now
+    answer_obj.ai_status = 'failed'
     answer_obj.technical_error = ollama_error
-    answer_obj.save(update_fields=[
-        'score_awarded', 'is_correct', 'ai_feedback',
-        'evaluation_status', 'evaluation_provider', 'evaluation_model', 'technical_error'
-    ])
+
+    update_fields = [
+        'auto_marks', 'auto_is_correct', 'auto_feedback',
+        'auto_source', 'auto_evaluated_at', 'ai_status',
+        'technical_error',
+    ]
+
+    if not getattr(answer_obj, 'overridden', False):
+        answer_obj.score_awarded = 0.0
+        answer_obj.is_correct = False
+        answer_obj.ai_feedback = "Answer submitted successfully. Pending teacher evaluation."
+        answer_obj.evaluation_status = StudentAnswer.EvaluationStatus.PENDING_REVIEW
+        answer_obj.evaluation_provider = "pending"
+        answer_obj.evaluation_model = "none"
+        update_fields.extend(['score_awarded', 'is_correct', 'ai_feedback', 'evaluation_status', 'evaluation_provider', 'evaluation_model'])
+
+    answer_obj.save(update_fields=update_fields)
     return {
         'status': answer_obj.evaluation_status,
-        'score': 0.0,
+        'score': answer_obj.effective_marks,
         'feedback': answer_obj.ai_feedback,
         'provider': 'pending',
         'model': 'none',

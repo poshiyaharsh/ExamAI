@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.models import Exam, StudentAnswer, StudentAttempt, Question
+from api.models import Exam, StudentAnswer, StudentAttempt, Question, EvaluationChangeAuditLog, Notification
 from api.permissions import IsFacultyUser
 from api.tenant import get_user_institution
 from api.utils.departments import get_faculty_department
@@ -18,6 +18,13 @@ from api.utils.evaluation_service import (
 from api.evaluation import evaluate_attempt_subjectives
 
 logger = logging.getLogger(__name__)
+
+
+def get_client_ip(request):
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        return x_forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR') or ''
 
 
 class FacultyEvaluationBaseView(APIView):
@@ -133,6 +140,27 @@ class FacultyAttemptDetailView(FacultyEvaluationBaseView):
             for ans in StudentAnswer.objects.filter(attempt=attempt, institution=tenant).select_related('question')
         }
 
+        audit_logs = list(
+            EvaluationChangeAuditLog.objects.filter(attempt=attempt)
+            .select_related('changed_by')
+            .order_by('-created_at')
+        )
+        logs_by_question = {}
+        for log in audit_logs:
+            qid = log.question_id
+            if qid not in logs_by_question:
+                logs_by_question[qid] = []
+            logs_by_question[qid].append({
+                'id': log.id,
+                'old_marks': log.old_marks,
+                'new_marks': log.new_marks,
+                'old_correctness': log.old_correctness,
+                'new_correctness': log.new_correctness,
+                'reason': log.reason,
+                'changed_by': log.changed_by.get_full_name() or log.changed_by.username if log.changed_by else 'Faculty',
+                'created_at': log.created_at,
+            })
+
         ans_data = []
         for q in questions:
             ans = existing_answers.get(q.id)
@@ -147,18 +175,26 @@ class FacultyAttemptDetailView(FacultyEvaluationBaseView):
                         'is_correct': False,
                         'score_awarded': 0.0,
                         'ai_feedback': 'No answer provided.',
+                        'auto_marks': 0.0,
+                        'auto_is_correct': False,
+                        'auto_source': 'empty',
                         'evaluation_status': StudentAnswer.EvaluationStatus.REVIEWED,
                     }
                 )
                 existing_answers[q.id] = ans
 
             canon_type = canonicalize_type(q.question_type)
+            overridden_by_name = ""
+            if ans.overridden_by:
+                overridden_by_name = ans.overridden_by.get_full_name() or ans.overridden_by.username
+
             ans_data.append({
                 'id': ans.id,
                 'question_id': q.id,
                 'question_text': q.text,
                 'question_type': canon_type,
                 'marks': float(q.marks or 1.0),
+                'options': q.options or [],
                 'model_answer': getattr(q, 'model_answer', '') or '',
                 'rubric': getattr(q, 'rubric', '') or '',
                 'accepted_answers': getattr(q, 'accepted_answers', []) or [],
@@ -175,9 +211,30 @@ class FacultyAttemptDetailView(FacultyEvaluationBaseView):
                 'evaluation_provider': ans.evaluation_provider or '',
                 'evaluation_model': ans.evaluation_model or '',
                 'technical_error': ans.technical_error or '',
+                # Evaluation override fields
+                'auto_marks': ans.auto_marks,
+                'auto_is_correct': ans.auto_is_correct,
+                'auto_feedback': ans.auto_feedback or '',
+                'auto_source': ans.auto_source,
+                'auto_evaluated_at': ans.auto_evaluated_at,
+                'ai_status': ans.ai_status,
+                'ai_confidence': ans.ai_confidence,
+                'final_marks': ans.final_marks,
+                'final_is_correct': ans.final_is_correct,
+                'final_comment': ans.final_comment or '',
+                'overridden': ans.overridden,
+                'overridden_by': overridden_by_name,
+                'overridden_at': ans.overridden_at,
+                'effective_marks': ans.effective_marks,
+                'effective_is_correct': ans.effective_is_correct,
+                'audit_history': logs_by_question.get(q.id, []),
             })
 
         student_name = f"{attempt.student.first_name} {attempt.student.last_name}".strip() if attempt.student else ""
+        reviewer_name = ""
+        if attempt.reviewed_by:
+            reviewer_name = attempt.reviewed_by.get_full_name() or attempt.reviewed_by.username
+
         return Response({
             'attempt_id': attempt.id,
             'exam_id': exam.id,
@@ -186,8 +243,14 @@ class FacultyAttemptDetailView(FacultyEvaluationBaseView):
             'student_name': student_name or (attempt.student.username if attempt.student else f"Student #{attempt.student_id}"),
             'student_email': attempt.student.email if attempt.student else "",
             'status': attempt.status,
-            'submit_reason': attempt.submit_reason,
+            'review_status': attempt.review_status,
+            'reviewed_by': reviewer_name,
+            'finalized_at': attempt.finalized_at,
+            'version': attempt.version,
+            'auto_total': float(attempt.auto_total or 0.0),
+            'final_total': float(attempt.final_total or attempt.total_score or 0.0),
             'total_score': float(attempt.total_score or 0.0),
+            'submit_reason': attempt.submit_reason,
             'submitted_at': attempt.submitted_at,
             'answers': ans_data,
         })
@@ -351,14 +414,257 @@ class FacultyManualGradeAnswerView(FacultyEvaluationBaseView):
         })
 
 
+class FacultyQuestionOverrideView(FacultyEvaluationBaseView):
+    """
+    Overrides faculty grading for ANY question type (MCQ, True/False, Fill_blank, Subjective).
+    - Optimistic concurrency with attempt.version.
+    - Validates 0 <= final_marks <= question.marks.
+    - Requires reason if changing away from auto evaluation.
+    - Logs to EvaluationChangeAuditLog.
+    - Recalculates totals and advances version.
+    """
+    def patch(self, request, attempt_id, question_id):
+        tenant = self.get_tenant(request)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(id=attempt_id, institution=tenant).select_related('exam').first()
+        if not attempt:
+            return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed, err_resp = self.verify_exam_access(request, attempt.exam)
+        if not allowed:
+            return err_resp
+
+        client_version = request.data.get('version')
+        if client_version is not None and int(client_version) != attempt.version:
+            return Response({
+                'detail': 'Conflict: this attempt was updated by another session.',
+                'latest_version': attempt.version,
+            }, status=status.HTTP_409_CONFLICT)
+
+        question = Question.objects.filter(id=question_id, exam=attempt.exam).first()
+        if not question:
+            return Response({'detail': 'Question not found on this exam.'}, status=status.HTTP_404_NOT_FOUND)
+
+        raw_marks = request.data.get('final_marks')
+        if raw_marks is None:
+            return Response({'detail': "'final_marks' is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            final_marks = round(float(raw_marks), 2)
+        except (ValueError, TypeError):
+            return Response({'detail': "'final_marks' must be numeric."}, status=status.HTTP_400_BAD_REQUEST)
+
+        max_marks = float(question.marks or 1.0)
+        if final_marks < 0 or final_marks > max_marks:
+            return Response({
+                'detail': f"Marks must be between 0 and {max_marks}."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        final_is_correct = request.data.get('final_is_correct')
+        if final_is_correct not in ['correct', 'partial', 'wrong']:
+            if final_marks == max_marks:
+                final_is_correct = 'correct'
+            elif final_marks > 0:
+                final_is_correct = 'partial'
+            else:
+                final_is_correct = 'wrong'
+
+        final_comment = str(request.data.get('final_comment') or '').strip()
+        reason = str(request.data.get('reason') or '').strip()
+
+        with transaction.atomic():
+            attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
+            if client_version is not None and int(client_version) != attempt.version:
+                return Response({
+                    'detail': 'Conflict: this attempt was updated by another session.',
+                    'latest_version': attempt.version,
+                }, status=status.HTTP_409_CONFLICT)
+
+            answer, _ = StudentAnswer.objects.select_for_update().get_or_create(
+                attempt=attempt,
+                question=question,
+                defaults={
+                    'institution': tenant,
+                    'answer_text': '',
+                    'is_correct': False,
+                    'score_awarded': 0.0,
+                    'auto_marks': 0.0,
+                    'auto_is_correct': False,
+                    'auto_source': 'empty',
+                }
+            )
+
+            auto_m = float(answer.auto_marks if answer.auto_marks is not None else (answer.score_awarded or 0.0))
+            if answer.auto_is_correct is not None:
+                auto_c = 'correct' if answer.auto_is_correct else 'wrong'
+            else:
+                auto_c = 'correct' if answer.is_correct else 'wrong'
+
+            if (final_marks != auto_m or final_is_correct != auto_c) and not reason:
+                return Response({
+                    'detail': "Reason is required when overriding an evaluation away from automatic scoring."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            old_marks = float(answer.effective_marks)
+            old_correctness = answer.effective_is_correct
+
+            answer.final_marks = final_marks
+            answer.final_is_correct = final_is_correct
+            answer.final_comment = final_comment
+            answer.overridden = True
+            answer.overridden_by = request.user
+            answer.overridden_at = timezone.now()
+            answer.score_awarded = final_marks
+            answer.is_correct = (final_is_correct == 'correct')
+            answer.teacher_feedback = final_comment
+            answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
+            answer.evaluation_provider = "faculty_override"
+            answer.save()
+
+            EvaluationChangeAuditLog.objects.create(
+                institution=tenant,
+                attempt=attempt,
+                question=question,
+                old_marks=old_marks,
+                new_marks=final_marks,
+                old_correctness=old_correctness,
+                new_correctness=final_is_correct,
+                reason=reason or "Faculty evaluation override",
+                changed_by=request.user,
+                ip_address=get_client_ip(request),
+            )
+
+            attempt.version += 1
+            if attempt.review_status == StudentAttempt.ReviewStatus.AUTO_EVALUATED:
+                attempt.review_status = StudentAttempt.ReviewStatus.IN_REVIEW
+
+            all_answers = list(StudentAnswer.objects.filter(attempt=attempt))
+            attempt.final_total = round(sum(float(a.effective_marks) for a in all_answers), 2)
+            attempt.total_score = attempt.final_total
+            attempt.save(update_fields=['version', 'review_status', 'final_total', 'total_score'])
+
+        return Response({
+            'detail': 'Override saved successfully.',
+            'version': attempt.version,
+            'review_status': attempt.review_status,
+            'attempt_total_score': attempt.total_score,
+            'auto_total': attempt.auto_total,
+            'final_total': attempt.final_total,
+            'answer': {
+                'id': answer.id,
+                'question_id': question.id,
+                'effective_marks': answer.effective_marks,
+                'effective_is_correct': answer.effective_is_correct,
+                'overridden': answer.overridden,
+                'final_marks': answer.final_marks,
+                'final_is_correct': answer.final_is_correct,
+                'final_comment': answer.final_comment,
+            }
+        })
+
+
+class FacultyQuestionResetOverrideView(FacultyEvaluationBaseView):
+    """
+    Resets an overridden question back to its original automatic evaluation.
+    Logs to EvaluationChangeAuditLog and advances attempt.version.
+    """
+    def post(self, request, attempt_id, question_id):
+        tenant = self.get_tenant(request)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(id=attempt_id, institution=tenant).select_related('exam').first()
+        if not attempt:
+            return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed, err_resp = self.verify_exam_access(request, attempt.exam)
+        if not allowed:
+            return err_resp
+
+        client_version = request.data.get('version')
+        if client_version is not None and int(client_version) != attempt.version:
+            return Response({
+                'detail': 'Conflict: this attempt was updated by another session.',
+                'latest_version': attempt.version,
+            }, status=status.HTTP_409_CONFLICT)
+
+        question = Question.objects.filter(id=question_id, exam=attempt.exam).first()
+        if not question:
+            return Response({'detail': 'Question not found on this exam.'}, status=status.HTTP_404_NOT_FOUND)
+
+        with transaction.atomic():
+            attempt = StudentAttempt.objects.select_for_update().get(id=attempt_id)
+            if client_version is not None and int(client_version) != attempt.version:
+                return Response({
+                    'detail': 'Conflict: this attempt was updated by another session.',
+                    'latest_version': attempt.version,
+                }, status=status.HTTP_409_CONFLICT)
+
+            answer = StudentAnswer.objects.select_for_update().filter(attempt=attempt, question=question).first()
+            if not answer or not answer.overridden:
+                return Response({'detail': 'Question is not currently overridden.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            old_marks = float(answer.effective_marks)
+            old_correctness = answer.effective_is_correct
+
+            answer.overridden = False
+            answer.final_marks = None
+            answer.final_is_correct = ""
+            answer.final_comment = ""
+            answer.overridden_by = None
+            answer.overridden_at = None
+            answer.score_awarded = answer.auto_marks if answer.auto_marks is not None else 0.0
+            answer.is_correct = bool(answer.auto_is_correct)
+            answer.teacher_feedback = ""
+            answer.save()
+
+            EvaluationChangeAuditLog.objects.create(
+                institution=tenant,
+                attempt=attempt,
+                question=question,
+                old_marks=old_marks,
+                new_marks=float(answer.effective_marks),
+                old_correctness=old_correctness,
+                new_correctness=answer.effective_is_correct,
+                reason="Reset to automatic evaluation",
+                changed_by=request.user,
+                ip_address=get_client_ip(request),
+            )
+
+            attempt.version += 1
+            all_answers = list(StudentAnswer.objects.filter(attempt=attempt))
+            attempt.final_total = round(sum(float(a.effective_marks) for a in all_answers), 2)
+            attempt.total_score = attempt.final_total
+            attempt.save(update_fields=['version', 'final_total', 'total_score'])
+
+        return Response({
+            'detail': 'Override reset successfully.',
+            'version': attempt.version,
+            'review_status': attempt.review_status,
+            'attempt_total_score': attempt.total_score,
+            'auto_total': attempt.auto_total,
+            'final_total': attempt.final_total,
+            'answer': {
+                'id': answer.id,
+                'question_id': question.id,
+                'effective_marks': answer.effective_marks,
+                'effective_is_correct': answer.effective_is_correct,
+                'overridden': answer.overridden,
+            }
+        })
+
+
 class FacultyFinalizeAttemptGradingView(FacultyEvaluationBaseView):
     """
     Finalizes grading for an entire student attempt:
     - Verifies faculty ownership and department
+    - Optimistic concurrency check (version)
     - Confirms all pending subjective answers as 'reviewed'
+    - Sets review_status = FINALIZED, reviewed_by = request.user, finalized_at = timezone.now()
     - Recalculates total_score
     - Transitions attempt status to EVALUATED
-    - Returns updated attempt payload
+    - Dispatches notification to student
     """
     def post(self, request, attempt_id):
         tenant = self.get_tenant(request)
@@ -368,7 +674,7 @@ class FacultyFinalizeAttemptGradingView(FacultyEvaluationBaseView):
         attempt = StudentAttempt.objects.filter(
             id=attempt_id,
             institution=tenant,
-        ).select_related('exam').first()
+        ).select_related('exam', 'student').first()
 
         if not attempt:
             return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -377,11 +683,18 @@ class FacultyFinalizeAttemptGradingView(FacultyEvaluationBaseView):
         if not allowed:
             return err_resp
 
+        client_version = request.data.get('version')
+
         with transaction.atomic():
             attempt = StudentAttempt.objects.select_for_update().get(id=attempt.id)
+            if client_version is not None and int(client_version) != attempt.version:
+                return Response({
+                    'detail': 'Conflict: this attempt was updated by another session.',
+                    'latest_version': attempt.version,
+                }, status=status.HTTP_409_CONFLICT)
+
             answers = list(StudentAnswer.objects.filter(attempt=attempt).select_related('question'))
 
-            # Mark any still pending questions as reviewed
             for ans in answers:
                 if ans.evaluation_status in [
                     StudentAnswer.EvaluationStatus.PENDING_REVIEW,
@@ -390,21 +703,174 @@ class FacultyFinalizeAttemptGradingView(FacultyEvaluationBaseView):
                     ans.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
                     ans.evaluation_provider = ans.evaluation_provider or "manual"
                     ans.evaluation_model = ans.evaluation_model or "teacher"
-                    ans.score_awarded = round(float(ans.score_awarded or 0.0), 2)
+                    ans.score_awarded = round(float(ans.effective_marks), 2)
                     ans.save(update_fields=[
                         'evaluation_status', 'evaluation_provider', 'evaluation_model', 'score_awarded'
                     ])
 
-            attempt.total_score = round(sum(float(a.score_awarded or 0.0) for a in answers), 2)
+            attempt.final_total = round(sum(float(a.effective_marks) for a in answers), 2)
+            attempt.total_score = attempt.final_total
+            attempt.review_status = StudentAttempt.ReviewStatus.FINALIZED
+            attempt.reviewed_by = request.user
+            attempt.finalized_at = timezone.now()
             attempt.status = StudentAttempt.Status.EVALUATED
-            attempt.save(update_fields=['total_score', 'status'])
+            attempt.version += 1
+            attempt.save(update_fields=['total_score', 'final_total', 'status', 'review_status', 'reviewed_by', 'finalized_at', 'version'])
+
+            if attempt.student:
+                try:
+                    Notification.objects.create(
+                        user=attempt.student,
+                        institution=tenant,
+                        title=f"Result Finalized: {attempt.exam.title}",
+                        message="Your exam results have been reviewed and finalized by your faculty.",
+                        type=Notification.NotificationType.SUCCESS,
+                        link=f"/student/exams/{attempt.id}/results",
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to create notification for student: %s", exc)
 
         return Response({
-            'detail': 'Attempt grading finalized successfully.',
+            'detail': 'Attempt review finalized successfully.',
             'attempt_id': attempt.id,
             'status': attempt.status,
+            'review_status': attempt.review_status,
+            'version': attempt.version,
+            'finalized_at': attempt.finalized_at,
             'total_score': attempt.total_score,
             'exam_total_marks': float(attempt.exam.total_marks or 0.0),
+        })
+
+
+class FacultyApproveAsIsView(FacultyEvaluationBaseView):
+    """
+    Approves all automatic marks as-is without making overrides:
+    - Sets review_status = FINALIZED, reviewed_by = request.user, finalized_at = now
+    - Sets status = EVALUATED
+    - Notifies student
+    """
+    def post(self, request, attempt_id):
+        tenant = self.get_tenant(request)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(
+            id=attempt_id,
+            institution=tenant,
+        ).select_related('exam', 'student').first()
+
+        if not attempt:
+            return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed, err_resp = self.verify_exam_access(request, attempt.exam)
+        if not allowed:
+            return err_resp
+
+        client_version = request.data.get('version')
+
+        with transaction.atomic():
+            attempt = StudentAttempt.objects.select_for_update().get(id=attempt.id)
+            if client_version is not None and int(client_version) != attempt.version:
+                return Response({
+                    'detail': 'Conflict: this attempt was updated by another session.',
+                    'latest_version': attempt.version,
+                }, status=status.HTTP_409_CONFLICT)
+
+            answers = list(StudentAnswer.objects.filter(attempt=attempt).select_related('question'))
+
+            for ans in answers:
+                if ans.evaluation_status in [
+                    StudentAnswer.EvaluationStatus.PENDING_REVIEW,
+                    StudentAnswer.EvaluationStatus.FAILED,
+                ]:
+                    ans.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
+                    ans.evaluation_provider = ans.evaluation_provider or "deterministic"
+                    ans.score_awarded = round(float(ans.effective_marks), 2)
+                    ans.save(update_fields=['evaluation_status', 'evaluation_provider', 'score_awarded'])
+
+            attempt.final_total = round(sum(float(a.effective_marks) for a in answers), 2)
+            attempt.total_score = attempt.final_total
+            attempt.review_status = StudentAttempt.ReviewStatus.FINALIZED
+            attempt.reviewed_by = request.user
+            attempt.finalized_at = timezone.now()
+            attempt.status = StudentAttempt.Status.EVALUATED
+            attempt.version += 1
+            attempt.save(update_fields=['total_score', 'final_total', 'status', 'review_status', 'reviewed_by', 'finalized_at', 'version'])
+
+            if attempt.student:
+                try:
+                    Notification.objects.create(
+                        user=attempt.student,
+                        institution=tenant,
+                        title=f"Result Approved: {attempt.exam.title}",
+                        message="Your exam results have been approved and finalized by your faculty.",
+                        type=Notification.NotificationType.SUCCESS,
+                        link=f"/student/exams/{attempt.id}/results",
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to create notification for student: %s", exc)
+
+        return Response({
+            'detail': 'Attempt approved as-is and finalized.',
+            'attempt_id': attempt.id,
+            'status': attempt.status,
+            'review_status': attempt.review_status,
+            'version': attempt.version,
+            'finalized_at': attempt.finalized_at,
+            'total_score': attempt.total_score,
+            'exam_total_marks': float(attempt.exam.total_marks or 0.0),
+        })
+
+
+class FacultyReopenReviewView(FacultyEvaluationBaseView):
+    """
+    Reopens a finalized attempt review for further faculty edits.
+    """
+    def post(self, request, attempt_id):
+        tenant = self.get_tenant(request)
+        if not tenant:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        attempt = StudentAttempt.objects.filter(id=attempt_id, institution=tenant).select_related('exam').first()
+        if not attempt:
+            return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed, err_resp = self.verify_exam_access(request, attempt.exam)
+        if not allowed:
+            return err_resp
+
+        client_version = request.data.get('version')
+
+        with transaction.atomic():
+            attempt = StudentAttempt.objects.select_for_update().get(id=attempt.id)
+            if client_version is not None and int(client_version) != attempt.version:
+                return Response({
+                    'detail': 'Conflict: this attempt was updated by another session.',
+                    'latest_version': attempt.version,
+                }, status=status.HTTP_409_CONFLICT)
+
+            attempt.review_status = StudentAttempt.ReviewStatus.IN_REVIEW
+            attempt.version += 1
+            attempt.save(update_fields=['review_status', 'version'])
+
+            EvaluationChangeAuditLog.objects.create(
+                institution=tenant,
+                attempt=attempt,
+                question=None,
+                old_marks=float(attempt.total_score or 0.0),
+                new_marks=float(attempt.total_score or 0.0),
+                old_correctness="finalized",
+                new_correctness="in_review",
+                reason="Review reopened by faculty",
+                changed_by=request.user,
+                ip_address=get_client_ip(request),
+            )
+
+        return Response({
+            'detail': 'Attempt review reopened.',
+            'attempt_id': attempt.id,
+            'review_status': attempt.review_status,
+            'version': attempt.version,
         })
 
 

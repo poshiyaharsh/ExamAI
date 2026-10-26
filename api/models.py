@@ -460,6 +460,29 @@ class StudentAttempt(models.Model):
 	max_score = models.FloatField(default=0)
 	total_score = models.FloatField(default=0)
 
+	class ReviewStatus(models.TextChoices):
+		AUTO_EVALUATED = 'auto_evaluated', 'Auto Evaluated (Provisional)'
+		IN_REVIEW = 'in_review', 'In Review'
+		FINALIZED = 'finalized', 'Finalized'
+
+	review_status = models.CharField(
+		max_length=20,
+		choices=ReviewStatus.choices,
+		default=ReviewStatus.AUTO_EVALUATED,
+		db_index=True,
+	)
+	reviewed_by = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='reviewed_attempts',
+	)
+	finalized_at = models.DateTimeField(null=True, blank=True)
+	version = models.PositiveIntegerField(default=1)
+	auto_total = models.FloatField(default=0.0)
+	final_total = models.FloatField(default=0.0)
+
 	class Meta:
 		unique_together = ('exam', 'student', 'attempt_number')
 		indexes = [
@@ -528,6 +551,64 @@ class StudentAnswer(models.Model):
 	technical_error = models.TextField(blank=True, default='')
 	saved_at = models.DateTimeField(auto_now=True)
 
+	# Automatic evaluation baseline (rules or AI)
+	auto_marks = models.FloatField(null=True, blank=True)
+	auto_is_correct = models.BooleanField(null=True, blank=True)
+	auto_feedback = models.TextField(blank=True, default='')
+	auto_source = models.CharField(
+		max_length=20,
+		choices=[('rule', 'Rule'), ('ai', 'AI'), ('empty', 'Empty Check'), ('none', 'None')],
+		default='none',
+	)
+	auto_evaluated_at = models.DateTimeField(null=True, blank=True)
+	ai_status = models.CharField(
+		max_length=20,
+		choices=[
+			('not_requested', 'Not Requested'),
+			('running', 'Running'),
+			('ready', 'Ready'),
+			('failed', 'Failed'),
+		],
+		default='not_requested',
+	)
+	ai_confidence = models.FloatField(null=True, blank=True)
+
+	# Faculty override fields
+	final_marks = models.FloatField(null=True, blank=True)
+	final_is_correct = models.CharField(
+		max_length=20,
+		choices=[('correct', 'Correct'), ('partial', 'Partially Correct'), ('wrong', 'Wrong')],
+		blank=True,
+		null=True,
+		default='',
+	)
+	final_comment = models.TextField(blank=True, default='')
+	overridden = models.BooleanField(default=False, db_index=True)
+	overridden_by = models.ForeignKey(
+		User,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='overridden_answers',
+	)
+	overridden_at = models.DateTimeField(null=True, blank=True)
+
+	@property
+	def effective_marks(self):
+		if self.overridden and self.final_marks is not None:
+			return float(self.final_marks)
+		if self.auto_marks is not None:
+			return float(self.auto_marks)
+		return float(self.score_awarded or 0.0)
+
+	@property
+	def effective_is_correct(self):
+		if self.overridden and self.final_is_correct:
+			return self.final_is_correct == 'correct'
+		if self.auto_is_correct is not None:
+			return self.auto_is_correct
+		return self.is_correct
+
 	class Meta:
 		constraints = [
 			models.UniqueConstraint(fields=['attempt', 'question'], name='unique_attempt_question'),
@@ -535,6 +616,48 @@ class StudentAnswer(models.Model):
 		indexes = [
 			models.Index(fields=['institution', 'attempt']),
 			models.Index(fields=['evaluation_status']),
+			models.Index(fields=['attempt', 'overridden']),
+		]
+
+
+class EvaluationChangeAuditLog(models.Model):
+	institution = models.ForeignKey(
+		AdminInstitution,
+		on_delete=models.CASCADE,
+		related_name='evaluation_audit_logs',
+		db_index=True,
+	)
+	attempt = models.ForeignKey(
+		StudentAttempt,
+		on_delete=models.CASCADE,
+		related_name='evaluation_audit_logs',
+		db_index=True,
+	)
+	question = models.ForeignKey(
+		Question,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name='evaluation_audit_logs',
+	)
+	old_marks = models.FloatField(null=True, blank=True)
+	new_marks = models.FloatField()
+	old_correctness = models.CharField(max_length=20, blank=True, default='')
+	new_correctness = models.CharField(max_length=20)
+	reason = models.TextField()
+	changed_by = models.ForeignKey(
+		User,
+		on_delete=models.CASCADE,
+		related_name='faculty_evaluation_changes',
+	)
+	created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+	ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+	class Meta:
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['institution', 'attempt']),
+			models.Index(fields=['attempt', 'question']),
 		]
 
 

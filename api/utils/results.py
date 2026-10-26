@@ -168,6 +168,25 @@ def compute_attempt_result_status(
     # Determine pass/fail outcome for fully graded attempts
     is_passed = percentage >= passing_threshold_pct
 
+    # If attempt has not yet been finalized by faculty, mark as provisional
+    review_status = getattr(attempt, 'review_status', None)
+    if review_status in {'auto_evaluated', 'in_review'}:
+        sub_text = "In review" if review_status == 'in_review' else "Provisional, not yet reviewed"
+        return {
+            'status_code': ResultStatusCode.PENDING_GRADING if pending_grading else ('pass' if is_passed else 'fail'),
+            'label': 'Provisional Result',
+            'sub_label': sub_text,
+            'tooltip': f"Evaluated automatically ({total_score}/{exam_total} marks, {percentage}%). Subject to faculty review.",
+            'badge_variant': 'amber',
+            'is_passed': is_passed,
+            'is_provisional': True,
+            'marks_obtained': total_score,
+            'total_marks': exam_total,
+            'percentage': percentage,
+            'submit_reason': submit_reason,
+            'requires_grading': True,
+        }
+
     # 4. Auto-Submitted
     if status_str == 'auto_submitted' or submit_reason in {'violations', 'time_up'}:
         reason_desc = (

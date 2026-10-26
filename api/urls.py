@@ -19,12 +19,16 @@ from .faculty_dashboard import FacultyDashboardView
 from faculty.views import FacultyAIModelsView
 from .faculty_monitor import FacultyLiveMonitorView
 from .faculty_evaluation import (
+    FacultyApproveAsIsView,
     FacultyAttemptDetailView,
     FacultyExamAttemptsListView,
     FacultyFinalizeAttemptGradingView,
     FacultyManualGradeAnswerView,
+    FacultyQuestionOverrideView,
+    FacultyQuestionResetOverrideView,
     FacultyReevaluateAnswerView,
     FacultyReevaluateAttemptView,
+    FacultyReopenReviewView,
     FacultySuggestGradeView,
 )
 from .generate_paper import (
@@ -117,6 +121,10 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/live-monitor/', FacultyLiveMonitorView.as_view(), name='faculty-exam-live-monitor'),
     path('faculty/exams/<int:exam_id>/attempts/', FacultyExamAttemptsListView.as_view(), name='faculty-exam-attempts'),
     path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
+    path('faculty/attempts/<int:attempt_id>/questions/<int:question_id>/override/', FacultyQuestionOverrideView.as_view(), name='faculty-question-override'),
+    path('faculty/attempts/<int:attempt_id>/questions/<int:question_id>/reset/', FacultyQuestionResetOverrideView.as_view(), name='faculty-question-reset'),
+    path('faculty/attempts/<int:attempt_id>/approve-as-is/', FacultyApproveAsIsView.as_view(), name='faculty-attempt-approve-as-is'),
+    path('faculty/attempts/<int:attempt_id>/reopen/', FacultyReopenReviewView.as_view(), name='faculty-attempt-reopen'),
     path('faculty/attempts/<int:attempt_id>/finalize/', FacultyFinalizeAttemptGradingView.as_view(), name='faculty-attempt-finalize'),
     path('faculty/attempts/<int:attempt_id>/', FacultyAttemptDetailView.as_view(), name='faculty-attempt-detail'),
     path('faculty/answers/<int:answer_id>/re-evaluate/', FacultyReevaluateAnswerView.as_view(), name='faculty-answer-reevaluate'),
