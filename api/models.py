@@ -142,6 +142,8 @@ class Exam(models.Model):
 			models.Index(fields=['institution', 'status', 'starts_at', 'ends_at']),
 			models.Index(fields=['starts_at']),
 			models.Index(fields=['ends_at']),
+			models.Index(fields=['institution', 'status'], name='exam_inst_status_idx'),
+			models.Index(fields=['institution', 'created_at'], name='exam_inst_created_idx'),
 		]
 
 
@@ -465,6 +467,8 @@ class StudentAttempt(models.Model):
 			models.Index(fields=['institution', 'exam']),
 			models.Index(fields=['expires_at']),
 			models.Index(fields=['institution', 'student', 'status'], name='att_inst_stud_status_idx'),
+			models.Index(fields=['institution', 'status', 'submitted_at'], name='att_inst_stat_sub_idx'),
+			models.Index(fields=['exam', 'status'], name='att_exam_status_idx'),
 		]
 
 	def save(self, *args, **kwargs):

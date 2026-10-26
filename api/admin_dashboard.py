@@ -218,38 +218,58 @@ class AdminDashboardView(APIView):
                 'ends_at': e.ends_at.isoformat() if e.ends_at else None,
             })
 
-        # 6. Department Overview (All 11 departments)
+        # 6. Department Overview (Grouped aggregation across all 11 departments - 4 queries instead of 44)
+        stud_dept_map = {
+            (d or '').strip().lower(): cnt
+            for d, cnt in (
+                StudentProfile.objects.filter(institution=institution)
+                .values('department')
+                .annotate(cnt=Count('id'))
+                .values_list('department', 'cnt')
+            )
+        }
+        fac_dept_map = {
+            (d or '').strip().lower(): cnt
+            for d, cnt in (
+                FacultyProfile.objects.filter(institution=institution)
+                .values('department')
+                .annotate(cnt=Count('id'))
+                .values_list('department', 'cnt')
+            )
+        }
+        exam_dept_map = {
+            (d or '').strip().lower(): cnt
+            for d, cnt in (
+                exams_qs.values('department')
+                .annotate(cnt=Count('id'))
+                .values_list('department', 'cnt')
+            )
+        }
+        att_dept_map = {
+            (row.get('exam__department') or '').strip().lower(): row
+            for row in (
+                attempts_qs.values('exam__department')
+                .annotate(
+                    cnt=Count('id'),
+                    avg=Avg('percentage'),
+                    passes=Count('id', filter=Q(percentage__gte=PASSING_PERCENTAGE)),
+                )
+            )
+        }
+
         dept_overview = []
         for d_name in DEFAULT_DEPARTMENT_NAMES:
-            d_students = StudentProfile.objects.filter(department__iexact=d_name)
-            d_faculty = FacultyProfile.objects.filter(department__iexact=d_name)
-            d_exams = Exam.objects.filter(department__iexact=d_name)
-            if institution:
-                d_students = d_students.filter(institution=institution)
-                d_faculty = d_faculty.filter(institution=institution)
-                d_exams = d_exams.filter(
-                    Q(created_by__faculty_profile__institution=institution)
-                    | Q(created_by__faculty_profile__institution__isnull=True)
-                )
-
-            d_attempts = StudentAttempt.objects.filter(
-                exam__in=d_exams,
-                status__in=COMPLETED_STATUSES,
-            )
-            d_stats = d_attempts.annotate(pct=pct_expr).aggregate(
-                cnt=Count('id'),
-                avg=Avg('pct'),
-                passes=Count('id', filter=Q(pct__gte=PASSING_PERCENTAGE)),
-            )
-            c = d_stats.get('cnt') or 0
-            avg_v = round(d_stats['avg'], 1) if d_stats.get('avg') is not None else None
-            p_rate = round((d_stats.get('passes') or 0) / c * 100.0, 1) if c > 0 else None
+            d_key = d_name.strip().lower()
+            d_att = att_dept_map.get(d_key, {})
+            c = d_att.get('cnt') or 0
+            avg_v = round(d_att['avg'], 1) if d_att.get('avg') is not None else None
+            p_rate = round((d_att.get('passes') or 0) / c * 100.0, 1) if c > 0 else None
 
             dept_overview.append({
                 'department': d_name,
-                'students_count': d_students.count(),
-                'faculty_count': d_faculty.count(),
-                'exams_count': d_exams.count(),
+                'students_count': stud_dept_map.get(d_key, 0),
+                'faculty_count': fac_dept_map.get(d_key, 0),
+                'exams_count': exam_dept_map.get(d_key, 0),
                 'attempts_count': c,
                 'average_score': avg_v,
                 'pass_rate': p_rate,
@@ -346,14 +366,12 @@ class AdminDashboardView(APIView):
             for s in low_scorers_qs
         ]
 
-        attempted_user_ids = set(
-            StudentAttempt.objects.filter(
-                exam__in=exams_qs,
-                status__in=COMPLETED_STATUSES
-            ).values_list('student_id', flat=True)
-        )
+        attempted_subquery = StudentAttempt.objects.filter(
+            exam__in=exams_qs,
+            status__in=COMPLETED_STATUSES
+        ).values('student_id')
         zero_attempt_students = (
-            students_qs.exclude(user_id__in=attempted_user_ids)[:5]
+            students_qs.exclude(user_id__in=attempted_subquery)[:5]
         )
         unattempted_list = [
             {

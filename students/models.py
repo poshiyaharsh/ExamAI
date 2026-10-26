@@ -27,6 +27,9 @@ class StudentProfile(models.Model):
                 name='unique_institution_student_id',
             ),
         ]
+        indexes = [
+            models.Index(fields=['institution', 'department'], name='stud_inst_dept_idx'),
+        ]
 
     @staticmethod
     def build_next_student_id(institution=None):

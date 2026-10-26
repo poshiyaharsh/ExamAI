@@ -133,7 +133,7 @@ def allocate_blueprint_to_target(
     enabled_types: Optional[Any] = None,
     preset: Optional[str] = None,
     duration_minutes: Optional[int] = None,
-) -> Tuple[Dict[str, Dict[str, Any]], List[str], Optional[str]]:
+) -> Union[Tuple[Dict[str, Dict[str, Any]], List[str], Optional[str]], Tuple[Dict[str, Dict[str, Any]], List[str]]]:
     """
     Deterministically allocates integer question counts and marks per question
     such that sum(count * marks) == target_marks exactly (using Decimal).

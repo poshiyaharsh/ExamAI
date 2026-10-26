@@ -14,7 +14,7 @@ from .permissions import IsFacultyUser
 from students.models import StudentProfile
 from .utils.scoring import PASSING_PERCENTAGE
 from api.tenant import get_tenant_cache_key, get_user_institution
-from api.exams.eligibility import compute_live_exam_metrics
+from api.exams.eligibility import compute_live_exam_metrics, compute_batch_live_exam_metrics
 from api.utils.analytics import compute_faculty_exam_performance_overview
 
 logger = logging.getLogger(__name__)
@@ -149,34 +149,35 @@ class FacultyDashboardView(APIView):
             Q(ends_at__isnull=True) | Q(ends_at__gte=now),
         )
         total_live_count = ongoing_base_qs.count()
-        ongoing_qs = ongoing_base_qs.order_by(
+        ongoing_list = list(ongoing_base_qs.order_by(
             F('ends_at').asc(nulls_last=True),
             '-created_at'
-        )[:6]
+        )[:6])
 
         ongoing_exams_list = []
         try:
-            for e in ongoing_qs:
-                m = compute_live_exam_metrics(e, now=now)
-                m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
-                m['question_count'] = getattr(e, 'active_question_count', 0)
-                m['topics'] = e.topics[:2] if isinstance(e.topics, list) else []
-                m['all_topics'] = e.topics if isinstance(e.topics, list) else []
-                ongoing_exams_list.append(m)
+            if ongoing_list:
+                batch_metrics, _ = compute_batch_live_exam_metrics(ongoing_list, tenant, now=now)
+                for e, m in zip(ongoing_list, batch_metrics):
+                    m['subject'] = e.subject or (e.topics[0] if isinstance(e.topics, list) and e.topics else 'General Course')
+                    m['question_count'] = getattr(e, 'active_question_count', 0)
+                    m['topics'] = e.topics[:2] if isinstance(e.topics, list) and e.topics else []
+                    m['all_topics'] = e.topics if isinstance(e.topics, list) else []
+                    ongoing_exams_list.append(m)
         except Exception as ex:
             logger.warning("Error computing ongoing live exams: %s", ex, exc_info=True)
 
         # 4. Upcoming Exams (scheduled for future or next unattempted)
-        upcoming_qs = faculty_exams.filter(
+        upcoming_exams = list(faculty_exams.filter(
             status=Exam.Status.PUBLISHED,
             starts_at__gt=now,
-        ).order_by('starts_at', 'id')[:5]
+        ).order_by('starts_at', 'id')[:5])
 
-        if not upcoming_qs.exists():
-            upcoming_qs = faculty_exams.filter(status=Exam.Status.PUBLISHED).order_by('-created_at')[:5]
+        if not upcoming_exams:
+            upcoming_exams = list(faculty_exams.filter(status=Exam.Status.PUBLISHED).order_by('-created_at')[:5])
 
         upcoming_exams_list = []
-        for e in upcoming_qs:
+        for e in upcoming_exams:
             upcoming_exams_list.append({
                 'id': e.id,
                 'title': e.title,

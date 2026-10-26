@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "preview": "vite preview --port 3000",
     "dev": "vite",
     "test:layout": "node tests/verify_layout.mjs",
     "test:admin-faculty": "node tests/verify_admin_faculty_pagination_scroll.mjs",

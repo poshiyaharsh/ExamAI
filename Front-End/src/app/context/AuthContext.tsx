@@ -17,8 +17,9 @@ function getDashboardPathByRole(role: UserRole): string {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(() => authStorage.getSession());
-  const [isLoading, setIsLoading] = useState(true);
+  const initialSession = authStorage.getSession();
+  const [session, setSession] = useState<AuthSession | null>(() => initialSession);
+  const [isLoading, setIsLoading] = useState(() => !initialSession?.access);
 
   const setAuthenticatedSession = useCallback((nextSession: AuthSession) => {
     authStorage.setSession(nextSession);

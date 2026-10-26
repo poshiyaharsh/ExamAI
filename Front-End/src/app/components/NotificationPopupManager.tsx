@@ -30,11 +30,19 @@ export function NotificationPopupManager() {
     location.pathname.includes('/attempt') ||
     sessionStorage.getItem('active_exam_in_progress') === 'true';
 
-  const fetchPendingPopups = useCallback(async () => {
+  const lastFetchedRef = React.useRef<number>(0);
+
+  const fetchPendingPopups = useCallback(async (force = false) => {
     if (!user || isExamInProgress) {
       setIsOpen(false);
       return;
     }
+
+    const now = Date.now();
+    if (!force && now - lastFetchedRef.current < 30000) {
+      return;
+    }
+    lastFetchedRef.current = now;
 
     try {
       const data = await notificationApi.getPopups();

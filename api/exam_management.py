@@ -63,6 +63,24 @@ class ExamListView(APIView):
             qs.annotate(question_count=Count('questions', distinct=True), attempts_count=Count('attempts', distinct=True))
             .order_by('-created_at')
         )
+        page = request.query_params.get('page')
+        if page:
+            try:
+                p = max(1, int(page))
+                ps = max(1, min(100, int(request.query_params.get('page_size') or 10)))
+            except (ValueError, TypeError):
+                p, ps = 1, 10
+            total = exams.count()
+            offset = (p - 1) * ps
+            paginated = exams[offset:offset + ps]
+            return Response({
+                'count': total,
+                'page': p,
+                'page_size': ps,
+                'total_pages': max(1, (total + ps - 1) // ps) if total else 1,
+                'results': ExamListSerializer(paginated, many=True).data,
+            })
+
         logger.debug('Faculty exam list user=%s user_id=%s count=%s', request.user, request.user.id, exams.count())
         return Response(ExamListSerializer(exams, many=True).data)
 

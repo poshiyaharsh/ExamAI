@@ -51,6 +51,12 @@ export default defineConfig({
               return 'vendor-router';
             }
           }
+          if (id.includes('pages/SuperAdminConsole') || id.includes('pages/superadmin/')) {
+            return 'page-superadmin';
+          }
+          if (id.includes('pages/FacultyGeneratePaper') || id.includes('components/GenerationProgressModal')) {
+            return 'page-paper-wizard';
+          }
         },
       },
     },

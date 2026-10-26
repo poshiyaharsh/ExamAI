@@ -777,8 +777,6 @@ def _save_generated_exam_questions(
                 accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
                 if accepted_topics:
                     exam.topics = accepted_topics
-                elif topics:
-                    exam.topics = topics[:1]
 
                 exam.status = Exam.Status.DRAFT
                 exam.is_reviewed = False

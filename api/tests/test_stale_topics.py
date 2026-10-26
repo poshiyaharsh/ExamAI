@@ -141,7 +141,7 @@ class StaleTopicsApiTestCase(TestCase):
             content_type="application/pdf",
         )
 
-        valid_bp, _ = allocate_blueprint_to_target(50)
+        valid_bp, *_ = allocate_blueprint_to_target(50)
 
         # Payload contains old Java topics from a prior exam
         payload = {
@@ -163,9 +163,10 @@ class StaleTopicsApiTestCase(TestCase):
         self.assertIn("Java Virtual Machine (JVM) Architecture", response.data["invalid_topics"])
         self.assertIn("Spring Boot Framework", response.data["invalid_topics"])
 
+    @patch("api.generate_paper.resolve_model", return_value="qwen2.5:3b-instruct")
     @patch("api.generate_paper.extract_syllabus_text")
     @patch("api.generate_paper.threading.Thread")
-    def test_generate_paper_accepts_valid_topics(self, mock_thread, mock_extract):
+    def test_generate_paper_accepts_valid_topics(self, mock_thread, mock_extract, mock_resolve):
         """When submitted topics belong to the uploaded syllabus, server accepts generation."""
         mock_extract.return_value = (
             "Course: Operating Systems\n"
@@ -180,7 +181,7 @@ class StaleTopicsApiTestCase(TestCase):
             content_type="application/pdf",
         )
 
-        valid_bp, _ = allocate_blueprint_to_target(50)
+        valid_bp, *_ = allocate_blueprint_to_target(50)
 
         payload = {
             "title": "OS Midterm Valid",

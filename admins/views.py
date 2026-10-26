@@ -19,6 +19,7 @@ from api.models import Exam, Question, StudentAttempt
 from api.throttling import AuthRateThrottle
 from api.utils.departments import validate_department_name
 
+from faculty.models import FacultyProfile
 from students.models import StudentProfile
 from .models import AdminActionAuditLog, AdminInstitution, AdminProfile, DepartmentChangeAuditLog
 from .serializers import (
@@ -320,14 +321,24 @@ class AdminStudentsAPIView(APIView):
                 )
             )
 
-            # Pre-filter stats
-            all_students = list(base_queryset)
-            total_students = len(all_students)
-            students_with_exams = [s for s in all_students if (s.attempt_count or 0) > 0 and s.avg_percentage is not None]
-            
-            if students_with_exams:
-                overall_avg = round(sum(s.avg_percentage for s in students_with_exams) / len(students_with_exams), 1)
-                best_student = max(students_with_exams, key=lambda s: s.avg_percentage)
+            # Pre-filter stats (computed via DB aggregation without full list materialization)
+            total_students = StudentProfile.objects.filter(institution=institution).count()
+            students_with_exams_qs = base_queryset.filter(attempt_count__gt=0, avg_percentage__isnull=False)
+
+            student_stats = students_with_exams_qs.aggregate(
+                overall_avg=Avg('avg_percentage'),
+                students_below_pass=Count('id', filter=Q(avg_percentage__lt=40.0))
+            )
+            raw_avg = student_stats.get('overall_avg')
+            overall_avg = round(raw_avg, 1) if raw_avg is not None else None
+            students_below_pass = student_stats.get('students_below_pass') or 0
+
+            best_student = (
+                students_with_exams_qs.select_related('user')
+                .order_by(F('avg_percentage').desc(nulls_last=True))
+                .first()
+            )
+            if best_student:
                 b_name = f"{best_student.user.first_name} {best_student.user.last_name}".strip() or best_student.user.username
                 top_performer = {
                     'id': best_student.id,
@@ -336,13 +347,15 @@ class AdminStudentsAPIView(APIView):
                     'roll_number': best_student.student_id,
                     'percentage': round(best_student.avg_percentage, 1),
                 }
-                students_below_pass = len([s for s in students_with_exams if s.avg_percentage < 40.0])
             else:
-                overall_avg = None
                 top_performer = None
-                students_below_pass = 0
 
-            departments = sorted(list({s.department for s in all_students if s.department}))
+            departments = sorted(list(
+                StudentProfile.objects.filter(institution=institution)
+                .exclude(department='')
+                .values_list('department', flat=True)
+                .distinct()
+            ))
 
             # Applying search & filters
             queryset = base_queryset
@@ -1062,35 +1075,53 @@ class AdminExamsAPIView(APIView):
 
             now = timezone.now()
             week_ago = now - datetime.timedelta(days=7)
-            total_exams = base_queryset.count()
-            published_exams = base_queryset.filter(status=Exam.Status.PUBLISHED).count()
-            draft_exams = base_queryset.filter(status=Exam.Status.DRAFT).count()
-            created_this_week = base_queryset.filter(created_at__gte=week_ago).count()
+            exam_stats = Exam.objects.filter(institution=institution).aggregate(
+                total=Count('id'),
+                published=Count('id', filter=Q(status=Exam.Status.PUBLISHED)),
+                draft=Count('id', filter=Q(status=Exam.Status.DRAFT)),
+                this_week=Count('id', filter=Q(created_at__gte=week_ago)),
+            )
+            total_exams = exam_stats['total'] or 0
+            published_exams = exam_stats['published'] or 0
+            draft_exams = exam_stats['draft'] or 0
+            created_this_week = exam_stats['this_week'] or 0
             live_exams_count = live_exams_queryset(institution, now).count()
 
-            faculty_list = []
-            seen_faculty_ids = set()
-            departments_set = set()
+            faculty_members = (
+                User.objects.filter(created_exams__institution=institution)
+                .values('id', 'first_name', 'last_name', 'username', 'email')
+                .distinct()
+            )
+            faculty_list = [
+                {
+                    'id': f['id'],
+                    'name': f"{f['first_name']} {f['last_name']}".strip() or f['username'] or f['email'],
+                    'email': f['email'],
+                }
+                for f in faculty_members
+            ]
+            faculty_list.sort(key=lambda x: x['name'].lower())
+
+            departments_set = set(
+                Exam.objects.filter(institution=institution)
+                .exclude(department='')
+                .values_list('department', flat=True)
+                .distinct()
+            )
+            departments_set.update(
+                FacultyProfile.objects.filter(institution=institution)
+                .exclude(department='')
+                .values_list('department', flat=True)
+                .distinct()
+            )
+            distinct_departments = sorted([d.strip() for d in departments_set if d and d.strip()])
+
             subjects_set = set()
-
-            for exam in base_queryset.iterator():
-                f_user = exam.created_by
-                if f_user and f_user.id not in seen_faculty_ids:
-                    seen_faculty_ids.add(f_user.id)
-                    f_name = f"{f_user.first_name} {f_user.last_name}".strip() or f_user.username or f_user.email
-                    faculty_list.append({'id': f_user.id, 'name': f_name, 'email': f_user.email})
-
-                f_profile = getattr(f_user, 'faculty_profile', None)
-                if f_profile and f_profile.department:
-                    departments_set.add(f_profile.department.strip())
-
-                if isinstance(exam.topics, list):
-                    for t in exam.topics:
+            for t_list in Exam.objects.filter(institution=institution).exclude(topics=[]).values_list('topics', flat=True):
+                if isinstance(t_list, list):
+                    for t in t_list:
                         if t and isinstance(t, str) and t.strip():
                             subjects_set.add(t.strip())
-
-            faculty_list.sort(key=lambda x: x['name'].lower())
-            distinct_departments = sorted(list(departments_set))
             distinct_subjects = sorted(list(subjects_set))
 
             queryset = base_queryset

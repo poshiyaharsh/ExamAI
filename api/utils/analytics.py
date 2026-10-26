@@ -448,14 +448,18 @@ def compute_faculty_exam_performance_overview(
     perf_data = []
     exams_with_results_count = 0
 
+    attempts_by_exam: Dict[int, List[Any]] = {}
+    if exams_list:
+        for att in StudentAttempt.objects.filter(
+            exam_id__in=[e.id for e in exams_list],
+            institution=tenant,
+        ):
+            attempts_by_exam.setdefault(att.exam_id, []).append(att)
+
     for exam in exams_list:
         clean_subj = resolve_short_subject(exam)
-        attempts = StudentAttempt.objects.filter(
-            exam=exam,
-            institution=tenant,
-        )
-
-        total_attempts_count = attempts.count()
+        attempts = attempts_by_exam.get(exam.id, [])
+        total_attempts_count = len(attempts)
         graded_scores: List[float] = []
         pending_count = 0
 
