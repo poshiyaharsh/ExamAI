@@ -3,25 +3,121 @@ import logging
 import random
 import secrets
 import time
+import uuid
 
-from django.db import IntegrityError, OperationalError, transaction
-from django.db.models import Q
+from django.core.cache import cache
+from django.db import IntegrityError, OperationalError, connection, transaction
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api.tenant import get_tenant_cache_key, get_user_institution
 from .models import AttemptEvent, Exam, Question, StudentAnswer, StudentAttempt
 from .permissions import IsStudentUser
 from .serializers import StudentAttemptSerializer, StudentExamSerializer
+from .utils.departments import get_student_accessible_exams_queryset, is_exam_visible_to_student
 from .utils.exam_attempt_helper import (
     initialize_attempt_orders,
     map_submitted_answer_to_canonical,
     sanitize_questions_for_attempt,
 )
+from .utils.schedule import compute_attempt_expiry, format_exam_schedule_display, get_exam_schedule_phase
+from .utils.scoring import calculate_and_save_attempt_score
 
 logger = logging.getLogger(__name__)
+
+
+def finalize_student_attempt(attempt, submit_reason='violations', buffered_answers=None, request_id=None):
+    """
+    Idempotent single source of truth for finalizing and scoring a student attempt.
+    - Saves any buffered answers provided by the client
+    - Transitions attempt status to AUTO_SUBMITTED (or SUBMITTED if manual)
+    - Triggers grading via calculate_and_save_attempt_score
+    - In case of scoring failure, marks needs_finalize=True without leaving attempt in progress
+    """
+    now = timezone.now()
+    tenant = attempt.institution
+
+    # 1. Save any buffered answers submitted with the finalization request
+    if buffered_answers and isinstance(buffered_answers, list):
+        for item in buffered_answers:
+            if not isinstance(item, dict):
+                continue
+            qid = item.get('question_id')
+            if not qid:
+                continue
+            ans_text = str(item.get('answer_text', ''))
+            blanks = item.get('blank_answers')
+            q_obj = Question.objects.filter(id=qid, exam=attempt.exam, institution=tenant).first()
+            if not q_obj:
+                continue
+            canonical_text, applied_perm = map_submitted_answer_to_canonical(attempt, q_obj, ans_text)
+            defaults = {
+                'institution': tenant,
+                'answer_text': canonical_text,
+                'selected_option_order': applied_perm,
+            }
+            if blanks is not None and isinstance(blanks, list):
+                defaults['blank_answers'] = blanks
+            try:
+                StudentAnswer.objects.update_or_create(
+                    attempt=attempt,
+                    question=q_obj,
+                    defaults=defaults,
+                )
+            except IntegrityError:
+                StudentAnswer.objects.filter(
+                    attempt=attempt,
+                    question=q_obj,
+                ).update(**defaults)
+
+    # 2. Check if already in terminal status
+    is_terminal = attempt.status in {
+        StudentAttempt.Status.SUBMITTED,
+        StudentAttempt.Status.AUTO_SUBMITTED,
+        StudentAttempt.Status.EVALUATED,
+    }
+    if is_terminal and not attempt.needs_finalize:
+        return attempt, False
+
+    # 3. Transition status from IN_PROGRESS to AUTO_SUBMITTED
+    if not is_terminal:
+        target_status = StudentAttempt.Status.SUBMITTED if submit_reason == 'manual' else StudentAttempt.Status.AUTO_SUBMITTED
+        StudentAttempt.objects.filter(
+            id=attempt.id,
+            status=StudentAttempt.Status.IN_PROGRESS,
+        ).update(
+            status=target_status,
+            submit_reason=submit_reason,
+            submitted_at=now,
+        )
+
+    # 4. Score the attempt
+    try:
+        attempt.refresh_from_db()
+        calculate_and_save_attempt_score(attempt, is_auto_submit=(submit_reason != 'manual'))
+        if attempt.needs_finalize:
+            StudentAttempt.objects.filter(id=attempt.id).update(needs_finalize=False)
+            attempt.needs_finalize = False
+    except Exception as exc:
+        req_str = f" req_id={request_id}" if request_id else ""
+        logger.error(
+            "Finalize grading failed for attempt_id=%s%s: %s",
+            attempt.id, req_str, exc, exc_info=True
+        )
+        target_status = StudentAttempt.Status.SUBMITTED if submit_reason == 'manual' else StudentAttempt.Status.AUTO_SUBMITTED
+        StudentAttempt.objects.filter(id=attempt.id).update(
+            status=target_status,
+            submit_reason=submit_reason,
+            needs_finalize=True,
+        )
+        attempt.needs_finalize = True
+
+    attempt.refresh_from_db()
+    return attempt, True
 
 
 class StudentExamPermissionMixin:
@@ -31,7 +127,6 @@ class StudentExamPermissionMixin:
 def _deadline(attempt):
     if attempt.expires_at:
         return attempt.expires_at
-    from api.utils.schedule import compute_attempt_expiry
     return compute_attempt_expiry(attempt.exam, attempt.started_at)
 
 
@@ -186,19 +281,29 @@ class StartAttemptView(StudentExamPermissionMixin, APIView):
             )
 
             if active_attempt:
+                # Backstop: Check if violation count exceeded or needs finalize
+                if active_attempt.violation_count > locked_exam.max_warnings or active_attempt.needs_finalize:
+                    finalize_student_attempt(active_attempt, submit_reason='violations')
+                    return Response({
+                        'detail': 'The exam was automatically submitted due to proctoring violations.',
+                        'error_code': 'EXAM_SUBMITTED_VIOLATIONS',
+                        'auto_submitted': True,
+                        'submit_reason': 'violations',
+                        'redirect_url': f'/student/results/{active_attempt.id}',
+                        'server_now': now.isoformat(),
+                    }, status=status.HTTP_403_FORBIDDEN)
+
                 deadline = active_attempt.expires_at or compute_attempt_expiry(locked_exam, active_attempt.started_at, now)
                 # Check if deadline or exam window passed
                 if now >= deadline or (locked_exam.ends_at and now >= locked_exam.ends_at):
                     reason = 'window_closed' if (locked_exam.ends_at and now >= locked_exam.ends_at) else 'time_up'
-                    active_attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
-                    active_attempt.submitted_at = min(now, deadline)
-                    active_attempt.submit_reason = reason
-                    active_attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
-                    from .utils.scoring import calculate_and_save_attempt_score
-                    calculate_and_save_attempt_score(active_attempt, is_auto_submit=True)
+                    finalize_student_attempt(active_attempt, submit_reason=reason)
                     return Response({
                         'detail': 'The exam deadline has passed.',
                         'error_code': 'EXAM_EXPIRED',
+                        'auto_submitted': True,
+                        'submit_reason': reason,
+                        'redirect_url': f'/student/results/{active_attempt.id}',
                         'server_now': now.isoformat(),
                     }, status=status.HTTP_403_FORBIDDEN)
 
@@ -207,9 +312,19 @@ class StartAttemptView(StudentExamPermissionMixin, APIView):
                 created = False
             elif existing_attempts:
                 # Previous attempt exists and is finished
+                last_att = existing_attempts[0]
                 if not locked_exam.allow_retakes:
                     return Response(
-                        {'detail': 'This exam attempt has already been submitted.'},
+                        {
+                            'detail': 'This exam attempt has already been submitted.',
+                            'error_code': 'ALREADY_SUBMITTED',
+                            'already_submitted': True,
+                            'auto_submitted': True,
+                            'status': last_att.status,
+                            'submit_reason': last_att.submit_reason,
+                            'redirect_url': f'/student/results/{last_att.id}',
+                            'server_now': now.isoformat(),
+                        },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 # Retake allowed
@@ -315,7 +430,32 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
             return Response({'detail': reason}, status=status.HTTP_403_FORBIDDEN)
 
         if attempt.status != StudentAttempt.Status.IN_PROGRESS:
-            return Response({'detail': 'This attempt is no longer active.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'saved': False,
+                'already_submitted': True,
+                'auto_submitted': True,
+                'status': attempt.status,
+                'submit_reason': attempt.submit_reason,
+                'detail': 'This attempt has already been submitted and is no longer active.',
+                'error_code': 'ATTEMPT_NOT_ACTIVE',
+                'redirect_url': f'/student/results/{attempt.id}',
+                'server_now': timezone.now().isoformat(),
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Backstop: Check if violation count exceeded or needs finalize
+        if attempt.violation_count > attempt.exam.max_warnings or attempt.needs_finalize:
+            finalize_student_attempt(attempt, submit_reason='violations')
+            return Response({
+                'saved': False,
+                'already_submitted': True,
+                'auto_submitted': True,
+                'status': attempt.status,
+                'submit_reason': 'violations',
+                'detail': 'The exam was automatically submitted due to proctoring violations and is no longer active.',
+                'error_code': 'EXAM_SUBMITTED_VIOLATIONS',
+                'redirect_url': f'/student/results/{attempt.id}',
+                'server_now': timezone.now().isoformat(),
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         now = timezone.now()
         deadline = attempt.expires_at or _deadline(attempt)
@@ -325,17 +465,15 @@ class SaveAnswerView(StudentExamPermissionMixin, APIView):
         window_passed = bool(attempt.exam.ends_at and now > (attempt.exam.ends_at + grace_period))
         deadline_passed = bool(now > (deadline + grace_period))
         if window_passed or deadline_passed:
-            if attempt.status == StudentAttempt.Status.IN_PROGRESS:
-                attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
-                attempt.submitted_at = now
-                attempt.submit_reason = 'window_closed' if window_passed else 'time_up'
-                attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
-                from .utils.scoring import calculate_and_save_attempt_score
-                calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+            reason = 'window_closed' if window_passed else 'time_up'
+            finalize_student_attempt(attempt, submit_reason=reason)
             return Response({
                 'detail': 'The exam deadline has passed.',
                 'error_code': 'EXAM_EXPIRED',
-                'submit_reason': attempt.submit_reason,
+                'already_submitted': True,
+                'auto_submitted': True,
+                'submit_reason': reason,
+                'redirect_url': f'/student/results/{attempt.id}',
                 'server_now': now.isoformat(),
             }, status=status.HTTP_403_FORBIDDEN)
 
@@ -507,20 +645,7 @@ class SubmitAttemptView(StudentExamPermissionMixin, APIView):
             auto_submitted = (submit_reason in {'time_up', 'violations', 'window_closed'}) or time_up or window_closed
             target_status = StudentAttempt.Status.AUTO_SUBMITTED if auto_submitted else StudentAttempt.Status.SUBMITTED
 
-            # Atomic conditional update (guarantees exactly one request scores and transitions)
-            rows_updated = StudentAttempt.objects.filter(
-                id=attempt.id,
-                status=StudentAttempt.Status.IN_PROGRESS,
-            ).update(
-                status=target_status,
-                submit_reason=submit_reason,
-                submitted_at=now,
-            )
-
-            if rows_updated > 0:
-                attempt.refresh_from_db()
-                from .utils.scoring import calculate_and_save_attempt_score
-                calculate_and_save_attempt_score(attempt, is_auto_submit=auto_submitted)
+            finalize_student_attempt(attempt, submit_reason=submit_reason)
 
         attempt.refresh_from_db()
         data = StudentAttemptSerializer(attempt).data
@@ -533,15 +658,21 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
     Records proctoring violation events (fullscreen exit, tab hidden, window blur, etc.).
     Automatically submits attempt if violation_count exceeds exam.max_warnings.
     """
-    def post(self, request, attempt_id):
-        from api.tenant import get_user_institution
+    throttle_classes = []  # Exempt from aggressive rate limiting to allow proctoring bursts
 
+    def post(self, request, attempt_id):
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
         if not tenant:
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        event_type = request.data.get('event_type', AttemptEvent.EventType.CUSTOM)
+        event_id = str(request.data.get('event_id', '')).strip()
+        metadata = request.data.get('metadata') or {}
+        if not isinstance(metadata, dict):
+            metadata = {'raw': str(metadata)}
+        buffered_answers = request.data.get('answers') or request.data.get('buffered_answers')
+
         with transaction.atomic():
-            from django.db import connection
             attempt_qs = StudentAttempt.objects.filter(id=attempt_id, student=request.user, institution=tenant)
             if getattr(connection.features, 'has_select_for_update', False):
                 attempt_qs = attempt_qs.select_for_update()
@@ -549,70 +680,85 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
             if not attempt:
                 return Response({'detail': 'Attempt not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-            if attempt.status != StudentAttempt.Status.IN_PROGRESS:
-                return Response({
-                    'detail': 'Attempt is not in progress.',
-                    'status': attempt.status,
-                    'auto_submitted': True,
-                    'violation_count': attempt.violation_count,
-                    'server_now': timezone.now().isoformat(),
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            event_type = request.data.get('event_type', AttemptEvent.EventType.CUSTOM)
-            metadata = request.data.get('metadata') or {}
-            if not isinstance(metadata, dict):
-                metadata = {'raw': str(metadata)}
-
-            # Increment violation count
-            attempt.violation_count += 1
             max_warnings = attempt.exam.max_warnings
 
-            # Log event
+            # 1. Idempotent check: if already submitted / finalized
+            if attempt.status != StudentAttempt.Status.IN_PROGRESS:
+                return Response({
+                    'already_submitted': True,
+                    'auto_submitted': True,
+                    'status': attempt.status,
+                    'submit_reason': attempt.submit_reason,
+                    'violation_count': attempt.violation_count,
+                    'max_warnings': max_warnings,
+                    'warnings_left': 0,
+                    'message': 'This exam attempt has already been submitted.',
+                    'redirect_url': f'/student/results/{attempt.id}',
+                    'server_now': timezone.now().isoformat(),
+                }, status=status.HTTP_200_OK)
+
+            # 2. Idempotent check: if event_id already recorded (network retry)
+            if event_id and AttemptEvent.objects.filter(attempt=attempt, event_id=event_id).exists():
+                current_count = attempt.violation_count
+                warnings_left = max(0, max_warnings - current_count)
+                is_auto = current_count > max_warnings
+                return Response({
+                    'already_recorded': True,
+                    'auto_submitted': is_auto,
+                    'submit_reason': attempt.submit_reason if is_auto else None,
+                    'violation_count': current_count,
+                    'max_warnings': max_warnings,
+                    'warnings_left': warnings_left,
+                    'redirect_url': f'/student/results/{attempt.id}' if is_auto else None,
+                    'server_now': timezone.now().isoformat(),
+                }, status=status.HTTP_200_OK)
+
+            # 3. Atomically increment violation count in database
+            StudentAttempt.objects.filter(id=attempt.id).update(
+                violation_count=F('violation_count') + 1
+            )
+            attempt.refresh_from_db(fields=['violation_count'])
+            new_count = attempt.violation_count
+
+            # 4. Log event record
             AttemptEvent.objects.create(
                 attempt=attempt,
                 institution=tenant,
                 event_type=event_type,
+                event_id=event_id,
                 metadata=metadata,
                 timestamp=timezone.now(),
             )
 
-            # Auto-submit if exceeded max warnings (e.g. 4th violation when max_warnings=3)
-            if attempt.violation_count >= max_warnings + 1:
-                now = timezone.now()
-                rows_updated = StudentAttempt.objects.filter(
-                    id=attempt.id,
-                    status=StudentAttempt.Status.IN_PROGRESS,
-                ).update(
-                    status=StudentAttempt.Status.AUTO_SUBMITTED,
+            # 5. Check auto-submit threshold (4th violation when max_warnings=3)
+            if new_count > max_warnings:
+                req_id = str(uuid.uuid4())
+                attempt, _ = finalize_student_attempt(
+                    attempt=attempt,
                     submit_reason='violations',
-                    submitted_at=now,
-                    violation_count=attempt.violation_count,
+                    buffered_answers=buffered_answers,
+                    request_id=req_id,
                 )
-
-                if rows_updated > 0:
-                    attempt.refresh_from_db()
-                    from .utils.scoring import calculate_and_save_attempt_score
-                    calculate_and_save_attempt_score(attempt, is_auto_submit=True)
-
                 return Response({
                     'auto_submitted': True,
+                    'status': attempt.status,
                     'submit_reason': 'violations',
-                    'violation_count': attempt.violation_count,
+                    'violation_count': new_count,
                     'max_warnings': max_warnings,
                     'warnings_left': 0,
-                    'message': f'Violation limit exceeded ({attempt.violation_count}/{max_warnings}). The exam has been automatically submitted.',
-                    'server_now': now.isoformat(),
+                    'message': f'Violation limit exceeded ({new_count}/{max_warnings}). The exam has been automatically submitted.',
+                    'redirect_url': f'/student/results/{attempt.id}',
+                    'server_now': timezone.now().isoformat(),
                 }, status=status.HTTP_200_OK)
 
-            attempt.save(update_fields=['violation_count'])
-
-            warnings_left = max(0, max_warnings - attempt.violation_count + 1)
+            # 6. Warnings 1, 2, 3
+            warnings_left = max(0, max_warnings - new_count)
             return Response({
                 'auto_submitted': False,
-                'violation_count': attempt.violation_count,
+                'violation_count': new_count,
                 'max_warnings': max_warnings,
                 'warnings_left': warnings_left,
-                'message': f'Warning {attempt.violation_count} of {max_warnings}: Proctoring violation detected ({event_type}).',
+                'message': f'Warning {new_count} of {max_warnings}: Proctoring violation detected ({event_type}).',
                 'server_now': timezone.now().isoformat(),
             }, status=status.HTTP_200_OK)
 
@@ -623,8 +769,6 @@ class HeartbeatView(StudentExamPermissionMixin, APIView):
     and monitor remaining time against both exam window and personal timer.
     """
     def post(self, request, attempt_id):
-        from api.tenant import get_user_institution
-
         tenant = getattr(request, 'tenant', None) or get_user_institution(request.user)
         if not tenant:
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -639,10 +783,26 @@ class HeartbeatView(StudentExamPermissionMixin, APIView):
         if attempt.status != StudentAttempt.Status.IN_PROGRESS:
             return Response({
                 'active': False,
+                'already_submitted': True,
+                'auto_submitted': True,
                 'status': attempt.status,
                 'submit_reason': attempt.submit_reason,
+                'redirect_url': f'/student/results/{attempt.id}',
                 'server_now': now.isoformat(),
-            })
+            }, status=status.HTTP_200_OK)
+
+        # Backstop: Check if violation count already exceeded or needs finalize
+        if attempt.violation_count > attempt.exam.max_warnings or attempt.needs_finalize:
+            finalize_student_attempt(attempt, submit_reason='violations')
+            return Response({
+                'active': False,
+                'already_submitted': True,
+                'auto_submitted': True,
+                'status': attempt.status,
+                'submit_reason': 'violations',
+                'redirect_url': f'/student/results/{attempt.id}',
+                'server_now': now.isoformat(),
+            }, status=status.HTTP_200_OK)
 
         # Check session token concurrency
         session_token = request.data.get('session_token')
@@ -665,19 +825,16 @@ class HeartbeatView(StudentExamPermissionMixin, APIView):
         time_up = (now >= deadline)
 
         if window_passed or time_up:
-            attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
-            attempt.submitted_at = now
-            attempt.submit_reason = 'window_closed' if window_passed else 'time_up'
-            attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
-            from .utils.scoring import calculate_and_save_attempt_score
-            calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+            reason = 'window_closed' if window_passed else 'time_up'
+            finalize_student_attempt(attempt, submit_reason=reason)
             return Response({
                 'active': False,
                 'expired': True,
                 'auto_submitted': True,
-                'submit_reason': attempt.submit_reason,
+                'submit_reason': reason,
+                'redirect_url': f'/student/results/{attempt.id}',
                 'server_now': now.isoformat(),
-            })
+            }, status=status.HTTP_200_OK)
 
         seconds_left = max(0, int((deadline - now).total_seconds()))
         return Response({

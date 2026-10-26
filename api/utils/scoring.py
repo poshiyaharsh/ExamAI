@@ -258,14 +258,12 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
         if not attempt.submitted_at:
             attempt.submitted_at = now
 
-        if subjective_answers:
+        if is_auto_submit:
+            attempt.status = StudentAttempt.Status.AUTO_SUBMITTED
+        elif subjective_answers:
             attempt.status = StudentAttempt.Status.SUBMITTED
         else:
-            attempt.status = (
-                StudentAttempt.Status.AUTO_SUBMITTED
-                if is_auto_submit
-                else StudentAttempt.Status.EVALUATED
-            )
+            attempt.status = StudentAttempt.Status.EVALUATED
 
         attempt.total_score = marks_obtained
         attempt.save(update_fields=["submitted_at", "status", "total_score"])

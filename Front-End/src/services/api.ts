@@ -473,11 +473,13 @@ export type StudentAttemptResponse = StudentAttempt;
 
 export type ProctoringViolationResponse = {
   auto_submitted: boolean;
+  already_submitted?: boolean;
   submit_reason?: string;
   violation_count: number;
   max_warnings: number;
   warnings_left: number;
   message: string;
+  redirect_url?: string;
   server_now?: string;
 };
 
@@ -486,11 +488,13 @@ export type ProctoringHeartbeatResponse = {
   seconds_left?: number;
   expired?: boolean;
   auto_submitted?: boolean;
+  already_submitted?: boolean;
   submit_reason?: string;
   concurrent_session?: boolean;
   violation_count?: number;
   max_warnings?: number;
   message?: string;
+  redirect_url?: string;
   server_now?: string;
 };
 
@@ -1294,13 +1298,17 @@ export const studentExamApi = {
   recordViolation: async (
     attemptId: number,
     eventType: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    eventId?: string,
+    answers?: Array<{ question_id: number; answer_text: string; blank_answers?: string[] }>
   ): Promise<ProctoringViolationResponse> => {
     const response = await apiClient.post<ProctoringViolationResponse>(
       `/api/student/attempts/${attemptId}/violation/`,
       {
         event_type: eventType,
+        event_id: eventId,
         metadata: metadata || {},
+        answers: answers || undefined,
       }
     );
     return response.data;

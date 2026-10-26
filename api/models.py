@@ -451,6 +451,7 @@ class StudentAttempt(models.Model):
 	status = models.CharField(max_length=20, choices=Status.choices, default=Status.IN_PROGRESS)
 	submit_reason = models.CharField(max_length=30, blank=True, default='manual')
 	violation_count = models.PositiveIntegerField(default=0)
+	needs_finalize = models.BooleanField(default=False, db_index=True)
 	question_order = models.JSONField(default=list, blank=True)
 	option_orders = models.JSONField(default=dict, blank=True)
 	active_session_token = models.CharField(max_length=64, blank=True, default='')
@@ -551,6 +552,7 @@ class AttemptEvent(models.Model):
 		db_index=True,
 	)
 	event_type = models.CharField(max_length=40, choices=EventType.choices)
+	event_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
 	metadata = models.JSONField(default=dict, blank=True)
 	timestamp = models.DateTimeField(default=timezone.now, db_index=True)
 
@@ -559,6 +561,7 @@ class AttemptEvent(models.Model):
 		indexes = [
 			models.Index(fields=['attempt', 'event_type']),
 			models.Index(fields=['institution', 'timestamp']),
+			models.Index(fields=['attempt', 'event_id']),
 		]
 
 

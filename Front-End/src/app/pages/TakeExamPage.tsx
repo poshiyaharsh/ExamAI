@@ -143,6 +143,16 @@ export function TakeExamPage() {
         }
       })
       .catch((error) => {
+        if (axios.isAxiosError(error) && error.response?.data?.redirect_url) {
+          const detail = error.response.data.detail || "This exam attempt has already been submitted.";
+          if (error.response.data.submit_reason === "violations" || error.response.data.error_code === "EXAM_SUBMITTED_VIOLATIONS") {
+            toast.error("Your exam was submitted because of repeated rule violations.");
+          } else {
+            toast.info(detail);
+          }
+          navigate(error.response.data.redirect_url);
+          return;
+        }
         toast.error(errorMessage(error));
         navigate("/student/exams");
       });
@@ -226,13 +236,17 @@ export function TakeExamPage() {
           const drift = new Date(hb.server_now).getTime() - Date.now();
           setClockDriftMs(drift);
         }
-        if (hb.expired || hb.auto_submitted) {
+        if (hb.expired || hb.auto_submitted || hb.already_submitted || hb.active === false) {
           submitLock.current = true;
-          const msg = hb.submit_reason === "window_closed"
-            ? "The exam window has closed on the server."
-            : "Exam time expired on server.";
-          toast.warning(msg);
-          navigate(`/student/results/${session.attempt_id}`);
+          isArmedRef.current = false;
+          if (hb.submit_reason === "violations") {
+            toast.error("Your exam was submitted because of repeated rule violations.");
+          } else if (hb.submit_reason === "window_closed") {
+            toast.warning("The exam window has closed on the server.");
+          } else {
+            toast.warning("Exam time expired on server.");
+          }
+          navigate(hb.redirect_url || `/student/results/${session.attempt_id}`);
           return;
         }
         if (typeof hb.seconds_left === "number") {
@@ -265,7 +279,18 @@ export function TakeExamPage() {
     }));
 
     try {
-      await studentExamApi.saveAnswersBatch(session.attempt_id, payload);
+      const saveRes = await studentExamApi.saveAnswersBatch(session.attempt_id, payload);
+      if ((saveRes as any)?.already_submitted || (saveRes as any)?.auto_submitted) {
+        submitLock.current = true;
+        isArmedRef.current = false;
+        if ((saveRes as any)?.submit_reason === "violations") {
+          toast.error("Your exam was submitted because of repeated rule violations.");
+        } else {
+          toast.warning("This exam attempt has already been submitted.");
+        }
+        navigate((saveRes as any)?.redirect_url || `/student/results/${session.attempt_id}`);
+        return false;
+      }
       for (const qid of questionIds) {
         if (pendingAnswersRef.current[qid] === batch[qid]) {
           delete pendingAnswersRef.current[qid];
@@ -284,11 +309,25 @@ export function TakeExamPage() {
       return true;
     } catch (err: any) {
       isSavingRef.current = false;
-      if (axios.isAxiosError(err) && (err.response?.status === 403 || err.response?.data?.error_code === "EXAM_EXPIRED")) {
-        submitLock.current = true;
-        toast.warning(err.response?.data?.detail || "The exam deadline has passed. Your attempt has been finalized.");
-        navigate(`/student/results/${session.attempt_id}`);
-        return false;
+      if (axios.isAxiosError(err)) {
+        const errData = err.response?.data;
+        if (
+          err.response?.status === 403 ||
+          errData?.already_submitted ||
+          errData?.auto_submitted ||
+          errData?.error_code === "EXAM_EXPIRED" ||
+          errData?.error_code === "EXAM_SUBMITTED_VIOLATIONS"
+        ) {
+          submitLock.current = true;
+          isArmedRef.current = false;
+          if (errData?.submit_reason === "violations" || errData?.error_code === "EXAM_SUBMITTED_VIOLATIONS") {
+            toast.error("Your exam was submitted because of repeated rule violations.");
+          } else {
+            toast.warning(errData?.detail || "The exam deadline has passed. Your attempt has been finalized.");
+          }
+          navigate(errData?.redirect_url || `/student/results/${session.attempt_id}`);
+          return false;
+        }
       }
       const retryCount = retryCountRef.current;
       if (retryCount < 5) {
@@ -383,31 +422,71 @@ export function TakeExamPage() {
   const reportViolation = async (eventType: string, meta: Record<string, unknown> = {}) => {
     if (!session || !isArmedRef.current || submitLock.current) return;
 
-    // Debounce rapid bursts (at least 1.5 seconds between recorded violations)
+    // Minimum throttle between distinct violation triggers (400ms instead of 1500ms so legitimate events are not dropped)
     const now = Date.now();
-    if (now - lastViolationTimeRef.current < 1500) {
+    if (now - lastViolationTimeRef.current < 400) {
       return;
     }
     lastViolationTimeRef.current = now;
 
-    try {
-      const res = await studentExamApi.recordViolation(session.attempt_id, eventType, meta);
-      setViolationModal({
-        open: true,
-        eventType,
-        violationCount: res.violation_count,
-        maxWarnings: res.max_warnings,
-        autoSubmitted: res.auto_submitted,
-        message: res.message,
-      });
+    // Capture un-flushed buffered answers to guarantee student work is saved upon auto-submit
+    const buffered = Object.keys(pendingAnswersRef.current).map((qidStr) => {
+      const qid = Number(qidStr);
+      return {
+        question_id: qid,
+        answer_text: pendingAnswersRef.current[qid],
+        blank_answers: pendingBlankAnswersRef.current[qid] || undefined,
+      };
+    });
 
-      if (res.auto_submitted) {
-        submitLock.current = true;
-        // Exam terminated due to violations
+    const eventId = `viol_${session.attempt_id}_${eventType}_${now}_${Math.random().toString(36).substring(2, 7)}`;
+
+    // Retry on network failure with idempotent eventId
+    let res: ProctoringViolationResponse | null = null;
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        res = await studentExamApi.recordViolation(
+          session.attempt_id,
+          eventType,
+          meta,
+          eventId,
+          buffered.length > 0 ? buffered : undefined
+        );
+        break;
+      } catch (err: any) {
+        lastErr = err;
+        if (axios.isAxiosError(err) && (err.response?.data?.auto_submitted || err.response?.data?.already_submitted)) {
+          res = err.response.data as ProctoringViolationResponse;
+          break;
+        }
+        await new Promise((r) => window.setTimeout(r, 250));
       }
-    } catch (err) {
-      toast.error(errorMessage(err));
     }
+
+    if (!res && lastErr) {
+      toast.error(errorMessage(lastErr));
+      return;
+    }
+    if (!res) return;
+
+    if (res.auto_submitted || res.already_submitted) {
+      submitLock.current = true;
+      isArmedRef.current = false;
+      setViolationModal(null);
+      toast.error("Your exam was submitted because of repeated rule violations.", { duration: 6000 });
+      navigate(res.redirect_url || `/student/results/${session.attempt_id}`);
+      return;
+    }
+
+    setViolationModal({
+      open: true,
+      eventType,
+      violationCount: res.violation_count,
+      maxWarnings: res.max_warnings,
+      autoSubmitted: false,
+      message: res.message,
+    });
   };
 
   // Fullscreen Management
@@ -1116,8 +1195,10 @@ export function TakeExamPage() {
             <div className="mt-4 rounded-xl bg-rose-50/60 p-4 text-xs sm:text-sm text-slate-700">
               <p className="font-medium text-slate-900">{violationModal.message}</p>
               {!violationModal.autoSubmitted && (
-                <p className="mt-2 text-rose-700">
-                  ⚠️ Further violations will cause your exam to be automatically submitted with your current score.
+                <p className="mt-2 font-semibold text-rose-700">
+                  {violationModal.violationCount >= violationModal.maxWarnings
+                    ? "⚠️ FINAL WARNING: Any further violation will automatically submit your exam immediately."
+                    : `⚠️ Warning ${violationModal.violationCount} of ${violationModal.maxWarnings}. Any further violation beyond ${violationModal.maxWarnings} warnings will automatically submit your exam.`}
                 </p>
               )}
             </div>
