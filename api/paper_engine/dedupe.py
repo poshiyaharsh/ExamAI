@@ -173,11 +173,19 @@ class CandidateQuestion:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CandidateQuestion":
+        raw_sub_id = data.get("subject_id")
+        parsed_sub_id = None
+        if raw_sub_id is not None and str(raw_sub_id).strip() != "":
+            try:
+                parsed_sub_id = int(raw_sub_id)
+            except (ValueError, TypeError):
+                parsed_sub_id = None
+
         return cls(
             id=data.get("id"),
             text=data.get("text") or data.get("question") or "",
             topic=data.get("topic") or data.get("topic_name") or "",
-            subject_id=data.get("subject_id") or data.get("subject"),
+            subject_id=parsed_sub_id,
             question_type=data.get("question_type") or data.get("type") or "MCQ_SINGLE",
             difficulty=data.get("difficulty") or "MEDIUM",
             marks=float(data.get("marks") or 1.0),
@@ -330,7 +338,10 @@ def get_faculty_recent_question_ids(
         is_deleted=False,
     )
     if subject_id:
-        q_filter = q_filter.filter(subject_id=subject_id)
+        try:
+            q_filter = q_filter.filter(subject_id=int(subject_id))
+        except (ValueError, TypeError):
+            pass
 
     used_q_ids = set(q_filter.values_list("id", flat=True))
     # Also find source question IDs if matched by text_hash

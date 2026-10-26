@@ -111,7 +111,11 @@ class QuestionListCreateAPIView(APIView):
         # Subject
         sub = params.get('subject') or params.get('subject_id')
         if sub:
-            qs = qs.filter(subject_id=sub)
+            sub_str = str(sub).strip()
+            if sub_str.isdigit():
+                qs = qs.filter(subject_id=int(sub_str))
+            else:
+                qs = qs.filter(Q(subject__name__iexact=sub_str) | Q(subject__code__iexact=sub_str))
 
         # Topic
         top = params.get('topic') or params.get('topic_id')
@@ -640,7 +644,11 @@ class TopicListCreateAPIView(APIView):
 
         sub = request.query_params.get('subject') or request.query_params.get('subject_id')
         if sub:
-            qs = qs.filter(subject_id=sub)
+            sub_str = str(sub).strip()
+            if sub_str.isdigit():
+                qs = qs.filter(subject_id=int(sub_str))
+            else:
+                qs = qs.filter(Q(subject__name__iexact=sub_str) | Q(subject__code__iexact=sub_str))
 
         serializer = TopicSerializer(qs, many=True)
         return Response(serializer.data)

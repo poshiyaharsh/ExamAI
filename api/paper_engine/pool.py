@@ -64,8 +64,12 @@ def fetch_candidate_pool(
     if department:
         qs = qs.filter(department=department)
 
-    if subject_id:
-        qs = qs.filter(subject_id=subject_id)
+    if subject_id is not None:
+        try:
+            parsed_sub_id = int(subject_id)
+            qs = qs.filter(subject_id=parsed_sub_id)
+        except (ValueError, TypeError):
+            raise ValueError(f"subject_id must be an integer or None, got {subject_id!r}")
 
     if not include_exam_questions:
         # Prioritize Question Bank repository questions (unbound to previous exams)
