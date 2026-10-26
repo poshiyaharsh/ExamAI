@@ -411,3 +411,158 @@ class PaperGenerationIntegrationTestCase(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn("questions", res.json())
         self.assertEqual(len(res.json()["questions"]), 3)
+
+    def test_generate_with_unregistered_subject_string_does_not_crash(self):
+        """Regression test for 500 error: subject='DS' (unregistered string) must not crash with ValueError."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "Data Structures Midterm",
+            "subject": "DS",
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Binary Trees", "Sorting Algorithms"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 60, "medium": 40, "hard": 0},
+            "seed": 101,
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertNotEqual(res.status_code, 500, f"Server returned HTTP 500: {res.data}")
+        self.assertIn(res.status_code, (200, 201))
+        data = res.json()
+        self.assertIn("exam", data)
+        exam = Exam.objects.get(id=data["exam"]["id"])
+        self.assertEqual(exam.subject, "DS")
+        self.assertEqual(exam.status, Exam.Status.DRAFT)
+        self.assertEqual(exam.questions.count(), 5)
+
+    def test_generate_with_subject_code_resolution(self):
+        """Faculty providing subject='CS201' resolves to registered Subject ID and generates paper."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "CS201 Exam",
+            "subject": "CS201",
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Binary Trees"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 100, "medium": 0, "hard": 0},
+            "seed": 202,
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertIn(res.status_code, (200, 201))
+        exam = Exam.objects.get(id=res.json()["exam"]["id"])
+        self.assertEqual(exam.subject, self.subject_a.name)
+
+    def test_generate_with_subject_name_resolution(self):
+        """Faculty providing exact subject name resolves to registered Subject ID and generates paper."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "Algorithms Exam",
+            "subject": "Algorithms & Data Structures",
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Sorting Algorithms"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 100, "medium": 0, "hard": 0},
+            "seed": 303,
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertIn(res.status_code, (200, 201))
+        exam = Exam.objects.get(id=res.json()["exam"]["id"])
+        self.assertEqual(exam.subject, self.subject_a.name)
+
+    def test_generate_with_valid_numeric_subject_id(self):
+        """Faculty providing subject_id=<int> generates paper properly."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "Subject ID Exam",
+            "subject_id": self.subject_a.id,
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Binary Trees"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 100, "medium": 0, "hard": 0},
+            "seed": 404,
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertIn(res.status_code, (200, 201))
+        exam = Exam.objects.get(id=res.json()["exam"]["id"])
+        self.assertEqual(exam.subject, self.subject_a.name)
+
+    def test_generate_with_invalid_subject_id_string_returns_400(self):
+        """Faculty providing a non-numeric subject_id receives HTTP 400 with INVALID_SUBJECT_ID."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "Invalid Subject ID Exam",
+            "subject_id": "not-a-number",
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Binary Trees"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 100, "medium": 0, "hard": 0},
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json().get("code"), "INVALID_SUBJECT_ID")
+
+    def test_generate_with_cross_tenant_subject_id_returns_400(self):
+        """Faculty from institution A cannot generate an exam using a subject_id belonging to institution B."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "Cross-Tenant Exam",
+            "subject_id": self.subject_b.id,
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Binary Trees"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 100, "medium": 0, "hard": 0},
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json().get("code"), "SUBJECT_NOT_FOUND")
+
+    def test_generate_with_cross_department_subject_id_returns_400(self):
+        """Faculty cannot use a subject_id that belongs to another department."""
+        ee_subject = Subject.objects.create(
+            institution=self.inst_a,
+            department="Electrical Engineering",
+            name="Circuits & Systems",
+            code="EE101",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_fac_a}')
+        payload = {
+            "title": "Cross-Dept Exam",
+            "subject_id": ee_subject.id,
+            "department": "Computer Science",
+            "total_marks": 5,
+            "duration_minutes": 45,
+            "topics": ["Binary Trees"],
+            "question_types": ["MCQ_SINGLE"],
+            "difficulty_distribution": {"easy": 100, "medium": 0, "hard": 0},
+        }
+        res = self.client.post("/api/faculty/exams/generate/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json().get("code"), "SUBJECT_DEPARTMENT_MISMATCH")
+
+
+class PoolFetchDefensiveTestCase(TestCase):
+    def test_pool_fetch_rejects_non_integer_subject_id(self):
+        from api.paper_engine.pool import fetch_candidate_pool
+        with self.assertRaises(ValueError) as ctx:
+            fetch_candidate_pool(institution_id=1, subject_id="DS")
+        self.assertIn("subject_id must be an integer", str(ctx.exception))
+
+    def test_cache_hash_separates_subject_id_and_subject(self):
+        from api.paper_engine.cache import compute_request_hash
+        payload1 = {"title": "Exam", "total_marks": 10, "subject_id": 1}
+        payload2 = {"title": "Exam", "total_marks": 10, "subject": "DS"}
+        hash1 = compute_request_hash(payload1)
+        hash2 = compute_request_hash(payload2)
+        self.assertNotEqual(hash1, hash2)
+

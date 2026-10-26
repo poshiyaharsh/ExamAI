@@ -8,6 +8,7 @@ import time
 import uuid
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -15,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Exam, Notification, PaperGenerationJob, Question
+from .models import Exam, Notification, PaperGenerationJob, Question, Subject
 from .permissions import IsFacultyUser
 from .utils.blueprint_allocator import compute_blueprint_total, to_decimal
 from .utils.generation_pipeline import (
@@ -1500,6 +1501,86 @@ class GeneratePaperView(APIView):
             if not is_valid:
                 return Response({'detail': err_msg, 'code': 'INVALID_SCHEDULE'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Resolve and validate subject parameters
+        raw_subject_id = request.data.get('subject_id')
+        raw_subject = request.data.get('subject')
+
+        resolved_subject_id = None
+        resolved_subject_name = ''
+
+        if raw_subject_id not in (None, ''):
+            try:
+                parsed_id = int(raw_subject_id)
+                if parsed_id <= 0:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                return Response(
+                    {'detail': f"Invalid subject_id '{raw_subject_id}'. It must be a positive integer.", 'code': 'INVALID_SUBJECT_ID'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            subject_obj = Subject.objects.filter(id=parsed_id, institution=tenant_inst).first()
+            if not subject_obj:
+                return Response(
+                    {'detail': f"Subject with ID {parsed_id} was not found in your institution.", 'code': 'SUBJECT_NOT_FOUND'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if assigned_dept and subject_obj.department and subject_obj.department.strip().lower() != assigned_dept.strip().lower():
+                return Response(
+                    {
+                        'detail': f"Subject '{subject_obj.name}' belongs to department '{subject_obj.department}', which does not match your assigned department '{assigned_dept}'.",
+                        'code': 'SUBJECT_DEPARTMENT_MISMATCH',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            resolved_subject_id = subject_obj.id
+            resolved_subject_name = subject_obj.name
+        elif raw_subject not in (None, ''):
+            s_str = str(raw_subject).strip()
+            if s_str.isdigit():
+                parsed_id = int(s_str)
+                subject_obj = Subject.objects.filter(id=parsed_id, institution=tenant_inst).first()
+                if not subject_obj:
+                    return Response(
+                        {'detail': f"Subject with ID {parsed_id} was not found in your institution.", 'code': 'SUBJECT_NOT_FOUND'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if assigned_dept and subject_obj.department and subject_obj.department.strip().lower() != assigned_dept.strip().lower():
+                    return Response(
+                        {
+                            'detail': f"Subject '{subject_obj.name}' belongs to department '{subject_obj.department}', which does not match your assigned department '{assigned_dept}'.",
+                            'code': 'SUBJECT_DEPARTMENT_MISMATCH',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                resolved_subject_id = subject_obj.id
+                resolved_subject_name = subject_obj.name
+            else:
+                # Search within faculty's institution & department for matching Subject code or name
+                sub_qs = Subject.objects.filter(institution=tenant_inst)
+                if assigned_dept:
+                    sub_qs = sub_qs.filter(department__iexact=assigned_dept)
+                matches = list(sub_qs.filter(Q(code__iexact=s_str) | Q(name__iexact=s_str))[:2])
+                if len(matches) == 1:
+                    resolved_subject_id = matches[0].id
+                    resolved_subject_name = matches[0].name
+                elif len(matches) > 1:
+                    return Response(
+                        {
+                            'detail': f"Multiple subjects matched '{s_str}'. Please specify the exact subject ID.",
+                            'code': 'SUBJECT_AMBIGUOUS',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                else:
+                    # Free-text course/subject entered by faculty without a corresponding Subject in the Question Bank
+                    resolved_subject_id = None
+                    resolved_subject_name = s_str[:80]
+        else:
+            resolved_subject_id = None
+            t_short = title.split(" - ")[0].split(" CH_")[0].split(" Ch_")[0].split(" Unit")[0].strip()
+            resolved_subject_name = t_short[:80] if t_short else title[:80]
+
         engine_payload = {
             'title': title,
             'duration_minutes': duration_minutes,
@@ -1513,7 +1594,9 @@ class GeneratePaperView(APIView):
             'starts_at': norm_starts_at,
             'ends_at': norm_ends_at,
             'display_timezone': display_tz,
-            'subject_id': request.data.get('subject_id') or request.data.get('subject'),
+            'subject_id': resolved_subject_id,
+            'subject_name': resolved_subject_name,
+            'subject': resolved_subject_name,
             'seed': request.data.get('seed'),
         }
 
@@ -1553,12 +1636,26 @@ class GeneratePaperView(APIView):
                     },
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
+        except ValueError as val_err:
+            logger.warning("Paper generation parameter validation error: %s", val_err)
+            return Response(
+                {'detail': str(val_err), 'code': 'INVALID_GENERATION_PARAMETERS'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            req_id = uuid.uuid4().hex[:12]
+            logger.exception("Unexpected error generating exam paper [req_id=%s]: %s", req_id, exc)
+            return Response(
+                {
+                    'detail': f"An error occurred while generating the exam paper. Reference ID: {req_id}",
+                    'code': 'GENERATION_FAILED',
+                    'request_id': req_id,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        # Clean subject
-        raw_subj = str(request.data.get('subject') or '').strip()
-        if not raw_subj:
-            t_short = title.split(" - ")[0].split(" CH_")[0].split(" Ch_")[0].split(" Unit")[0].strip()
-            raw_subj = t_short[:60] if t_short else title[:60]
+        # Fallback to AI generation
+        raw_subj = resolved_subject_name
 
         # Source documents
         source_docs = []

@@ -230,7 +230,10 @@ class QuestionBankService:
             status=Question.Status.ACTIVE,
         )
         if subject_id:
-            qs = qs.filter(subject_id=subject_id)
+            try:
+                qs = qs.filter(subject_id=int(subject_id))
+            except (ValueError, TypeError):
+                pass
         if difficulty and difficulty != 'any':
             canon_diff = canonicalize_difficulty(difficulty)
             diff_candidates = [canon_diff]

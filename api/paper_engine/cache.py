@@ -42,6 +42,14 @@ def compute_request_hash(payload: Dict[str, Any]) -> str:
         "hard": int(diff.get("hard", diff.get("Hard", 20))),
     }
 
+    raw_sub_id = payload.get("subject_id")
+    parsed_sub_id = None
+    if raw_sub_id is not None and str(raw_sub_id).strip() != "":
+        try:
+            parsed_sub_id = int(raw_sub_id)
+        except (ValueError, TypeError):
+            parsed_sub_id = None
+
     norm_dict = {
         "title": str(payload.get("title", "")).strip().lower(),
         "total_marks": int(payload.get("total_marks", 0)),
@@ -50,7 +58,8 @@ def compute_request_hash(payload: Dict[str, Any]) -> str:
         "question_types": q_types,
         "difficulty_distribution": norm_diff,
         "department": str(payload.get("department", "")).strip().lower(),
-        "subject_id": payload.get("subject_id") or payload.get("subject"),
+        "subject_id": parsed_sub_id,
+        "subject": str(payload.get("subject_name") or payload.get("subject") or "").strip().lower(),
         "avoid_repeats": bool(payload.get("avoid_repeats", True)),
     }
 

@@ -78,7 +78,15 @@ def generate_exam_paper(
     question_types = payload.get("question_types") or ["MCQ_SINGLE"]
     difficulty_mix = payload.get("difficulty_distribution") or {"easy": 30, "medium": 50, "hard": 20}
     avoid_repeats = bool(payload.get("avoid_repeats", True))
-    subject_id = payload.get("subject_id") or payload.get("subject")
+    raw_subject_id = payload.get("subject_id")
+    subject_id: Optional[int] = None
+    if raw_subject_id is not None and str(raw_subject_id).strip() != "":
+        try:
+            subject_id = int(raw_subject_id)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid subject_id: {raw_subject_id!r}. Expected integer or None.")
+
+    subject_name = str(payload.get("subject_name") or payload.get("subject") or "").strip()[:80]
 
     # 4. Target Counts & Marks
     target_counts, target_diff = compute_target_counts_and_marks(
@@ -152,6 +160,7 @@ def generate_exam_paper(
             exam = Exam.objects.create(
                 institution=tenant,
                 title=title,
+                subject=subject_name,
                 created_by=user,
                 department=department,
                 duration_minutes=duration_minutes,
