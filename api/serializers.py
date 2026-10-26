@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from admins.models import AdminDepartment, AdminInstitution
 from .models import Exam, Question, StudentAnswer, StudentAttempt
+from .utils.validate_paper import canonicalize_type, canonicalize_difficulty
 
 
 class TestMessageSerializer(serializers.Serializer):
@@ -96,6 +97,12 @@ class QuestionSerializer(serializers.ModelSerializer):
     def get_topic(self, obj):
         return obj.topic.name if obj.topic else (obj.topic_text or '')
 
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['question_type'] = canonicalize_type(instance.question_type)
+        ret['difficulty'] = canonicalize_difficulty(instance.difficulty)
+        return ret
+
 
 class FacultyQuestionSerializer(serializers.ModelSerializer):
     topic = serializers.SerializerMethodField()
@@ -111,6 +118,12 @@ class FacultyQuestionSerializer(serializers.ModelSerializer):
 
     def get_topic(self, obj):
         return obj.topic.name if obj.topic else (obj.topic_text or '')
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['question_type'] = canonicalize_type(instance.question_type)
+        ret['difficulty'] = canonicalize_difficulty(instance.difficulty)
+        return ret
 
 
 class ExamListSerializer(serializers.ModelSerializer):

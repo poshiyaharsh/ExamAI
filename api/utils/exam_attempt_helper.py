@@ -3,6 +3,7 @@ import secrets
 from typing import Any, Dict, List, Optional, Tuple
 from api.models import Exam, Question, StudentAttempt
 from api.utils.options import clean_options_list, clean_option_text
+from api.utils.validate_paper import canonicalize_type, canonicalize_difficulty
 
 
 def fisher_yates_shuffle(items: List[Any], rng=None) -> List[Any]:
@@ -184,8 +185,8 @@ def sanitize_questions_for_attempt(attempt: StudentAttempt) -> List[Dict[str, An
         sanitized.append({
             'id': q.id,
             'order': idx,
-            'question_type': q.question_type,
-            'difficulty': q.difficulty,
+            'question_type': canonicalize_type(q.question_type),
+            'difficulty': canonicalize_difficulty(q.difficulty),
             'text': q.text,
             'options': shuffled_options,
             'marks': marks_float,

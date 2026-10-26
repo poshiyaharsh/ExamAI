@@ -39,6 +39,12 @@ ESTIMATED_MINUTES_PER_TYPE = {
     # Legacy aliases
     "MCQ": 1.5,
     "TRUEFALSE": 1.0,
+    # Canonical aliases
+    "mcq": 1.5,
+    "true_false": 1.0,
+    "fill_blank": 2.0,
+    "short_answer": 3.5,
+    "long_answer": 10.0,
 }
 
 
@@ -177,15 +183,18 @@ def validate_paper_plan(
         }
 
     # 2. Count per question
+    from api.utils.validate_paper import canonicalize_type
     counts_by_type: Dict[str, int] = {}
     for c in candidates:
-        counts_by_type[c.question_type] = counts_by_type.get(c.question_type, 0) + 1
+        canon_t = canonicalize_type(c.question_type)
+        counts_by_type[canon_t] = counts_by_type.get(canon_t, 0) + 1
     report.actual_counts_by_type = counts_by_type
 
     if requested_counts_by_type:
         count_mismatches = []
         for q_type, expected_cnt in requested_counts_by_type.items():
-            actual_cnt = counts_by_type.get(q_type.upper(), 0)
+            canon_req = canonicalize_type(q_type)
+            actual_cnt = counts_by_type.get(canon_req, 0)
             if actual_cnt != expected_cnt:
                 count_mismatches.append(f"{q_type}: expected {expected_cnt}, got {actual_cnt}")
         if count_mismatches:

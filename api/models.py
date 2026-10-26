@@ -343,6 +343,12 @@ class Question(models.Model):
 		]
 
 	def save(self, *args, **kwargs):
+		if self.question_type:
+			from api.utils.validate_paper import canonicalize_type
+			self.question_type = canonicalize_type(self.question_type)
+		if self.difficulty:
+			from api.utils.validate_paper import canonicalize_difficulty
+			self.difficulty = canonicalize_difficulty(self.difficulty)
 		if not self.is_deleted and self.subject_id is not None and self.text_hash:
 			self.active_hash = self.text_hash
 		else:

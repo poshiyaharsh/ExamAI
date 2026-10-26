@@ -73,23 +73,31 @@ def fetch_candidate_pool(
         pass
 
     if question_types:
-        # Handle both legacy ('mcq', 'truefalse') and modern ('MCQ_SINGLE', 'MCQ_MULTIPLE')
+        from api.utils.validate_paper import canonicalize_type
+        # Handle both canonical ('mcq', 'true_false') and legacy ('MCQ_SINGLE', 'MCQ_MULTIPLE')
         type_q = Q()
         for t in question_types:
+            canon = canonicalize_type(t)
+            type_q |= Q(question_type=canon)
             type_q |= Q(question_type__iexact=t)
-            if t.lower() == "mcq":
-                type_q |= Q(question_type__in=["MCQ_SINGLE", "MCQ_MULTIPLE", "mcq"])
-            elif t.lower() == "truefalse" or t.lower() == "true_false":
-                type_q |= Q(question_type__in=["TRUE_FALSE", "truefalse"])
-            elif t.lower() == "fillblanks" or t.lower() == "fillblank":
-                type_q |= Q(question_type__in=["FILLBLANK", "SHORT_ANSWER", "fillblank"])
-            elif t.lower() == "subjective":
-                type_q |= Q(question_type__in=["LONG_ANSWER", "SHORT_ANSWER", "subjective"])
+            if canon == "mcq":
+                type_q |= Q(question_type__in=["MCQ_SINGLE", "MCQ_MULTIPLE", "mcq", "multiple_choice"])
+            elif canon == "true_false":
+                type_q |= Q(question_type__in=["TRUE_FALSE", "truefalse", "true_false", "tf"])
+            elif canon == "fill_blank":
+                type_q |= Q(question_type__in=["FILLBLANK", "fillblank", "fill_blank", "SHORT_ANSWER"])
+            elif canon == "short_answer":
+                type_q |= Q(question_type__in=["SHORT_ANSWER", "short_answer", "short"])
+            elif canon == "long_answer":
+                type_q |= Q(question_type__in=["LONG_ANSWER", "subjective", "long_answer", "essay"])
         qs = qs.filter(type_q)
 
     if difficulties:
+        from api.utils.validate_paper import canonicalize_difficulty
         diff_q = Q()
         for d in difficulties:
+            canon_d = canonicalize_difficulty(d)
+            diff_q |= Q(difficulty=canon_d)
             diff_q |= Q(difficulty__iexact=d)
         qs = qs.filter(diff_q)
 
@@ -149,9 +157,11 @@ def compute_target_counts_and_marks(
         base_each = objective_marks // len(objective_types)
         rem = objective_marks % len(objective_types)
         for idx, ot in enumerate(objective_types):
-            norm_key = "MCQ_SINGLE" if ot == "mcq" else (
-                "TRUE_FALSE" if ot in ("truefalse", "true_false") else (
-                    "SHORT_ANSWER" if ot in ("fillblank", "fillblanks") else ot.upper()
+            from api.utils.validate_paper import canonicalize_type
+            canon_ot = canonicalize_type(ot)
+            norm_key = "MCQ_SINGLE" if canon_ot == "mcq" else (
+                "TRUE_FALSE" if canon_ot == "true_false" else (
+                    "SHORT_ANSWER" if canon_ot in ("fill_blank", "short_answer") else ot.upper()
                 )
             )
             counts[norm_key] = base_each + (1 if idx < rem else 0)
@@ -233,16 +243,19 @@ def select_paper_questions(
     # 2. Group candidates into buckets: (normalized_type, difficulty)
     buckets: Dict[Tuple[str, str], List[CandidateQuestion]] = {}
     for c in available_pool:
-        # Normalize type key
-        t_key = c.question_type.upper()
-        if t_key in ("MCQ", "MCQ_SINGLE"):
+        # Normalize type key using canonicalize_type
+        from api.utils.validate_paper import canonicalize_type
+        canon_c = canonicalize_type(c.question_type)
+        if canon_c == "mcq":
             t_key = "MCQ_SINGLE"
-        elif t_key in ("TRUEFALSE", "TRUE_FALSE"):
+        elif canon_c == "true_false":
             t_key = "TRUE_FALSE"
-        elif t_key in ("FILLBLANK", "SHORT_ANSWER"):
+        elif canon_c in ("fill_blank", "short_answer"):
             t_key = "SHORT_ANSWER"
-        elif t_key in ("SUBJECTIVE", "LONG_ANSWER"):
+        elif canon_c == "long_answer":
             t_key = "SUBJECTIVE"
+        else:
+            t_key = c.question_type.upper()
 
         d_key = c.difficulty.upper()
         if d_key not in ("EASY", "MEDIUM", "HARD"):

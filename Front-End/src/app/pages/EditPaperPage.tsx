@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
@@ -31,6 +31,26 @@ const menuItems = [
   { icon: Save, label: "Generate Paper", path: "/faculty/generate" },
   { icon: Check, label: "Exam History", path: "/faculty/history" },
 ];
+
+export function canonicalizeQuestionType(raw: string | undefined | null): string {
+  if (!raw) return "mcq";
+  const s = String(raw).trim().toLowerCase();
+  if (s === "mcq" || s === "multiple_choice") return "mcq";
+  if (s === "true_false" || s === "truefalse" || s === "tf") return "true_false";
+  if (s === "fill_blank" || s === "fillblank" || s === "fill_in_the_blank") return "fill_blank";
+  if (s === "short_answer" || s === "short") return "short_answer";
+  if (s === "long_answer" || s === "subjective" || s === "long") return "long_answer";
+  return s;
+}
+
+export function canonicalizeDifficulty(raw: string | undefined | null): string {
+  if (!raw) return "medium";
+  const s = String(raw).trim().toLowerCase();
+  if (s === "easy") return "easy";
+  if (s === "medium" || s === "med") return "medium";
+  if (s === "hard") return "hard";
+  return s;
+}
 
 function toDatetimeLocal(isoStr: string | null | undefined): string {
   if (!isoStr) return "";
@@ -67,13 +87,14 @@ function formatScheduleSummary(startStr: string, endStr: string, durationMin: nu
 }
 
 function questionPayload(question: ExamQuestion) {
+  const canonType = canonicalizeQuestionType(question.question_type);
   const correctAnswer =
-    question.question_type === "mcq" && /^\d+$/.test(String(question.correct_answer ?? ""))
+    canonType === "mcq" && /^\d+$/.test(String(question.correct_answer ?? ""))
       ? Number(question.correct_answer)
       : question.correct_answer;
   return {
-    question_type: question.question_type,
-    difficulty: question.difficulty,
+    question_type: canonType,
+    difficulty: canonicalizeDifficulty(question.difficulty),
     text: question.text,
     options: question.options,
     correct_answer: correctAnswer,
@@ -89,6 +110,7 @@ function questionPayload(question: ExamQuestion) {
 export function EditPaperPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [exam, setExam] = useState<FacultyExam | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -110,6 +132,7 @@ export function EditPaperPage() {
     questions: any[];
   } | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<number | null>(null);
+  const [regeneratingAnswerId, setRegeneratingAnswerId] = useState<number | null>(null);
 
   // Adjust Marks state
   const [showAdjustMarksModal, setShowAdjustMarksModal] = useState(false);
@@ -127,9 +150,27 @@ export function EditPaperPage() {
     }>;
   } | null>(null);
 
-  // Filters
-  const [filterType, setFilterType] = useState<string>("all");
-  const [filterDifficulty, setFilterDifficulty] = useState<string>("all");
+  // Filters synced to URL Search Params
+  const filterType = searchParams.get("type") || "all";
+  const filterDifficulty = searchParams.get("difficulty") || "all";
+
+  const setFilterType = (t: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (t === "all") next.delete("type");
+      else next.set("type", t);
+      return next;
+    }, { replace: true });
+  };
+
+  const setFilterDifficulty = (d: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (d === "all") next.delete("difficulty");
+      else next.set("difficulty", d);
+      return next;
+    }, { replace: true });
+  };
 
   // Publish Confirmation Modal & Schedule State
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -482,6 +523,20 @@ export function EditPaperPage() {
     }
   };
 
+  const handleRegenerateAnswerOnly = async (questionId: number) => {
+    if (!id) return;
+    setRegeneratingAnswerId(questionId);
+    try {
+      const res = await facultyExamApi.regenerateQuestion(Number(id), questionId, undefined, "answer_only");
+      updateQuestion(questionId, res.question);
+      toast.success("Model answer and grading rubric regenerated!");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to regenerate model answer and rubric.");
+    } finally {
+      setRegeneratingAnswerId(null);
+    }
+  };
+
   const handleSetActualMarks = async () => {
     if (!id) return;
     setAdjustingMarks(true);
@@ -534,6 +589,7 @@ export function EditPaperPage() {
 
   const typeCounts = useMemo(() => {
     const counts: Record<string, number> = {
+      all: 0,
       mcq: 0,
       true_false: 0,
       fill_blank: 0,
@@ -541,12 +597,28 @@ export function EditPaperPage() {
       long_answer: 0,
     };
     (exam?.questions || []).forEach((q) => {
-      const t = q.question_type;
-      if (t === "mcq") counts.mcq++;
-      else if (t === "true_false" || t === "truefalse") counts.true_false++;
-      else if (t === "fill_blank" || t === "fillblank") counts.fill_blank++;
-      else if (t === "short_answer") counts.short_answer++;
-      else if (t === "long_answer" || t === "subjective") counts.long_answer++;
+      const t = canonicalizeQuestionType(q.question_type);
+      counts.all++;
+      if (counts[t] !== undefined) {
+        counts[t]++;
+      }
+    });
+    return counts;
+  }, [exam?.questions]);
+
+  const diffCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      all: 0,
+      easy: 0,
+      medium: 0,
+      hard: 0,
+    };
+    (exam?.questions || []).forEach((q) => {
+      const d = canonicalizeDifficulty(q.difficulty);
+      counts.all++;
+      if (counts[d] !== undefined) {
+        counts[d]++;
+      }
     });
     return counts;
   }, [exam?.questions]);
@@ -568,8 +640,8 @@ export function EditPaperPage() {
   const filteredQuestions = useMemo(() => {
     if (!exam?.questions) return [];
     return exam.questions.filter((q) => {
-      if (filterType !== "all" && q.question_type !== filterType) return false;
-      if (filterDifficulty !== "all" && q.difficulty !== filterDifficulty) return false;
+      if (filterType !== "all" && canonicalizeQuestionType(q.question_type) !== filterType) return false;
+      if (filterDifficulty !== "all" && canonicalizeDifficulty(q.difficulty) !== filterDifficulty) return false;
       return true;
     });
   }, [exam?.questions, filterType, filterDifficulty]);
@@ -583,19 +655,20 @@ export function EditPaperPage() {
     exam.questions.forEach((q, idx) => {
       const normalized = q.text.trim().toLowerCase();
       if (seenTexts.has(normalized)) {
-        warnings.push(`Question ${idx + 1} has duplicate or near-duplicate text.`);
+        warnings.push(`Question ${q.order || idx + 1} has duplicate or near-duplicate text.`);
       }
       seenTexts.add(normalized);
 
       // Check MCQ answer in options
-      if (q.question_type === "mcq" && q.options && q.options.length > 0) {
+      const canonType = canonicalizeQuestionType(q.question_type);
+      if (canonType === "mcq" && q.options && q.options.length > 0) {
         const correctStr = String(q.correct_answer ?? "").trim().toLowerCase();
         const cleanOpts = q.options.map((o) => o.trim().toLowerCase());
         const isLetter = ["a", "b", "c", "d"].includes(correctStr);
         const isNum = ["0", "1", "2", "3"].includes(correctStr);
         const isInList = cleanOpts.includes(correctStr);
         if (!isLetter && !isNum && !isInList && correctStr) {
-          warnings.push(`Question ${idx + 1} ("${q.text.slice(0, 35)}..."): Correct answer does not match any listed option.`);
+          warnings.push(`Question ${q.order || idx + 1} ("${q.text.slice(0, 35)}..."): Correct answer does not match any listed option.`);
         }
       }
     });
@@ -897,6 +970,11 @@ export function EditPaperPage() {
                 <div>
                   <h3 className="font-bold text-base text-foreground">
                     Questions ({exam.questions?.length ?? 0})
+                    {(filterType !== "all" || filterDifficulty !== "all") && (
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        · Showing {filteredQuestions.length} of {exam.questions?.length ?? 0}
+                      </span>
+                    )}
                   </h3>
                   <p className="text-xs text-muted-foreground">
                     Review and calibrate questions, accepted answers, and grading rubrics before publishing.
@@ -907,16 +985,18 @@ export function EditPaperPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
                     {[
-                      { key: "all", label: "All Types" },
-                      { key: "mcq", label: "MCQ" },
-                      { key: "true_false", label: "True/False" },
-                      { key: "fill_blank", label: "Fill Blank" },
-                      { key: "short_answer", label: "Short" },
-                      { key: "long_answer", label: "Long" },
+                      { key: "all", label: `All (${typeCounts.all})` },
+                      { key: "mcq", label: `MCQ (${typeCounts.mcq})` },
+                      { key: "true_false", label: `True/False (${typeCounts.true_false})` },
+                      { key: "fill_blank", label: `Fill Blank (${typeCounts.fill_blank})` },
+                      { key: "short_answer", label: `Short (${typeCounts.short_answer})` },
+                      { key: "long_answer", label: `Long (${typeCounts.long_answer})` },
                     ].map((t) => (
                       <button
                         key={t.key}
                         type="button"
+                        role="button"
+                        aria-pressed={filterType === t.key}
                         onClick={() => setFilterType(t.key)}
                         className={`px-2.5 py-1 rounded-lg transition-all ${
                           filterType === t.key
@@ -931,14 +1011,16 @@ export function EditPaperPage() {
 
                   <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
                     {[
-                      { key: "all", label: "All Diff" },
-                      { key: "easy", label: "Easy" },
-                      { key: "medium", label: "Med" },
-                      { key: "hard", label: "Hard" },
+                      { key: "all", label: `All Diff (${diffCounts.all})` },
+                      { key: "easy", label: `Easy (${diffCounts.easy})` },
+                      { key: "medium", label: `Med (${diffCounts.medium})` },
+                      { key: "hard", label: `Hard (${diffCounts.hard})` },
                     ].map((d) => (
                       <button
                         key={d.key}
                         type="button"
+                        role="button"
+                        aria-pressed={filterDifficulty === d.key}
                         onClick={() => setFilterDifficulty(d.key)}
                         className={`px-2 py-1 rounded-lg transition-all ${
                           filterDifficulty === d.key
@@ -954,12 +1036,23 @@ export function EditPaperPage() {
               </div>
 
               {filteredQuestions.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border bg-slate-50/50 p-8 text-center text-sm text-muted-foreground">
-                  No questions match your current type/difficulty filter.
+                <div className="rounded-2xl border border-dashed border-border bg-slate-50/50 p-8 text-center text-sm text-muted-foreground space-y-3">
+                  <p>No questions match your current type/difficulty filter.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterType("all");
+                      setFilterDifficulty("all");
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+                  >
+                    Clear Filters
+                  </button>
                 </div>
               ) : (
                 filteredQuestions.map((question, qIdx) => {
-                  const qType = question.question_type;
+                  const qType = canonicalizeQuestionType(question.question_type);
+                  const qDiff = canonicalizeDifficulty(question.difficulty);
                   const typeBadgeColor =
                     qType === "mcq"
                       ? "bg-blue-50 text-blue-700 border-blue-200"
@@ -972,9 +1065,9 @@ export function EditPaperPage() {
                       : "bg-indigo-50 text-indigo-700 border-indigo-200";
 
                   const diffBadgeColor =
-                    question.difficulty === "easy"
+                    qDiff === "easy"
                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : question.difficulty === "hard"
+                      : qDiff === "hard"
                       ? "bg-rose-50 text-rose-700 border-rose-200"
                       : "bg-amber-50 text-amber-700 border-amber-200";
 
@@ -985,8 +1078,8 @@ export function EditPaperPage() {
                     >
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
-                            {qIdx + 1}
+                          <span className="flex h-7 px-2.5 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
+                            #{question.order || qIdx + 1}
                           </span>
                           <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold border ${typeBadgeColor} uppercase`}>
                             {qType.replace("_", " ")}
@@ -995,7 +1088,7 @@ export function EditPaperPage() {
                             {question.marks} {Number(question.marks) === 1 ? "Mark" : "Marks"}
                           </span>
                           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold border ${diffBadgeColor} uppercase`}>
-                            {question.difficulty}
+                            {qDiff}
                           </span>
                           {question.topic && (
                             <span className="rounded-full bg-slate-50 border border-slate-200 px-2.5 py-0.5 text-xs text-slate-600">
@@ -1221,19 +1314,37 @@ export function EditPaperPage() {
                         </div>
                       )}
 
-                      {/* Short Answer & Long Answer & Subjective: Model Answer, Rubric, Word Limit */}
-                      {(qType === "short_answer" || qType === "long_answer" || qType === "subjective") && (
+                      {/* Short Answer & Long Answer: Model Answer, Rubric, Word Limit */}
+                      {(qType === "short_answer" || qType === "long_answer") && (
                         <div className="space-y-3 pt-1">
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                                Model Answer / Expected Concepts
-                              </label>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="block text-[11px] font-semibold text-muted-foreground uppercase">
+                                  Model Answer / Expected Concepts
+                                </label>
+                                {!isPublished && (
+                                  <button
+                                    type="button"
+                                    disabled={regeneratingAnswerId === question.id}
+                                    onClick={() => handleRegenerateAnswerOnly(question.id)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline disabled:opacity-50"
+                                    title="Regenerate only model answer and rubric without changing question text"
+                                  >
+                                    {regeneratingAnswerId === question.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Sparkles className="h-3 w-3" />
+                                    )}
+                                    Regenerate Answer & Rubric
+                                  </button>
+                                )}
+                              </div>
                               <textarea
                                 value={question.model_answer || ""}
                                 disabled={isPublished}
                                 onChange={(e) => updateQuestion(question.id, { model_answer: e.target.value })}
-                                rows={3}
+                                rows={4}
                                 className="w-full rounded-xl border border-border bg-muted/15 p-2.5 text-xs focus:outline-hidden focus:border-primary disabled:opacity-75"
                                 placeholder="Key points and terms required in student response..."
                               />
@@ -1243,12 +1354,26 @@ export function EditPaperPage() {
                                 Grading Rubric / Criteria
                               </label>
                               <textarea
-                                value={typeof question.rubric === "string" ? question.rubric : Array.isArray(question.rubric) ? JSON.stringify(question.rubric, null, 2) : ""}
+                                value={
+                                  typeof question.rubric === "string"
+                                    ? question.rubric
+                                    : Array.isArray(question.rubric)
+                                    ? JSON.stringify(question.rubric, null, 2)
+                                    : ""
+                                }
                                 disabled={isPublished}
-                                onChange={(e) => updateQuestion(question.id, { rubric: e.target.value as any })}
-                                rows={3}
-                                className="w-full rounded-xl border border-border bg-muted/15 p-2.5 text-xs focus:outline-hidden focus:border-primary disabled:opacity-75"
-                                placeholder="Marks allocation guidelines for faculty / AI suggestion..."
+                                onChange={(e) => {
+                                  const rawVal = e.target.value;
+                                  try {
+                                    const parsed = JSON.parse(rawVal);
+                                    updateQuestion(question.id, { rubric: parsed });
+                                  } catch {
+                                    updateQuestion(question.id, { rubric: rawVal as any });
+                                  }
+                                }}
+                                rows={4}
+                                className="w-full rounded-xl border border-border bg-muted/15 p-2.5 text-xs font-mono focus:outline-hidden focus:border-primary disabled:opacity-75"
+                                placeholder='[{"criterion": "...", "marks": 2}]'
                               />
                             </div>
                           </div>

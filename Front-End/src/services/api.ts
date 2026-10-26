@@ -1741,11 +1741,12 @@ export const facultyExamApi = {
   regenerateQuestion: async (
     examId: number,
     questionId: number,
-    model?: string
+    model?: string,
+    mode?: string
   ): Promise<{ detail: string; question: ExamQuestion; validation_report: any }> => {
     const response = await apiClient.post<{ detail: string; question: ExamQuestion; validation_report: any }>(
       `/api/faculty/exams/${examId}/questions/${questionId}/regenerate/`,
-      { model }
+      { model, mode }
     );
     return response.data;
   },

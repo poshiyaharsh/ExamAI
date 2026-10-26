@@ -30,6 +30,15 @@ from .ollama_models import (
 )
 
 
+class OllamaTruncatedOutputError(RuntimeError):
+    """Raised when Ollama cuts off output due to num_predict token limit."""
+    def __init__(self, message: str, eval_count: int = 0, limit: int = 0, raw_response: str = ""):
+        super().__init__(message)
+        self.eval_count = eval_count
+        self.limit = limit
+        self.raw_response = raw_response
+
+
 def resolve_ollama_model(
     preferred_model: Optional[str] = None,
     base_url: str = OLLAMA_BASE_URL,
@@ -120,6 +129,7 @@ def call_ollama(
     num_ctx: Optional[int] = None,
     format_schema: Optional[Union[dict, str]] = None,
     keep_alive: Optional[str] = None,
+    retry_on_length: bool = True,
 ) -> str:
     """
     Calls Ollama generate endpoint with structured JSON schema support,
@@ -197,6 +207,26 @@ def call_ollama(
         logger.warning(
             "Ollama output was truncated by token limit for model=%s (eval_count=%s, limit=%s)",
             canonical_tag, eval_count, num_predict
+        )
+        if retry_on_length and num_predict < 3500:
+            next_predict = min(4096, int(num_predict * 1.5))
+            logger.info("Retrying Ollama call with expanded token budget: %d -> %d", num_predict, next_predict)
+            return call_ollama(
+                model=canonical_tag,
+                prompt=prompt,
+                timeout=timeout,
+                temperature=temperature,
+                num_predict=next_predict,
+                num_ctx=num_ctx,
+                format_schema=format_schema,
+                keep_alive=keep_alive,
+                retry_on_length=False,
+            )
+        raise OllamaTruncatedOutputError(
+            f"Ollama output for model '{canonical_tag}' was truncated at {eval_count} tokens (limit: {num_predict}).",
+            eval_count=eval_count,
+            limit=num_predict,
+            raw_response=result,
         )
 
     if FACULTY_DEBUG_MODE:

@@ -6,24 +6,63 @@ from .options import clean_option_text, clean_options_list, validate_mcq_options
 VALID_TYPES = {
     'mcq', 'true_false', 'fill_blank', 'short_answer', 'long_answer',
     # Legacy aliases
-    'truefalse', 'fillblank', 'subjective'
+    'truefalse', 'fillblank', 'subjective', 'short', 'long', 'essay',
+    'mcq_single', 'mcq_multiple'
 }
 VALID_DIFFICULTIES = {'easy', 'medium', 'hard'}
+CANONICAL_TYPES = ('mcq', 'true_false', 'fill_blank', 'short_answer', 'long_answer')
+CANONICAL_DIFFICULTIES = ('easy', 'medium', 'hard')
 OBJECTIVE_TYPES = {'mcq', 'true_false', 'fill_blank', 'truefalse', 'fillblank'}
 OPTION_LABELS = ('A', 'B', 'C', 'D', 'E', 'F')
+
+TYPE_LEGACY_MAP = {
+    'mcq_single': 'mcq',
+    'mcq_multiple': 'mcq',
+    'multiple_choice': 'mcq',
+    'truefalse': 'true_false',
+    'tf': 'true_false',
+    'legacy_true_false': 'true_false',
+    'fillblank': 'fill_blank',
+    'short': 'short_answer',
+    'legacy_short_answer': 'short_answer',
+    'long': 'long_answer',
+    'subjective': 'long_answer',
+    'essay': 'long_answer',
+    'legacy_long_answer': 'long_answer',
+}
+
+DIFFICULTY_LEGACY_MAP = {
+    'upper_easy': 'easy',
+    'upper_medium': 'medium',
+    'upper_hard': 'hard',
+    'med': 'medium',
+}
 
 
 def canonicalize_type(q_type: str) -> str:
     norm = str(q_type or '').strip().lower()
-    if norm in {'truefalse', 'true_false'}:
+    if norm in TYPE_LEGACY_MAP:
+        return TYPE_LEGACY_MAP[norm]
+    if norm in CANONICAL_TYPES:
+        return norm
+    if 'true' in norm and 'false' in norm:
         return 'true_false'
-    if norm in {'fillblank', 'fill_blank'}:
+    if 'fill' in norm or 'blank' in norm:
         return 'fill_blank'
-    if norm in {'subjective', 'long_answer'}:
-        return 'long_answer'
-    if norm == 'short_answer':
+    if 'short' in norm:
         return 'short_answer'
+    if 'long' in norm or 'subjective' in norm or 'essay' in norm:
+        return 'long_answer'
     return 'mcq'
+
+
+def canonicalize_difficulty(diff: str) -> str:
+    norm = str(diff or '').strip().lower()
+    if norm in DIFFICULTY_LEGACY_MAP:
+        return DIFFICULTY_LEGACY_MAP[norm]
+    if norm in CANONICAL_DIFFICULTIES:
+        return norm
+    return 'medium'
 
 
 def _normalise_correct_answer(question_type, raw_answer, options):

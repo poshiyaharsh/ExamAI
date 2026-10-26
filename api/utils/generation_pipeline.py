@@ -210,23 +210,40 @@ class QuestionBankService:
         difficulty: str,
         needed_count: int,
         exclude_exam_ids: Optional[List[int]] = None,
+        expected_marks: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         from api.models import Question
+        from api.utils.validate_paper import canonicalize_type, canonicalize_difficulty
         if needed_count <= 0:
             return []
 
+        canon_type = canonicalize_type(question_type)
+        type_candidates = [canon_type]
+        for choice_val, _ in Question.QuestionType.choices:
+            if canonicalize_type(choice_val) == canon_type and choice_val not in type_candidates:
+                type_candidates.append(choice_val)
+
         qs = Question.objects.filter(
             institution_id=institution_id,
-            question_type=question_type,
+            question_type__in=type_candidates,
             is_deleted=False,
             status=Question.Status.ACTIVE,
         )
         if subject_id:
             qs = qs.filter(subject_id=subject_id)
         if difficulty and difficulty != 'any':
-            qs = qs.filter(difficulty=difficulty)
+            canon_diff = canonicalize_difficulty(difficulty)
+            diff_candidates = [canon_diff]
+            for diff_val, _ in Question.Difficulty.choices:
+                if canonicalize_difficulty(diff_val) == canon_diff and diff_val not in diff_candidates:
+                    diff_candidates.append(diff_val)
+            qs = qs.filter(difficulty__in=diff_candidates)
+        if expected_marks is not None:
+            qs = qs.filter(marks=expected_marks)
         if exclude_exam_ids:
             qs = qs.exclude(exam_id__in=exclude_exam_ids)
+        if canon_type == 'long_answer':
+            qs = qs.exclude(model_answer='').exclude(rubric=[])
 
         qs = qs.order_by('last_used_at', 'times_used')[:needed_count]
 
@@ -240,16 +257,18 @@ class QuestionBankService:
 
             banked_items.append({
                 'id': q.id,
-                'type': q.question_type,
-                'difficulty': q.difficulty,
+                'type': canon_type,
+                'difficulty': canonicalize_difficulty(q.difficulty),
                 'text': q.text,
                 'options': options_list,
                 'correct_answer': q.correct_answer,
                 'model_answer': q.model_answer or '',
-                'marks': float(q.marks),
+                'marks': float(expected_marks if expected_marks is not None else q.marks),
                 'topic': q.topic_text or (q.topic.name if q.topic else 'General'),
                 'source': 'bank',
+                'rubric': q.rubric or [],
                 'key_points': q.rubric or [],
+                'word_limit': q.word_limit,
             })
         return banked_items
 
