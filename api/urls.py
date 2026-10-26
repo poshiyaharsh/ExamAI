@@ -21,6 +21,7 @@ from .faculty_monitor import FacultyLiveMonitorView
 from .faculty_evaluation import (
     FacultyAttemptDetailView,
     FacultyExamAttemptsListView,
+    FacultyFinalizeAttemptGradingView,
     FacultyManualGradeAnswerView,
     FacultyReevaluateAnswerView,
     FacultyReevaluateAttemptView,
@@ -116,6 +117,7 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/live-monitor/', FacultyLiveMonitorView.as_view(), name='faculty-exam-live-monitor'),
     path('faculty/exams/<int:exam_id>/attempts/', FacultyExamAttemptsListView.as_view(), name='faculty-exam-attempts'),
     path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
+    path('faculty/attempts/<int:attempt_id>/finalize/', FacultyFinalizeAttemptGradingView.as_view(), name='faculty-attempt-finalize'),
     path('faculty/attempts/<int:attempt_id>/', FacultyAttemptDetailView.as_view(), name='faculty-attempt-detail'),
     path('faculty/answers/<int:answer_id>/re-evaluate/', FacultyReevaluateAnswerView.as_view(), name='faculty-answer-reevaluate'),
     path('faculty/answers/<int:answer_id>/suggest-grade/', FacultySuggestGradeView.as_view(), name='faculty-answer-suggest-grade'),

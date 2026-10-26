@@ -274,14 +274,14 @@ class EvaluationChainTestCase(TestCase):
         self.assertEqual(self.student_answer.evaluation_status, StudentAnswer.EvaluationStatus.REVIEWED)
 
     def test_11_exam_submit_does_not_block_on_evaluation(self):
-        """Exam submit succeeds and saves state immediately without blocking on evaluation."""
+        """Exam submit succeeds and saves state immediately without blocking or automatic background thread."""
         with patch("threading.Thread") as mock_thread:
             summary = calculate_and_save_attempt_score(self.attempt)
             self.assertTrue(summary['has_subjective'])
             self.attempt.refresh_from_db()
             self.assertIn(self.attempt.status, [StudentAttempt.Status.SUBMITTED, StudentAttempt.Status.EVALUATED])
-            # Verify background thread was triggered for async evaluation
-            self.assertTrue(mock_thread.called)
+            # Decoupled design: submission never spawns background AI thread or auto-mutates marks
+            self.assertFalse(mock_thread.called)
 
     def test_12_faculty_evaluation_endpoints_and_manual_grade(self):
         """Faculty can inspect attempt, trigger re-evaluation, and manually grade."""

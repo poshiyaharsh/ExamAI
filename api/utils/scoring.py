@@ -2,6 +2,7 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 from .options import clean_option_text
+from .validate_paper import canonicalize_type
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ def normalize_text(value):
 
 
 def is_objective_question(question):
-    return question.question_type in {"mcq", "true_false", "truefalse", "fill_blank", "fillblank"}
+    q_type = canonicalize_type(getattr(question, 'question_type', ''))
+    return q_type in {"mcq", "true_false", "fill_blank"}
 
 
 def evaluate_fill_blank(question, student_answer_obj):
@@ -218,32 +220,57 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
             if not answer:
                 continue
 
-            q_type = q.question_type
-            if q_type in {"fill_blank", "fillblank"}:
+            canon_type = canonicalize_type(getattr(q, 'question_type', ''))
+            if canon_type == "fill_blank":
                 score, is_corr, fb = evaluate_fill_blank(q, answer)
                 answer.score_awarded = score
                 answer.is_correct = is_corr
                 answer.ai_feedback = fb
+                answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
+                answer.evaluation_provider = "deterministic"
+                answer.evaluation_model = "exact_match"
                 answers_to_update.append(answer)
-            elif is_objective_question(q):
+            elif canon_type in {"mcq", "true_false"}:
                 correct = is_objective_answer_correct(q, answer.answer_text)
                 answer.is_correct = correct
-                answer.score_awarded = q.marks if correct else 0
+                answer.score_awarded = q.marks if correct else 0.0
+                answer.ai_feedback = "Correct" if correct else "Incorrect"
+                answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
+                answer.evaluation_provider = "deterministic"
+                answer.evaluation_model = "exact_match"
                 answers_to_update.append(answer)
             else:
                 # Subjective question (short_answer, long_answer, subjective)
-                if not (answer.answer_text and answer.answer_text.strip()):
+                if not (answer.answer_text and str(answer.answer_text).strip()):
                     answer.is_correct = False
-                    answer.score_awarded = 0
+                    answer.score_awarded = 0.0
                     answer.ai_feedback = "No answer provided."
+                    answer.evaluation_status = StudentAnswer.EvaluationStatus.REVIEWED
+                    answer.evaluation_provider = "empty_check"
+                    answer.evaluation_model = "none"
                     answers_to_update.append(answer)
                 else:
+                    # Student provided an answer: mark pending manual grading by faculty
+                    answer.is_correct = None
+                    answer.score_awarded = 0.0
+                    answer.ai_feedback = "Answer submitted. Pending faculty grading."
+                    answer.evaluation_status = StudentAnswer.EvaluationStatus.PENDING_REVIEW
+                    answer.evaluation_provider = "pending"
+                    answer.evaluation_model = "none"
+                    answers_to_update.append(answer)
                     subjective_answers.append(answer)
 
         if answers_to_update:
             StudentAnswer.objects.bulk_update(
                 answers_to_update,
-                ["is_correct", "score_awarded", "ai_feedback"]
+                [
+                    "is_correct",
+                    "score_awarded",
+                    "ai_feedback",
+                    "evaluation_status",
+                    "evaluation_provider",
+                    "evaluation_model",
+                ]
             )
 
         # 4. Compute totals
@@ -268,12 +295,7 @@ def calculate_and_save_attempt_score(attempt, is_auto_submit=False):
         attempt.total_score = marks_obtained
         attempt.save(update_fields=["submitted_at", "status", "total_score"])
 
-    # If subjective questions with student text exist, trigger evaluation in background
-    if subjective_answers:
-        from ..evaluation import evaluate_attempt_subjectives
-        import threading
-        threading.Thread(target=evaluate_attempt_subjectives, args=(attempt.id,), daemon=True).start()
-
+    # Finalization is decoupled from AI: no automated AI evaluation is triggered on submit
     return {
         "marks_obtained": marks_obtained,
         "total_marks": exam_total,

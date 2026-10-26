@@ -90,6 +90,7 @@ export function FacultyExamHistory() {
   const [reevaluatingAttempt, setReevaluatingAttempt] = useState(false);
   const [reevaluatingAnswerId, setReevaluatingAnswerId] = useState<number | null>(null);
   const [suggestingAnswerId, setSuggestingAnswerId] = useState<number | null>(null);
+  const [finalizingAttempt, setFinalizingAttempt] = useState(false);
 
   // Manual Edit State
   const [editingAnswerId, setEditingAnswerId] = useState<number | null>(null);
@@ -282,16 +283,20 @@ export function FacultyExamHistory() {
     setManualFeedback(answer.ai_feedback || "");
   };
 
-  const saveManualGrade = async (answerId: number) => {
+  const saveManualGrade = async (answerId: number, maxMarks: number) => {
     const num = parseFloat(manualScore);
     if (isNaN(num)) {
       toast.error("Please enter a valid numeric score.");
       return;
     }
+    if (num < 0 || num > maxMarks) {
+      toast.error(`Score must be between 0 and ${maxMarks} marks.`);
+      return;
+    }
     setSavingGrade(true);
     try {
       await facultyExamApi.manualGradeAnswer(answerId, num, manualFeedback);
-      toast.success("Manual grade saved! Marked as reviewed.");
+      toast.success("Manual grade saved!");
       setEditingAnswerId(null);
       if (selectedAttemptId) {
         await handleOpenAttemptDetail(selectedAttemptId);
@@ -303,16 +308,37 @@ export function FacultyExamHistory() {
     }
   };
 
+  const handleFinalizeAttemptGrading = async (attemptId: number) => {
+    setFinalizingAttempt(true);
+    try {
+      await facultyExamApi.finalizeAttemptGrading(attemptId);
+      toast.success("Attempt grading finalized! Status updated to Graded.");
+      await handleOpenAttemptDetail(attemptId);
+      if (selectedExam) {
+        const attemptsRes = await facultyExamApi.getExamAttempts(selectedExam.id);
+        setAttempts(attemptsRes.attempts || []);
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to finalize attempt grading.");
+    } finally {
+      setFinalizingAttempt(false);
+    }
+  };
+
   const handleSuggestGrade = async (answerId: number) => {
     setSuggestingAnswerId(answerId);
     try {
       const res = await facultyExamApi.suggestGrade(answerId);
-      toast.success("AI suggestion generated!");
+      if ((res as any)?.suggestion_status === "failed") {
+        toast.error((res as any)?.detail || "AI suggestion unavailable. Please grade manually.");
+      } else {
+        toast.success("AI suggestion generated!");
+      }
       if (selectedAttemptId) {
         await handleOpenAttemptDetail(selectedAttemptId);
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to generate AI suggestion.");
+      toast.error(err?.response?.data?.detail || "AI suggestion unavailable. Please grade manually.");
     } finally {
       setSuggestingAnswerId(null);
     }
@@ -826,220 +852,223 @@ export function FacultyExamHistory() {
                     <div className="space-y-4">
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-muted/40 border border-border">
                         <div>
-                          <div className="text-sm font-medium text-foreground">
-                            Status: <span className="font-semibold uppercase tracking-wider">{attemptDetail.status}</span>
+                          <div className="text-sm font-medium text-foreground flex items-center gap-2">
+                            <span>Status:</span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider border ${
+                              attemptDetail.status === "evaluated" 
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}>
+                              {attemptDetail.status === "evaluated" ? "Grading Finalized" : "Pending Review"}
+                            </span>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            Total Score: <strong className="text-primary">{attemptDetail.total_score}</strong> / {attemptDetail.exam_total_marks} marks
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Total Score: <strong className="text-primary font-bold text-sm">{attemptDetail.total_score}</strong> / {attemptDetail.exam_total_marks} marks
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          disabled={reevaluatingAttempt}
-                          onClick={() => void handleReevaluateAttempt(attemptDetail.attempt_id)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-medium text-white shadow-sm hover:opacity-95 disabled:opacity-50 transition-all"
-                        >
-                          {reevaluatingAttempt ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" /> Re-evaluating All...
-                            </>
-                          ) : (
-                            <>
-                              <RefreshCw className="h-4 w-4" /> Re-evaluate Attempt
-                            </>
-                          )}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={finalizingAttempt}
+                            onClick={() => void handleFinalizeAttemptGrading(attemptDetail.attempt_id)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-all"
+                            title="Confirm grades and mark attempt as evaluated for student view"
+                          >
+                            {finalizingAttempt ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" /> Finalizing...
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle className="h-4 w-4" /> Finalize Grading
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <div className="space-y-3">
-                        {attemptDetail.answers?.map((ans: any, idx: number) => (
-                          <div key={ans.id} className="rounded-xl border border-border bg-white p-4 shadow-sm space-y-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
-                                  Q{idx + 1} · {ans.question_type} ({ans.marks} Marks)
-                                </span>
-                                <p className="text-sm font-medium text-foreground mt-0.5">{ans.question_text}</p>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                {ans.is_correct === true && <CheckCircle className="h-5 w-5 text-emerald-600" />}
-                                {ans.is_correct === false && <XCircle className="h-5 w-5 text-rose-600" />}
-                              </div>
-                            </div>
+                        {attemptDetail.answers?.map((ans: any, idx: number) => {
+                          const qType = String(ans.question_type || "").toLowerCase().trim();
+                          const isFillBlank = qType === "fill_blank" || qType === "fillblank";
+                          const isSubjective = ["subjective", "short_answer", "long_answer"].includes(qType);
 
-                            <div className="rounded-lg bg-muted/30 p-3 text-xs sm:text-sm">
-                              <span className="font-medium text-muted-foreground block mb-1">Student Answer:</span>
-                              <p className="text-foreground whitespace-pre-wrap">{ans.student_answer || "(No answer was submitted)"}</p>
-                            </div>
-
-                            {/* Fill in the Blank details */}
-                            {(ans.question_type === "fill_blank" || ans.question_type === "fillblank") && (
-                              <div className="space-y-2 pt-2 border-t border-border">
-                                {ans.blank_answers && ans.blank_answers.length > 0 && (
-                                  <div className="rounded-lg bg-purple-50/60 border border-purple-200 p-3 text-xs text-purple-950">
-                                    <span className="font-bold block mb-1.5 text-purple-900">Student Blanks Submitted:</span>
-                                    <div className="flex flex-wrap gap-2">
-                                      {ans.blank_answers.map((b: string, bIdx: number) => (
-                                        <span key={bIdx} className="px-2.5 py-1 rounded-md bg-white border border-purple-300 font-mono text-xs shadow-2xs">
-                                          Blank #{bIdx + 1}: <strong className="text-purple-800">{b || "(empty)"}</strong>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {ans.accepted_answers && (
-                                  <div className="text-xs text-muted-foreground bg-muted/20 p-2.5 rounded-lg border border-border/60">
-                                    <strong className="text-foreground">Accepted Key:</strong>{" "}
-                                    <span className="font-mono">
-                                      {typeof ans.accepted_answers === "object"
-                                        ? JSON.stringify(ans.accepted_answers)
-                                        : String(ans.accepted_answers)}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Subjective, Short Answer, Long Answer */}
-                            {(ans.question_type === "subjective" || ans.question_type === "short_answer" || ans.question_type === "long_answer") && (
-                              <div className="space-y-3 pt-2 border-t border-border">
-                                {ans.model_answer && (
-                                  <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-700">
-                                    <strong className="text-slate-900 block mb-0.5">Model Answer / Key Points:</strong>
-                                    <p className="whitespace-pre-wrap">{ans.model_answer}</p>
-                                  </div>
-                                )}
-                                {ans.rubric && (
-                                  <div className="text-xs text-slate-600 bg-slate-50/50 p-2 rounded-lg border border-slate-200/60">
-                                    <strong className="text-slate-800">Grading Rubric:</strong>{" "}
-                                    {typeof ans.rubric === "string" ? ans.rubric : JSON.stringify(ans.rubric)}
-                                  </div>
-                                )}
-
-                                {/* AI Suggestion Banner if Available */}
-                                {ans.ai_suggested_score !== null && ans.ai_suggested_score !== undefined && (
-                                  <div className="rounded-xl bg-indigo-50/70 border border-indigo-200 p-3 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
-                                    <div className="space-y-0.5">
-                                      <span className="font-bold flex items-center gap-1.5 text-indigo-900">
-                                        <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
-                                        AI Suggested Grade: {ans.ai_suggested_score} / {ans.marks} Marks
-                                      </span>
-                                      {ans.ai_suggested_feedback && (
-                                        <p className="text-indigo-800 leading-relaxed">{ans.ai_suggested_feedback}</p>
-                                      )}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        startManualGrade(ans);
-                                        setManualScore(String(ans.ai_suggested_score));
-                                        setManualFeedback(ans.ai_suggested_feedback || "");
-                                      }}
-                                      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 shrink-0 transition-colors"
-                                    >
-                                      <Check className="h-3.5 w-3.5" /> Accept Suggestion
-                                    </button>
-                                  </div>
-                                )}
-
-                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-muted-foreground">Score:</span>
-                                    <strong className="text-sm font-bold text-primary">{ans.score_awarded ?? 0} / {ans.marks}</strong>
-                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border ${ans.evaluation_status === "reviewed" ? "bg-purple-50 text-purple-700 border-purple-200" : ans.evaluation_status === "evaluated_ai" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                                      {ans.evaluation_status}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={suggestingAnswerId === ans.id}
-                                      onClick={() => void handleSuggestGrade(ans.id)}
-                                      className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-1 text-xs font-semibold disabled:opacity-50 transition-colors"
-                                      title="Generate an AI score and feedback suggestion"
-                                    >
-                                      {suggestingAnswerId === ans.id ? (
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      ) : (
-                                        <Sparkles className="h-3.5 w-3.5" />
-                                      )}
-                                      AI Suggest
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={reevaluatingAnswerId === ans.id}
-                                      onClick={() => void handleReevaluateAnswer(ans.id)}
-                                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted/50 disabled:opacity-50 transition-colors"
-                                    >
-                                      {reevaluatingAnswerId === ans.id ? (
-                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      ) : (
-                                        <Bot className="h-3.5 w-3.5" />
-                                      )}
-                                      Re-evaluate AI
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => startManualGrade(ans)}
-                                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors"
-                                    >
-                                      <Edit3 className="h-3.5 w-3.5" /> Manual Grade
-                                    </button>
-                                  </div>
+                          return (
+                            <div key={ans.id} className="rounded-xl border border-border bg-white p-4 shadow-sm space-y-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+                                    Q{idx + 1} · {ans.question_type} ({ans.marks} Marks)
+                                  </span>
+                                  <p className="text-sm font-medium text-foreground mt-0.5">{ans.question_text}</p>
                                 </div>
-
-                                {ans.ai_feedback && (
-                                  <div className="rounded-lg bg-primary/5 border border-primary/10 p-2.5 text-xs text-muted-foreground">
-                                    <strong className="text-foreground font-medium">Feedback:</strong> {ans.ai_feedback}
-                                  </div>
-                                )}
-
-                                {editingAnswerId === ans.id && (
-                                  <div className="mt-2 p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-xs font-semibold text-primary">Override / Edit Grade</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setEditingAnswerId(null)}
-                                        className="text-muted-foreground hover:text-foreground text-xs"
-                                      >
-                                        Cancel
-                                      </button>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                      <input
-                                        type="number"
-                                        value={manualScore}
-                                        onChange={(e) => setManualScore(e.target.value)}
-                                        max={ans.marks}
-                                        min={0}
-                                        step={0.5}
-                                        className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
-                                        placeholder="Score"
-                                      />
-                                      <input
-                                        type="text"
-                                        value={manualFeedback}
-                                        onChange={(e) => setManualFeedback(e.target.value)}
-                                        className="flex-1 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
-                                        placeholder="Feedback comments"
-                                      />
-                                      <button
-                                        type="button"
-                                        disabled={savingGrade}
-                                        onClick={() => void saveManualGrade(ans.id)}
-                                        className="bg-primary text-white text-xs px-3 py-1.5 rounded-md hover:opacity-90 disabled:opacity-50"
-                                      >
-                                        {savingGrade ? "Saving..." : "Save"}
-                                      </button>
-                                    </div>
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {ans.is_correct === true && <CheckCircle className="h-5 w-5 text-emerald-600" />}
+                                  {ans.is_correct === false && <XCircle className="h-5 w-5 text-rose-600" />}
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        ))}
+
+                              <div className="rounded-lg bg-muted/30 p-3 text-xs sm:text-sm">
+                                <span className="font-medium text-muted-foreground block mb-1">Student Answer:</span>
+                                <p className="text-foreground whitespace-pre-wrap">{ans.student_answer || "(No answer was submitted)"}</p>
+                              </div>
+
+                              {/* Fill in the Blank details */}
+                              {isFillBlank && (
+                                <div className="space-y-2 pt-2 border-t border-border">
+                                  {ans.blank_answers && ans.blank_answers.length > 0 && (
+                                    <div className="rounded-lg bg-purple-50/60 border border-purple-200 p-3 text-xs text-purple-950">
+                                      <span className="font-bold block mb-1.5 text-purple-900">Student Blanks Submitted:</span>
+                                      <div className="flex flex-wrap gap-2">
+                                        {ans.blank_answers.map((b: string, bIdx: number) => (
+                                          <span key={bIdx} className="px-2.5 py-1 rounded-md bg-white border border-purple-300 font-mono text-xs shadow-2xs">
+                                            Blank #{bIdx + 1}: <strong className="text-purple-800">{b || "(empty)"}</strong>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {ans.accepted_answers && (
+                                    <div className="text-xs text-muted-foreground bg-muted/20 p-2.5 rounded-lg border border-border/60">
+                                      <strong className="text-foreground">Accepted Key:</strong>{" "}
+                                      <span className="font-mono">
+                                        {typeof ans.accepted_answers === "object"
+                                          ? JSON.stringify(ans.accepted_answers)
+                                          : String(ans.accepted_answers)}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Subjective, Short Answer, Long Answer */}
+                              {isSubjective && (
+                                <div className="space-y-3 pt-2 border-t border-border">
+                                  {ans.model_answer && (
+                                    <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-xs text-slate-700">
+                                      <strong className="text-slate-900 block mb-0.5">Model Answer / Key Points:</strong>
+                                      <p className="whitespace-pre-wrap">{ans.model_answer}</p>
+                                    </div>
+                                  )}
+                                  {ans.rubric && (
+                                    <div className="text-xs text-slate-600 bg-slate-50/50 p-2 rounded-lg border border-slate-200/60">
+                                      <strong className="text-slate-800">Grading Rubric:</strong>{" "}
+                                      {typeof ans.rubric === "string" ? ans.rubric : JSON.stringify(ans.rubric)}
+                                    </div>
+                                  )}
+
+                                  {/* AI Suggestion Banner if Available */}
+                                  {ans.ai_suggested_score !== null && ans.ai_suggested_score !== undefined && (
+                                    <div className="rounded-xl bg-indigo-50/70 border border-indigo-200 p-3 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
+                                      <div className="space-y-0.5">
+                                        <span className="font-bold flex items-center gap-1.5 text-indigo-900">
+                                          <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
+                                          AI Suggestion (Optional): {ans.ai_suggested_score} / {ans.marks} Marks
+                                        </span>
+                                        {ans.ai_suggested_feedback && (
+                                          <p className="text-indigo-800 leading-relaxed">{ans.ai_suggested_feedback}</p>
+                                        )}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          startManualGrade(ans);
+                                          setManualScore(String(ans.ai_suggested_score));
+                                          setManualFeedback(ans.ai_suggested_feedback || "");
+                                        }}
+                                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 shrink-0 transition-colors"
+                                      >
+                                        <Check className="h-3.5 w-3.5" /> Accept Suggestion
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-muted-foreground">Score:</span>
+                                      <strong className="text-sm font-bold text-primary">{ans.score_awarded ?? 0} / {ans.marks}</strong>
+                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border ${ans.evaluation_status === "reviewed" ? "bg-purple-50 text-purple-700 border-purple-200" : ans.evaluation_status === "evaluated_ai" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                                        {ans.evaluation_status}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={suggestingAnswerId === ans.id}
+                                        onClick={() => void handleSuggestGrade(ans.id)}
+                                        className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2.5 py-1 text-xs font-semibold disabled:opacity-50 transition-colors"
+                                        title="Generate an AI score and feedback suggestion (non-blocking)"
+                                      >
+                                        {suggestingAnswerId === ans.id ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Sparkles className="h-3.5 w-3.5" />
+                                        )}
+                                        AI Suggest
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => startManualGrade(ans)}
+                                        className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors"
+                                      >
+                                        <Edit3 className="h-3.5 w-3.5" /> Manual Grade
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {ans.ai_feedback && (
+                                    <div className="rounded-lg bg-primary/5 border border-primary/10 p-2.5 text-xs text-muted-foreground">
+                                      <strong className="text-foreground font-medium">Feedback:</strong> {ans.ai_feedback}
+                                    </div>
+                                  )}
+
+                                  {editingAnswerId === ans.id && (
+                                    <div className="mt-2 p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-xs font-semibold text-primary">Override / Edit Grade</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingAnswerId(null)}
+                                          className="text-muted-foreground hover:text-foreground text-xs"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        <input
+                                          type="number"
+                                          value={manualScore}
+                                          onChange={(e) => setManualScore(e.target.value)}
+                                          max={ans.marks}
+                                          min={0}
+                                          step={0.5}
+                                          className="w-24 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
+                                          placeholder="Score"
+                                        />
+                                        <input
+                                          type="text"
+                                          value={manualFeedback}
+                                          onChange={(e) => setManualFeedback(e.target.value)}
+                                          className="flex-1 rounded-md border border-border bg-white px-3 py-1.5 text-xs"
+                                          placeholder="Feedback comments"
+                                        />
+                                        <button
+                                          type="button"
+                                          disabled={savingGrade}
+                                          onClick={() => void saveManualGrade(ans.id, ans.marks)}
+                                          className="bg-primary text-white text-xs px-3 py-1.5 rounded-md hover:opacity-90 disabled:opacity-50"
+                                        >
+                                          {savingGrade ? "Saving..." : "Save"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )

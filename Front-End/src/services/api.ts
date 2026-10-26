@@ -1824,6 +1824,10 @@ export const facultyExamApi = {
     const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/re-evaluate/`, { force });
     return response.data;
   },
+  finalizeAttemptGrading: async (attemptId: number): Promise<any> => {
+    const response = await apiClient.post<any>(`/api/faculty/attempts/${attemptId}/finalize/`, {});
+    return response.data;
+  },
   reevaluateAnswer: async (answerId: number, force: boolean = false): Promise<any> => {
     const response = await apiClient.post<any>(`/api/faculty/answers/${answerId}/re-evaluate/`, { force });
     return response.data;

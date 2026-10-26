@@ -373,3 +373,64 @@ def evaluate_subjective_chain(answer_obj: Any, force: bool = False) -> Dict[str,
         'provider': 'pending',
         'model': 'none',
     }
+
+
+def generate_ai_grading_suggestion(
+    question: Any,
+    student_answer: str,
+    preferred_model: Optional[str] = None,
+    timeout: int = 20,
+) -> Tuple[bool, Optional[float], str, str]:
+    """
+    Generates an optional advisory AI suggestion for a subjective question.
+    - Never mutates actual student score or answer state directly.
+    - Strict timeout (default 20s) so it never blocks faculty review.
+    - Single attempt without cascading retries.
+    - Returns (success: bool, suggested_score: Optional[float], suggested_feedback: str, error_reason: str)
+    """
+    clean_ans = str(student_answer or "").strip()
+    max_marks = float(question.marks) if question.marks else 10.0
+    if not clean_ans:
+        return True, 0.0, "No answer was submitted.", ""
+
+    try:
+        installed = get_installed_ollama_models()
+    except Exception as exc:
+        return False, None, "", f"Failed to connect to Ollama: {exc}"
+
+    if not installed:
+        return False, None, "", "Ollama service unreachable or reports no installed models."
+
+    model_tag = canonicalize_model_tag(preferred_model) if preferred_model else canonicalize_model_tag(OLLAMA_MODEL)
+    if model_tag not in installed:
+        model_tag = installed[0]
+
+    prompt = build_evaluation_prompt(
+        question_text=question.text,
+        model_answer=getattr(question, 'model_answer', '') or '',
+        student_answer=clean_ans,
+        max_marks=max_marks,
+        marking_scheme=getattr(question, 'topic_text', '') or '',
+        model_tag=model_tag,
+    )
+    messages = [
+        {"role": "system", "content": "You are an academic examiner providing an advisory grading suggestion for a teacher. Output strictly JSON."},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        raw_response = call_ollama_chat(
+            model=model_tag,
+            messages=messages,
+            timeout=timeout,
+            format='json',
+            temperature=0.0,
+        )
+        parsed = parse_json_safely(raw_response)
+        valid, err, val_data = validate_evaluation(parsed, max_marks, clean_ans)
+        if valid and val_data:
+            return True, val_data['score'], val_data['feedback'], ""
+        return False, None, "", err or "Validation of AI response failed."
+    except Exception as exc:
+        logger.warning("AI grading suggestion failed: %s", exc)
+        return False, None, "", str(exc)
