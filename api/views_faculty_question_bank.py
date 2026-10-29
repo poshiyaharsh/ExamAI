@@ -62,15 +62,58 @@ class FacultyQuestionBankUploadView(APIView):
         import_mode = str(request.data.get('import_mode') or 'all').lower()
         mode = str(request.data.get('mode') or ('analyze' if str(request.data.get('dry_run', 'false')).lower() in ('true', '1', 'yes') else 'commit')).lower()
 
+        # Resolve and validate target subject (required for question bank association)
+        target_subject = None
+        target_subject_id = request.data.get('subject_id')
+        target_subject_name = request.data.get('subject_name') or request.data.get('subject')
+
+        if target_subject_id:
+            try:
+                target_subject = Subject.objects.filter(
+                    id=int(target_subject_id),
+                    institution=tenant_inst,
+                ).first()
+                if not target_subject:
+                    return Response({'detail': 'Selected subject not found in your institution.'}, status=status.HTTP_400_BAD_REQUEST)
+                if faculty_dept and target_subject.department and target_subject.department.strip().lower() != faculty_dept.strip().lower():
+                    return Response({'detail': f'Selected subject belongs to {target_subject.department}, not your department ({faculty_dept}).'}, status=status.HTTP_403_FORBIDDEN)
+            except (ValueError, TypeError):
+                return Response({'detail': 'Invalid subject ID.'}, status=status.HTTP_400_BAD_REQUEST)
+        elif target_subject_name and str(target_subject_name).strip():
+            s_name = str(target_subject_name).strip()
+            target_subject = Subject.objects.filter(
+                institution=tenant_inst,
+                name__iexact=s_name,
+            ).filter(Q(department=faculty_dept) | Q(department='')).first()
+            if not target_subject:
+                words = s_name.split()
+                code_prefix = ''.join(w[0] for w in words)[:4].upper() if len(words) >= 2 else s_name[:4].upper()
+                target_subject = Subject.objects.create(
+                    institution=tenant_inst,
+                    department=faculty_dept,
+                    name=s_name,
+                    code=f"{code_prefix}101" if code_prefix else "SUB101",
+                    created_by=request.user,
+                )
+
         # Check for direct curated questions list payload (e.g. from frontend preview editor)
         direct_questions = request.data.get('questions')
         if direct_questions and isinstance(direct_questions, list):
+            if not target_subject:
+                has_row_sub = any(
+                    isinstance(q, dict) and (q.get('subject') or (isinstance(q.get('data'), dict) and q['data'].get('subject')))
+                    for q in direct_questions
+                )
+                if not has_row_sub:
+                    return Response({'detail': 'Subject is required. Please select or specify a subject before importing questions.'}, status=status.HTTP_400_BAD_REQUEST)
+
             return self._commit_direct_questions(
                 request=request,
                 tenant_inst=tenant_inst,
                 faculty_dept=faculty_dept,
                 questions=direct_questions,
                 is_shared=is_shared,
+                target_subject=target_subject,
             )
 
         uploaded_file = request.FILES.get('file') or request.FILES.get('question_file')
@@ -171,6 +214,16 @@ class FacultyQuestionBankUploadView(APIView):
         if not rows_to_save:
             return Response({'detail': 'No eligible questions found to import with current mode.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not is_dry_run and not target_subject:
+            has_row_sub = any(
+                isinstance(r, dict) and (
+                    r.get('subject') or (isinstance(r.get('data'), dict) and r['data'].get('subject'))
+                )
+                for r in report.get('all_rows', [])
+            )
+            if not has_row_sub:
+                return Response({'detail': 'Subject is required. Please select a subject before importing questions.'}, status=status.HTTP_400_BAD_REQUEST)
+
         return self._insert_questions(
             tenant_inst=tenant_inst,
             faculty_dept=faculty_dept,
@@ -183,9 +236,10 @@ class FacultyQuestionBankUploadView(APIView):
             duplicate_count=report['duplicate_count'],
             errors=report['errors'],
             is_shared=is_shared,
+            target_subject=target_subject,
         )
 
-    def _commit_direct_questions(self, request, tenant_inst, faculty_dept, questions: List[Any], is_shared: bool):
+    def _commit_direct_questions(self, request, tenant_inst, faculty_dept, questions: List[Any], is_shared: bool, target_subject=None):
         filename = request.data.get('filename') or 'curated_question_bank.json'
         file_format = request.data.get('format') or 'json'
 
@@ -210,25 +264,39 @@ class FacultyQuestionBankUploadView(APIView):
             duplicate_count=0,
             errors=[],
             is_shared=is_shared,
+            target_subject=target_subject,
         )
 
-    def _insert_questions(self, tenant_inst, faculty_dept, user, rows_to_save, filename, file_format, total_rows, invalid_count, duplicate_count, errors, is_shared):
+    def _insert_questions(self, tenant_inst, faculty_dept, user, rows_to_save, filename, file_format, total_rows, invalid_count, duplicate_count, errors, is_shared, target_subject=None):
         sub_cache = {s.name.lower(): s for s in Subject.objects.filter(institution=tenant_inst)}
         imported_count = 0
 
         with transaction.atomic():
             for row in rows_to_save:
-                sub_name = (row.get('subject') or 'General').strip()
-                sub_key = sub_name.lower()
-                subject_obj = sub_cache.get(sub_key)
-                if not subject_obj:
-                    subject_obj = Subject.objects.create(
-                        name=sub_name,
-                        code=(sub_name[:4].upper() + "101"),
-                        department=faculty_dept,
-                        institution=tenant_inst,
-                    )
-                    sub_cache[sub_key] = subject_obj
+                if target_subject:
+                    subject_obj = target_subject
+                else:
+                    sub_name = (row.get('subject') or '').strip()
+                    if not sub_name:
+                        dept_sub = Subject.objects.filter(institution=tenant_inst, department=faculty_dept).first()
+                        if dept_sub:
+                            subject_obj = dept_sub
+                            sub_name = dept_sub.name
+                        else:
+                            sub_name = 'General'
+                    sub_key = sub_name.lower()
+                    subject_obj = sub_cache.get(sub_key)
+                    if not subject_obj:
+                        words = sub_name.split()
+                        code_prefix = ''.join(w[0] for w in words)[:4].upper() if len(words) >= 2 else sub_name[:4].upper()
+                        subject_obj = Subject.objects.create(
+                            name=sub_name,
+                            code=f"{code_prefix}101" if code_prefix else "SUB101",
+                            department=faculty_dept,
+                            institution=tenant_inst,
+                            created_by=user,
+                        )
+                        sub_cache[sub_key] = subject_obj
 
                 raw_options = row.get('options') or []
                 cleaned_opts = clean_options_list(raw_options) if raw_options else []
@@ -288,6 +356,15 @@ class FacultyQuestionBankUploadView(APIView):
                 error_details=errors[:50],
             )
 
+        subj_info = None
+        if target_subject:
+            subj_info = {
+                'id': target_subject.id,
+                'name': target_subject.name,
+                'code': target_subject.code,
+                'department': target_subject.department,
+            }
+
         return Response({
             'detail': f"Successfully imported {imported_count} question(s) into your question bank.",
             'imported_count': imported_count,
@@ -295,6 +372,7 @@ class FacultyQuestionBankUploadView(APIView):
             'failed_count': invalid_count,
             'duplicate_count': duplicate_count,
             'is_shared': is_shared,
+            'subject': subj_info,
         }, status=status.HTTP_201_CREATED)
 
 
@@ -576,6 +654,13 @@ class FacultyQuestionBankBanksView(APIView):
             Q(created_by=request.user) | Q(is_shared=True, department=faculty_dept)
         )
 
+        subj_filter = request.query_params.get('subject_id') or request.query_params.get('subject')
+        if subj_filter:
+            if str(subj_filter).isdigit():
+                base_qs = base_qs.filter(subject_id=int(subj_filter))
+            else:
+                base_qs = base_qs.filter(subject__name__iexact=str(subj_filter).strip())
+
         subject_counts = base_qs.exclude(subject__isnull=True).values(
             'subject_id', 'subject__name', 'subject__code', 'subject__department'
         ).annotate(count=Count('id')).order_by('subject__name')
@@ -627,6 +712,7 @@ class AssemblePaperFromBankView(APIView):
                 return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
             if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
                 return Response({'detail': 'Cannot modify published or immutable exams.'}, status=status.HTTP_400_BAD_REQUEST)
+            update_fields = []
             if 'title' in request.data:
                 raw_title = request.data.get('title')
                 if not raw_title or not str(raw_title).strip():
@@ -635,7 +721,26 @@ class AssemblePaperFromBankView(APIView):
                 if len(title) > 255:
                     return Response({'detail': 'Exam title cannot exceed 255 characters.'}, status=status.HTTP_400_BAD_REQUEST)
                 exam.title = title
-                exam.save(update_fields=['title'])
+                update_fields.append('title')
+
+            if 'duration_minutes' in request.data:
+                try:
+                    dur_val = int(request.data.get('duration_minutes'))
+                    if dur_val < 1 or dur_val > 600:
+                        return Response({'detail': 'Duration must be between 1 and 600 minutes.'}, status=status.HTTP_400_BAD_REQUEST)
+                    exam.duration_minutes = dur_val
+                    update_fields.append('duration_minutes')
+                except (ValueError, TypeError):
+                    return Response({'detail': 'Invalid duration minutes value.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if 'subject' in request.data:
+                subj_val = str(request.data.get('subject') or '')[:80].strip()
+                if subj_val:
+                    exam.subject = subj_val
+                    update_fields.append('subject')
+
+            if update_fields:
+                exam.save(update_fields=update_fields)
         else:
             raw_title = request.data.get('title')
             if not raw_title or not str(raw_title).strip():
@@ -645,7 +750,12 @@ class AssemblePaperFromBankView(APIView):
                 return Response({'detail': 'Exam title cannot exceed 255 characters.'}, status=status.HTTP_400_BAD_REQUEST)
 
             subj = str(request.data.get('subject') or '')[:80].strip()
-            dur = int(request.data.get('duration_minutes') or 60)
+            try:
+                dur = int(request.data.get('duration_minutes') or 60)
+                if dur < 1 or dur > 600:
+                    return Response({'detail': 'Duration must be between 1 and 600 minutes.'}, status=status.HTTP_400_BAD_REQUEST)
+            except (ValueError, TypeError):
+                return Response({'detail': 'Invalid duration minutes value.'}, status=status.HTTP_400_BAD_REQUEST)
             t_marks = int(request.data.get('target_marks') or 50)
             exam = Exam.objects.create(
                 institution=tenant_inst,

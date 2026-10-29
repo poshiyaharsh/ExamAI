@@ -1,7 +1,6 @@
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { FacultyCreateBankPaper } from "./FacultyCreateBankPaper";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import {
   AlertCircle,
@@ -168,21 +167,7 @@ export function FacultyGeneratePaper() {
   const [facultyDept, setFacultyDept] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
 
-  // Mode switcher (AI vs Manual Question Bank)
-  const [searchParams, setSearchParams] = useSearchParams();
-  const mode = searchParams.get("mode") === "manual" ? "manual" : "ai";
 
-  const handleModeChange = (newMode: "ai" | "manual") => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (newMode === "manual") {
-        next.set("mode", "manual");
-      } else {
-        next.delete("mode");
-      }
-      return next;
-    });
-  };
 
   // Subject Management & Multi-Tenancy Scoping (Phase 3)
   const [facultySubjects, setFacultySubjects] = useState<FacultySubject[]>([]);
@@ -1355,46 +1340,7 @@ export function FacultyGeneratePaper() {
           </p>
         </div>
 
-        {/* Top-Level Mode Selector (AI vs Manual Question Bank) */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">Paper Generation Method</h2>
-            <p className="text-xs text-slate-500">
-              Select whether to synthesize questions with local AI or build deterministically from question banks.
-            </p>
-          </div>
-          <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
-            <button
-              type="button"
-              onClick={() => handleModeChange("ai")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-                mode === "ai"
-                  ? "bg-white text-blue-600 shadow-xs font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Sparkles className="w-4 h-4 text-blue-600" />
-              AI Paper Generation
-            </button>
-            <button
-              type="button"
-              onClick={() => handleModeChange("manual")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-                mode === "manual"
-                  ? "bg-white text-indigo-600 shadow-xs font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Database className="w-4 h-4 text-indigo-600" />
-              Manual Paper Generation (Question Bank)
-            </button>
-          </div>
-        </div>
 
-        {mode === "manual" ? (
-          <FacultyCreateBankPaper hideLayout />
-        ) : (
-          <>
 
         {/* 4-Step Progress Stepper Header */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
@@ -3444,9 +3390,6 @@ export function FacultyGeneratePaper() {
               </div>
             </div>
           </div>
-        )}
-
-          </>
         )}
 
         {/* Real-time Generation Progress / Status Modal */}

@@ -246,7 +246,7 @@ class FacultyQuestionBankTests(TestCase):
         initial_count = Question.objects.count()
         response = self.client.post(
             '/api/faculty/question-bank/upload/',
-            {'file': f, 'dry_run': 'false', 'import_valid_rows_only': 'true'},
+            {'file': f, 'dry_run': 'false', 'import_valid_rows_only': 'true', 'subject_id': self.subject.id},
             format='multipart',
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -420,4 +420,109 @@ class FacultyQuestionBankTests(TestCase):
         self.assertEqual(exam.total_marks, 25)
         self.assertEqual(exam.marks_shortfall, 0)
         self.assertEqual(exam.questions.filter(is_deleted=False).count(), 2)
+    def test_upload_requires_subject_on_commit(self):
+        """Verify upload without subject returns 400 Bad Request on commit."""
+        csv_content = "question_text,question_type,marks,options,correct_answer\nSample?,mcq,1,A|B,A\n".encode('utf-8')
+        f = SimpleUploadedFile("nosubject.csv", csv_content, content_type="text/csv")
+        response = self.client.post(
+            '/api/faculty/question-bank/upload/',
+            {'file': f, 'dry_run': 'false'},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Subject is required", response.data['detail'])
+
+    def test_upload_rejects_cross_department_subject(self):
+        """Verify faculty cannot assign questions to another department's subject."""
+        other_dept_sub = Subject.objects.create(
+            name="Mechanical Engineering",
+            code="ME101",
+            department="Mechanical",
+            institution=self.inst_a,
+        )
+        csv_content = "question_text,question_type,marks,options,correct_answer\nSample?,mcq,1,A|B,A\n".encode('utf-8')
+        f = SimpleUploadedFile("crossdept.csv", csv_content, content_type="text/csv")
+        response = self.client.post(
+            '/api/faculty/question-bank/upload/',
+            {'file': f, 'dry_run': 'false', 'subject_id': other_dept_sub.id},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_upload_associates_questions_with_selected_subject_not_gene101(self):
+        """Verify uploaded questions link directly to selected subject and bank cards show that subject."""
+        csv_content = "question_text,question_type,marks,options,correct_answer\nWhat is binary search?,mcq,2,A|B,A\n".encode('utf-8')
+        f = SimpleUploadedFile("ds_questions.csv", csv_content, content_type="text/csv")
+        response = self.client.post(
+            '/api/faculty/question-bank/upload/',
+            {'file': f, 'dry_run': 'false', 'subject_id': self.subject.id},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['subject']['name'], 'Data Structures')
+        self.assertEqual(response.data['subject']['code'], 'CS201')
+
+        # Check bank card reflects Data Structures
+        banks_resp = self.client.get('/api/faculty/question-bank/banks/')
+        self.assertEqual(banks_resp.status_code, status.HTTP_200_OK)
+        ds_bank = next((b for b in banks_resp.data['banks'] if b['name'] == 'Data Structures'), None)
+        self.assertIsNotNone(ds_bank)
+        self.assertEqual(ds_bank['code'], 'CS201')
+        self.assertNotEqual(ds_bank['code'], 'GENE101')
+
+    def test_assemble_paper_duration_validation_and_draft_update(self):
+        """Verify duration_minutes is validated (1-600) and persists on draft update."""
+        q = Question.objects.create(
+            institution=self.inst_a,
+            department="Computer Science",
+            subject=self.subject,
+            created_by=self.faculty_1,
+            question_type="mcq",
+            text="Duration Test Q",
+            marks=5,
+        )
+        # Create draft with duration = 90
+        resp1 = self.client.post(
+            '/api/faculty/exams/assemble-from-bank/',
+            {
+                'title': 'Duration Draft Exam',
+                'question_ids': [q.id],
+                'duration_minutes': 90,
+            },
+            format='json',
+        )
+        self.assertEqual(resp1.status_code, status.HTTP_200_OK)
+        exam_id = resp1.data['exam_id']
+        exam = Exam.objects.get(id=exam_id)
+        self.assertEqual(exam.duration_minutes, 90)
+
+        # Update draft duration to 120
+        resp2 = self.client.post(
+            f'/api/faculty/exams/{exam_id}/assemble-from-bank/',
+            {
+                'title': 'Duration Draft Exam Updated',
+                'question_ids': [q.id],
+                'duration_minutes': 120,
+            },
+            format='json',
+        )
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        exam.refresh_from_db()
+        self.assertEqual(exam.duration_minutes, 120)
+        self.assertEqual(exam.title, 'Duration Draft Exam Updated')
+
+        # Test invalid duration values (0 and 601)
+        resp_invalid_0 = self.client.post(
+            f'/api/faculty/exams/{exam_id}/assemble-from-bank/',
+            {'duration_minutes': 0, 'question_ids': [q.id]},
+            format='json',
+        )
+        self.assertEqual(resp_invalid_0.status_code, status.HTTP_400_BAD_REQUEST)
+
+        resp_invalid_601 = self.client.post(
+            f'/api/faculty/exams/{exam_id}/assemble-from-bank/',
+            {'duration_minutes': 601, 'question_ids': [q.id]},
+            format='json',
+        )
+        self.assertEqual(resp_invalid_601.status_code, status.HTTP_400_BAD_REQUEST)
 

@@ -34,7 +34,9 @@ import { DashboardLayout } from "../components/DashboardLayout";
 import {
   facultyExamApi,
   facultyQuestionBankApi,
+  facultySubjectApi,
   type FacultyQuestionBankItem,
+  type FacultySubject,
   type QuestionBankUploadResponse,
 } from "../../services/api";
 
@@ -71,12 +73,22 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
   // Step 1: Exam Details & Schedule (Starts empty for new papers)
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
-  const [durationMinutes, setDurationMinutes] = useState(60);
+  const [durationMinutes, setDurationMinutes] = useState<string>("60");
   const [targetMarks, setTargetMarks] = useState(50);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [shuffleQuestions, setShuffleQuestions] = useState(true);
   const [shuffleOptions, setShuffleOptions] = useState(true);
+
+  // Subject Management
+  const [subjectsList, setSubjectsList] = useState<FacultySubject[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<number | string>("");
+  const [uploadTargetSubjectId, setUploadTargetSubjectId] = useState<number | string>("");
+  const [isCreatingSubject, setIsCreatingSubject] = useState(false);
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [newSubjectCode, setNewSubjectCode] = useState("");
+  const [creatingSubjectLoading, setCreatingSubjectLoading] = useState(false);
 
   // Step 2: Question Bank Selection & Upload
   const [availableBanks, setAvailableBanks] = useState<QuestionBankSummary[]>([]);
@@ -104,6 +116,53 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
   const [publishing, setPublishing] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
 
+  // Load subjects list for department
+  const loadSubjects = useCallback(async () => {
+    setLoadingSubjects(true);
+    try {
+      const res = await facultySubjectApi.getSubjects();
+      const list = res.subjects || [];
+      setSubjectsList(list);
+      return list;
+    } catch (err) {
+      console.error("Failed to load subjects", err);
+      return [];
+    } finally {
+      setLoadingSubjects(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSubjects();
+  }, [loadSubjects]);
+
+  const handleCreateSubject = async () => {
+    const trimmedName = newSubjectName.trim();
+    if (!trimmedName) {
+      toast.error("Subject name is required.");
+      return;
+    }
+    setCreatingSubjectLoading(true);
+    try {
+      const newSub = await facultySubjectApi.createSubject({
+        name: trimmedName,
+        code: newSubjectCode.trim() || undefined,
+      });
+      toast.success(`Subject "${newSub.name}" created successfully!`);
+      await loadSubjects();
+      setSelectedSubjectId(newSub.id);
+      setUploadTargetSubjectId(newSub.id);
+      setSubject(newSub.name);
+      setIsCreatingSubject(false);
+      setNewSubjectName("");
+      setNewSubjectCode("");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || "Failed to create subject.");
+    } finally {
+      setCreatingSubjectLoading(false);
+    }
+  };
+
   // Load available banks list on mount
   const loadAvailableBanks = useCallback(async () => {
     setLoadingBanksList(true);
@@ -130,7 +189,7 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
           if (exam) {
             setTitle(exam.title || "");
             setSubject(exam.subject || "");
-            if (exam.duration_minutes) setDurationMinutes(exam.duration_minutes);
+            if (exam.duration_minutes) setDurationMinutes(String(exam.duration_minutes));
             if (exam.target_total_marks || exam.total_marks) {
               setTargetMarks(exam.target_total_marks || exam.total_marks);
             }
@@ -229,7 +288,9 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
   const handleResetWizard = useCallback(() => {
     setTitle("");
     setSubject("");
-    setDurationMinutes(60);
+    setSelectedSubjectId("");
+    setUploadTargetSubjectId("");
+    setDurationMinutes("60");
     setTargetMarks(50);
     setStartsAt("");
     setEndsAt("");
@@ -253,6 +314,13 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const targetSubId = uploadTargetSubjectId || selectedSubjectId;
+    if (!targetSubId) {
+      toast.error("Please select a Target Subject before uploading question bank files.");
+      e.target.value = "";
+      return;
+    }
+
     setUploadingFile(true);
     setUploadProgress(`Uploading and parsing ${file.name}...`);
     try {
@@ -260,12 +328,16 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
       formData.append("file", file);
       formData.append("dry_run", "false");
       formData.append("is_shared", "true");
+      formData.append("subject_id", String(targetSubId));
 
       const res = await facultyQuestionBankApi.uploadFile(formData);
       toast.success(res.detail || `Successfully imported ${res.imported_count || res.valid_count} question(s)!`);
       await loadAvailableBanks();
+      await loadSubjects();
       if (selectedBankId) {
         await handleSelectBank(selectedBankId);
+      } else {
+        await handleSelectBank(targetSubId);
       }
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to upload question bank file.");
@@ -582,14 +654,86 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-foreground">Subject / Course</label>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="e.g. Data Structures & Algorithms"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20"
-                />
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-foreground">Subject / Course *</label>
+                  {!isCreatingSubject && (
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatingSubject(true)}
+                      className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-0.5"
+                    >
+                      <Plus className="h-3 w-3" /> New Subject
+                    </button>
+                  )}
+                </div>
+
+                {!isCreatingSubject ? (
+                  <select
+                    value={selectedSubjectId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "__new__") {
+                        setIsCreatingSubject(true);
+                      } else {
+                        setSelectedSubjectId(val);
+                        setUploadTargetSubjectId(val);
+                        const found = subjectsList.find((s) => String(s.id) === String(val));
+                        setSubject(found ? found.name : "");
+                      }
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20 bg-white"
+                  >
+                    <option value="">-- Select Subject ({subjectsList.length} available) --</option>
+                    {subjectsList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.code ? `[${s.code}] ` : ""}{s.name} ({s.question_count ?? 0} questions)
+                      </option>
+                    ))}
+                    <option value="__new__">+ Create New Subject...</option>
+                  </select>
+                ) : (
+                  <div className="p-3 rounded-xl border border-primary/20 bg-primary/5 space-y-2.5">
+                    <div className="text-xs font-bold text-foreground">Create New Subject</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Subject Name (e.g. Cloud Computing)"
+                        value={newSubjectName}
+                        onChange={(e) => setNewSubjectName(e.target.value)}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-border bg-white"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Subject Code (e.g. CS302)"
+                        value={newSubjectCode}
+                        onChange={(e) => setNewSubjectCode(e.target.value)}
+                        className="px-3 py-1.5 text-xs rounded-lg border border-border bg-white"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingSubject(false);
+                          setNewSubjectName("");
+                          setNewSubjectCode("");
+                        }}
+                        className="px-2.5 py-1 text-xs rounded-lg border border-border bg-white text-muted-foreground hover:text-foreground"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={creatingSubjectLoading}
+                        onClick={handleCreateSubject}
+                        className="px-3 py-1 text-xs rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 flex items-center gap-1"
+                      >
+                        {creatingSubjectLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+                        Save Subject
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5">
@@ -605,13 +749,22 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-foreground">Duration (Minutes) *</label>
+                <label className="text-xs font-semibold text-foreground">
+                  Duration (Minutes) * <span className="text-[11px] font-normal text-muted-foreground">(1 - 600)</span>
+                </label>
                 <input
                   type="number"
-                  min="5"
+                  min="1"
                   max="600"
                   value={durationMinutes}
-                  onChange={(e) => setDurationMinutes(Number(e.target.value) || 60)}
+                  onChange={(e) => setDurationMinutes(e.target.value)}
+                  onBlur={() => {
+                    const val = parseInt(durationMinutes, 10);
+                    if (isNaN(val) || val < 1) setDurationMinutes("60");
+                    else if (val > 600) setDurationMinutes("600");
+                    else setDurationMinutes(String(val));
+                  }}
+                  placeholder="e.g. 60"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20"
                 />
               </div>
@@ -671,6 +824,15 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
                     toast.error("Exam title cannot exceed 255 characters.");
                     return;
                   }
+                  const dur = parseInt(durationMinutes, 10);
+                  if (isNaN(dur) || dur < 1 || dur > 600) {
+                    toast.error("Duration must be a valid whole number between 1 and 600 minutes.");
+                    return;
+                  }
+                  if (!selectedSubjectId && !subject.trim()) {
+                    toast.error("Please select or create a subject before proceeding.");
+                    return;
+                  }
                   setCurrentStep(2);
                 }}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-xs"
@@ -704,8 +866,47 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
               <div>
                 <h3 className="text-sm font-bold text-foreground">Upload Question Bank File</h3>
                 <p className="text-xs text-muted-foreground max-w-md mt-1">
-                  Supports CSV, XLSX, DOCX, and JSON files. Questions will be validated and added to your bank.
+                  Supports CSV, XLSX, DOCX, and JSON files. Questions will be validated and added to the selected subject question bank.
                 </p>
+              </div>
+
+              {/* Target Subject Selector */}
+              <div className="w-full max-w-md text-left space-y-1.5 pt-1">
+                <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                  <span>Import Questions into Subject: *</span>
+                  {!isCreatingSubject && (
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatingSubject(true)}
+                      className="text-[11px] text-primary hover:underline font-normal flex items-center gap-0.5"
+                    >
+                      <Plus className="h-3 w-3" /> New Subject
+                    </button>
+                  )}
+                </label>
+                <select
+                  value={uploadTargetSubjectId || selectedSubjectId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setUploadTargetSubjectId(val);
+                    if (!selectedSubjectId) setSelectedSubjectId(val);
+                    const found = subjectsList.find((s) => String(s.id) === String(val));
+                    if (found && !subject) setSubject(found.name);
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-border text-xs sm:text-sm bg-white focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="">-- Choose Target Subject (Required) --</option>
+                  {subjectsList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.code ? `[${s.code}] ` : ""}{s.name} ({s.question_count ?? 0} questions)
+                    </option>
+                  ))}
+                </select>
+                {!(uploadTargetSubjectId || selectedSubjectId) && (
+                  <p className="text-[11px] text-amber-600 font-medium">
+                    ⚠️ Please select a Subject before uploading question bank files.
+                  </p>
+                )}
               </div>
 
               {uploadProgress && (
@@ -715,13 +916,19 @@ export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBank
               )}
 
               <div className="flex items-center gap-3 pt-2">
-                <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors cursor-pointer shadow-xs">
+                <label
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer shadow-xs ${
+                    !(uploadTargetSubjectId || selectedSubjectId)
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  }`}
+                >
                   <FileUp className="h-4 w-4" /> Select File to Upload
                   <input
                     type="file"
                     accept=".csv,.xlsx,.docx,.json"
                     onChange={handleFileUpload}
-                    disabled={uploadingFile}
+                    disabled={uploadingFile || !(uploadTargetSubjectId || selectedSubjectId)}
                     className="hidden"
                   />
                 </label>
