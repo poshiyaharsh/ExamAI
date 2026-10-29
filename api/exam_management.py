@@ -17,6 +17,7 @@ from .serializers import (
     QuestionSerializer,
     QuestionUpdateSerializer,
 )
+from .utils.validate_paper import repair_rubric_marks
 
 logger = logging.getLogger(__name__)
 
@@ -683,16 +684,22 @@ class AdjustMarksView(FacultyExamViewMixin, APIView):
 
         elif action in {'preview_scale', 'scale_target'}:
             scale_ratio = (float(target) / current_total) if current_total > 0 else 1.0
-            previews = []
-            running_marks = 0
-
+            # Largest remainder method for exact integer question marks allocation
+            floors = []
+            remainders = []
             for idx, q in enumerate(active_questions):
-                if idx == len(active_questions) - 1:
-                    new_m = max(1, target - running_marks)
-                else:
-                    new_m = max(1, int(round(float(q.marks) * scale_ratio)))
-                    running_marks += new_m
+                exact = (float(q.marks) / current_total) * target
+                fl = max(1, int(exact))
+                floors.append(fl)
+                remainders.append((exact - fl, idx))
+            diff = target - sum(floors)
+            remainders.sort(key=lambda t: t[0], reverse=True)
+            for d in range(diff):
+                floors[remainders[d % len(active_questions)][1]] += 1
 
+            previews = []
+            for idx, q in enumerate(active_questions):
+                new_m = floors[idx]
                 previews.append({
                     'id': q.id,
                     'order': q.order,
@@ -715,12 +722,15 @@ class AdjustMarksView(FacultyExamViewMixin, APIView):
                     'preview': preview_data,
                 })
 
-            for p in previews:
-                Question.objects.filter(id=p['id']).update(marks=p['new_marks'])
+            with transaction.atomic():
+                for p, q in zip(previews, active_questions):
+                    q.marks = p['new_marks']
+                    q.rubric = repair_rubric_marks(q.rubric, float(p['new_marks']))
+                    q.save(update_fields=['marks', 'rubric'])
 
-            exam.total_marks = target
-            exam.marks_shortfall = 0
-            exam.save(update_fields=['total_marks', 'marks_shortfall', 'updated_at'])
+                exam.total_marks = target
+                exam.marks_shortfall = 0
+                exam.save(update_fields=['total_marks', 'marks_shortfall', 'updated_at'])
 
             from api.paper_engine.cache import PaperCacheService
             PaperCacheService.invalidate_exam(exam.institution_id, exam.id)

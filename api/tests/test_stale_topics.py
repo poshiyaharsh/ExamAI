@@ -195,6 +195,7 @@ class StaleTopicsApiTestCase(TestCase):
             "blueprint": json.dumps(valid_bp),
             "ai_model": "qwen2.5-3b",
             "syllabus": syllabus_file,
+            "accept_capacity_override": True,
         }
 
         response = self.client.post("/api/faculty/exams/generate/", payload, format="multipart")

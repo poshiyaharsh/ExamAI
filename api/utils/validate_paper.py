@@ -1,5 +1,6 @@
 from copy import deepcopy
 import re
+import unicodedata
 from .options import clean_option_text, clean_options_list, validate_mcq_options
 
 
@@ -259,18 +260,46 @@ def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):
 def repair_rubric_marks(rubric: list, target_marks: float) -> list:
     """
     Deterministically repairs rubric criteria marks so they sum EXACTLY to target_marks.
+    Supports integer and Decimal precision, preventing float rounding drift.
     Never rejects a question due to model arithmetic errors.
     """
-    target = round(float(target_marks), 1)
+    target = float(target_marks)
     if target <= 0:
         target = 1.0
+    is_int_target = (target == int(target))
+    target_int = int(target) if is_int_target else None
 
     if not isinstance(rubric, list) or not rubric:
-        return [
-            {"criterion": "Core concepts and definition", "marks": round(target * 0.3, 1)},
-            {"criterion": "Detailed breakdown and mechanisms", "marks": round(target * 0.4, 1)},
-            {"criterion": "Practical application or example", "marks": round(target - round(target * 0.3, 1) - round(target * 0.4, 1), 1)}
-        ]
+        if is_int_target:
+            if target_int == 1:
+                return [{"criterion": "Core concepts and explanation", "marks": 1}]
+            elif target_int == 2:
+                return [
+                    {"criterion": "Core definition and principles", "marks": 1},
+                    {"criterion": "Practical application or example", "marks": 1}
+                ]
+            else:
+                m1 = max(1, int(round(target_int * 0.3)))
+                m2 = max(1, int(round(target_int * 0.4)))
+                m3 = target_int - m1 - m2
+                if m3 < 1:
+                    m3 = 1
+                    if m2 > 1: m2 -= 1
+                    elif m1 > 1: m1 -= 1
+                return [
+                    {"criterion": "Core concepts and definition", "marks": m1},
+                    {"criterion": "Detailed breakdown and mechanisms", "marks": m2},
+                    {"criterion": "Practical application or example", "marks": m3}
+                ]
+        else:
+            m1 = round(target * 0.3, 1)
+            m2 = round(target * 0.4, 1)
+            m3 = round(target - m1 - m2, 1)
+            return [
+                {"criterion": "Core concepts and definition", "marks": m1},
+                {"criterion": "Detailed breakdown and mechanisms", "marks": m2},
+                {"criterion": "Practical application or example", "marks": m3}
+            ]
 
     cleaned = []
     for item in rubric:
@@ -287,29 +316,61 @@ def repair_rubric_marks(rubric: list, target_marks: float) -> list:
     if not cleaned:
         return repair_rubric_marks([], target)
 
-    current_sum = sum(x["marks"] for x in cleaned)
-    if current_sum <= 0:
-        each = round(target / len(cleaned), 1)
-        for x in cleaned:
-            x["marks"] = each
-        cleaned[-1]["marks"] = round(target - sum(x["marks"] for x in cleaned[:-1]), 1)
+    if is_int_target:
+        n = len(cleaned)
+        if target_int < n:
+            cleaned = cleaned[:target_int]
+            n = len(cleaned)
+        current_sum = sum(x["marks"] for x in cleaned)
+        if current_sum <= 0:
+            base = target_int // n
+            rem = target_int % n
+            for i, x in enumerate(cleaned):
+                x["marks"] = base + (1 if i < rem else 0)
+            return cleaned
+        floors = []
+        remainders = []
+        for i, x in enumerate(cleaned):
+            exact = (x["marks"] / current_sum) * target_int
+            fl = int(exact)
+            floors.append(fl)
+            remainders.append((exact - fl, i))
+        deficit = target_int - sum(floors)
+        remainders.sort(key=lambda t: t[0], reverse=True)
+        for d in range(deficit):
+            idx = remainders[d % n][1]
+            floors[idx] += 1
+        if target_int >= n:
+            for i in range(n):
+                if floors[i] < 1:
+                    donor = max(range(n), key=lambda k: floors[k])
+                    if floors[donor] > 1:
+                        floors[donor] -= 1
+                        floors[i] += 1
+        for i, x in enumerate(cleaned):
+            x["marks"] = floors[i]
         return cleaned
+    else:
+        current_sum = sum(x["marks"] for x in cleaned)
+        if current_sum <= 0:
+            each = round(target / len(cleaned), 1)
+            for x in cleaned:
+                x["marks"] = each
+            cleaned[-1]["marks"] = round(target - sum(x["marks"] for x in cleaned[:-1]), 1)
+            return cleaned
+        scaled = []
+        running = 0.0
+        for i, x in enumerate(cleaned):
+            if i == len(cleaned) - 1:
+                final_mark = round(target - running, 1)
+                scaled.append({"criterion": x["criterion"], "marks": final_mark})
+            else:
+                proportional = round((x["marks"] / current_sum) * target, 1)
+                running += proportional
+                scaled.append({"criterion": x["criterion"], "marks": proportional})
+        return scaled
 
-    scaled = []
-    running = 0.0
-    for i, x in enumerate(cleaned):
-        if i == len(cleaned) - 1:
-            final_mark = round(target - running, 1)
-            scaled.append({"criterion": x["criterion"], "marks": final_mark})
-        else:
-            proportional = round((x["marks"] / current_sum) * target, 1)
-            running += proportional
-            scaled.append({"criterion": x["criterion"], "marks": proportional})
 
-    return scaled
-
-
-import unicodedata
 
 
 def normalize_grounding_text(text: str) -> str:
@@ -318,9 +379,10 @@ def normalize_grounding_text(text: str) -> str:
     Handles:
     - Unicode NFKD decomposition (accents, diacritics)
     - Ligatures (fi, fl, ff, ffi, ffl, etc.)
-    - Smart quotes, curved apostrophes, em-dashes
+    - Smart quotes, curved apostrophes, guillemets, prime marks
+    - Soft hyphens, zero-width spaces, non-breaking hyphens
     - Hyphenation across linebreaks (e.g. 'archi- \n tecture' -> 'architecture')
-    - Non-breaking spaces and irregular whitespace
+    - Line break normalization and multiple whitespace collapse
     - Punctuation removal and case folding
     """
     if not text:
@@ -334,12 +396,15 @@ def normalize_grounding_text(text: str) -> str:
         norm = norm.replace(lig, rep)
     quotes = {
         '“': '"', '”': '"', '‘': "'", '’': "'", '«': '"', '»': '"',
-        '„': '"', '‟': '"', '—': '-', '–': '-', '•': ' ', '·': ' ',
-        '\xa0': ' ', '\u200b': ''
+        '„': '"', '‟': '"', '—': '-', '–': '-', '―': '-', '‒': '-',
+        '•': ' ', '·': ' ', '\xa0': ' ', '\u200b': '', '\ufeff': '',
+        '\xad': '', '\u2011': '-', '`': "'", '´': "'", '′': "'", '″': '"'
     }
     for q, rep in quotes.items():
         norm = norm.replace(q, rep)
-    norm = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', norm)
+    # Hyphenation across line breaks and tabs
+    norm = re.sub(r'(\w+)[-\u2010\u2011]\s*\r?\n\s*(\w+)', r'\1\2', norm)
+    # Replace non-alphanumeric with space
     norm = re.sub(r'[^a-zA-Z0-9\s]', ' ', norm)
     norm = re.sub(r'\s+', ' ', norm).strip().lower()
     return norm
@@ -356,7 +421,7 @@ def verify_grounding_evidence(source_evidence: str, syllabus_text: str) -> bool:
     clean_ev = normalize_grounding_text(source_evidence)
     clean_syl = normalize_grounding_text(syllabus_text)
 
-    if len(clean_ev) < 6:
+    if len(clean_ev) < 4:
         return False
 
     # 1. Exact normalized substring
@@ -365,7 +430,7 @@ def verify_grounding_evidence(source_evidence: str, syllabus_text: str) -> bool:
 
     words = clean_ev.split()
 
-    # 2. Sliding window check (3 or 4-word sequences)
+    # 2. Sliding window check (3-word or 4-word sequences)
     if len(words) >= 3:
         window_size = min(4, len(words))
         for idx in range(len(words) - window_size + 1):
@@ -373,12 +438,13 @@ def verify_grounding_evidence(source_evidence: str, syllabus_text: str) -> bool:
             if sub in clean_syl:
                 return True
 
-    # 3. Substantive content word containment (words > 3 chars)
-    content_words = [w for w in words if len(w) > 3]
-    if len(content_words) >= 4:
+    # 3. Substantive content word containment (words > 2 chars)
+    content_words = [w for w in words if len(w) > 2]
+    if content_words:
         syl_words_set = set(clean_syl.split())
         matched = sum(1 for w in content_words if w in syl_words_set)
-        if matched / len(content_words) >= 0.75:
+        threshold = 0.60 if len(content_words) <= 5 else 0.70
+        if matched / len(content_words) >= threshold:
             return True
 
     return False

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -275,6 +276,16 @@ export function FacultyGeneratePaper() {
   // Active Job and Real-time Modal
   const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
+
+  // Content Capacity Advisory Modal (Part A)
+  const [capacityAdvisory, setCapacityAdvisory] = useState<{
+    detail: string;
+    requested_target_marks: number;
+    max_supportable_marks: number;
+    deficit_marks: number;
+    proposed_adjusted_blueprint?: any;
+    explanation?: string;
+  } | null>(null);
 
   // Check for active running generation job on mount (restore after refresh / tab switch)
   useEffect(() => {
@@ -718,7 +729,7 @@ export function FacultyGeneratePaper() {
   };
 
   // AI Generation in Step 2
-  const handleAiGenerate = async () => {
+  const handleAiGenerate = async (overrideCapacity = false) => {
     if (!examTitle.trim()) {
       toast.error("Please enter an exam title in Step 1.");
       return;
@@ -785,6 +796,7 @@ export function FacultyGeneratePaper() {
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
         ends_at: endsAt ? new Date(endsAt).toISOString() : null,
         display_timezone: "Asia/Kolkata",
+        accept_capacity_override: overrideCapacity,
       });
 
       setGenerationProgress(100);
@@ -803,7 +815,9 @@ export function FacultyGeneratePaper() {
         }
       }
     } catch (err: any) {
-      if (err?.response?.status === 409 && err?.response?.data?.active_job_id) {
+      if (err?.response?.status === 409 && err?.response?.data?.error_code === 'CONTENT_CAPACITY_EXCEEDED') {
+        setCapacityAdvisory(err.response.data);
+      } else if (err?.response?.status === 409 && err?.response?.data?.active_job_id) {
         toast.info("A paper generation job is already running.");
         setActiveJobId(err.response.data.active_job_id);
         setShowProgressModal(true);
@@ -1030,6 +1044,7 @@ export function FacultyGeneratePaper() {
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
         ends_at: endsAt ? new Date(endsAt).toISOString() : null,
         display_timezone: "Asia/Kolkata",
+        accept_capacity_override: overrideCapacity,
       });
 
       const published = await facultyExamApi.publishExam(examId);
@@ -2831,6 +2846,99 @@ export function FacultyGeneratePaper() {
                 >
                   Add Question
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Content Capacity Advisory Modal */}
+        {capacityAdvisory && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="bg-white rounded-3xl border border-border shadow-2xl w-full max-w-lg p-6 space-y-5 animate-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 rounded-2xl bg-amber-100 text-amber-800">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-foreground">Content Capacity Advisory</h3>
+                    <p className="text-xs text-muted-foreground">Source syllabus cannot support requested marks without duplication</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCapacityAdvisory(null)}
+                  className="rounded-lg p-1 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="rounded-2xl bg-amber-50/80 border border-amber-200 p-4 space-y-3 text-xs">
+                <p className="text-amber-950 leading-relaxed font-medium">
+                  {capacityAdvisory.detail}
+                </p>
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-amber-200/80 text-center">
+                  <div className="rounded-xl bg-white/80 p-2 border border-amber-200/60">
+                    <div className="text-[10px] text-muted-foreground font-semibold">Requested</div>
+                    <div className="text-sm font-bold text-foreground">{capacityAdvisory.requested_target_marks} M</div>
+                  </div>
+                  <div className="rounded-xl bg-white/80 p-2 border border-amber-200/60">
+                    <div className="text-[10px] text-muted-foreground font-semibold">Max Supportable</div>
+                    <div className="text-sm font-bold text-emerald-700">{capacityAdvisory.max_supportable_marks} M</div>
+                  </div>
+                  <div className="rounded-xl bg-white/80 p-2 border border-amber-200/60">
+                    <div className="text-[10px] text-muted-foreground font-semibold">Deficit</div>
+                    <div className="text-sm font-bold text-amber-800">{capacityAdvisory.deficit_marks} M</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const proposedMarks = capacityAdvisory.max_supportable_marks;
+                    const proposedBp = capacityAdvisory.proposed_adjusted_blueprint;
+                    setTotalMarks(String(proposedMarks));
+                    if (proposedBp) {
+                      setActiveBlueprint((prev: any) => {
+                        const updated = { ...prev };
+                        Object.keys(proposedBp).forEach((k) => {
+                          if (updated[k]) {
+                            updated[k] = { ...updated[k], ...proposedBp[k] };
+                          }
+                        });
+                        return updated;
+                      });
+                    }
+                    setCapacityAdvisory(null);
+                    toast.info(`Adjusted blueprint target to ${proposedMarks} marks. Click Generate to proceed.`);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-800 transition-all"
+                >
+                  <Check className="h-4 w-4" />
+                  Accept Proposed Blueprint ({capacityAdvisory.max_supportable_marks} Marks)
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapacityAdvisory(null);
+                      handleAiGenerate(true);
+                    }}
+                    className="flex-1 rounded-xl border border-border bg-slate-100 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition-all"
+                  >
+                    Proceed Anyway (Override)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCapacityAdvisory(null)}
+                    className="flex-1 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-all"
+                  >
+                    Edit Syllabus Material
+                  </button>
+                </div>
               </div>
             </div>
           </div>

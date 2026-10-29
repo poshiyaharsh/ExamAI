@@ -104,6 +104,73 @@ def compute_blueprint_total(blueprint: Union[Dict[str, Any], List[Dict[str, Any]
     return total
 
 
+def estimate_content_capacity(
+    syllabus_text: str,
+    topics: Optional[List[str]] = None,
+    target_marks: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Estimates the maximum content capacity (in marks and questions) that a source syllabus
+    can reliably support without hallucinations, duplicates, or off-scope padding.
+    """
+    import re
+    if not syllabus_text:
+        return {
+            'word_count': 0,
+            'sentence_count': 0,
+            'topic_count': 0,
+            'max_supportable_marks': 0,
+            'is_capacity_sufficient': False,
+            'reason': 'No syllabus text provided.',
+        }
+
+    raw_text = str(syllabus_text).strip()
+    words = len(raw_text.split())
+    # Substantive sentences with at least 4 words
+    sentences = [s.strip() for s in re.split(r'[.!?\n]+', raw_text) if len(s.strip().split()) >= 4]
+    sentence_count = len(sentences)
+
+    clean_topics = [t for t in (topics or []) if str(t).strip()]
+    topic_count = max(1, len(clean_topics))
+
+    # Real capacity scaling:
+    if words < 120 or sentence_count < 8:
+        max_marks = min(15, max(5, int(sentence_count * 1.5)))
+    elif words < 400 or sentence_count < 25:
+        max_marks = min(30, max(15, int(sentence_count * 1.6)))
+    elif words < 1500 or sentence_count < 100:
+        max_marks = min(80, max(35, int(sentence_count * 1.7)))
+    else:
+        max_marks = max(100, int(sentence_count * 1.8))
+
+    res = {
+        'word_count': words,
+        'sentence_count': sentence_count,
+        'topic_count': topic_count,
+        'max_supportable_marks': max_marks,
+        'is_capacity_sufficient': True,
+    }
+
+    if target_marks is not None:
+        target_dec = to_decimal(target_marks)
+        if target_dec > Decimal(str(max_marks)):
+            res['is_capacity_sufficient'] = False
+            deficit = int(target_dec - Decimal(str(max_marks)))
+            res['deficit_marks'] = deficit
+            adjusted_bp, _ = allocate_blueprint_to_target(max_marks)
+            res['suggested_target_marks'] = max_marks
+            res['proposed_adjusted_blueprint'] = adjusted_bp
+            res['explanation'] = (
+                f"The provided syllabus ({words} words across {topic_count} topic(s)) "
+                f"can support up to ~{max_marks} marks without repeating content. "
+                f"A proposed blueprint for {max_marks} marks is available."
+            )
+        else:
+            res['deficit_marks'] = 0
+
+    return res
+
+
 def estimate_exam_time(blueprint: Union[Dict[str, Any], List[Dict[str, Any]]]) -> float:
     """
     Calculates total estimated minutes to complete the paper based on question counts.

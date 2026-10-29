@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 
 from .models import Exam, Notification, PaperGenerationJob, Question, Subject
 from .permissions import IsFacultyUser
+from .tenant import get_user_institution
 from .utils.blueprint_allocator import compute_blueprint_total, to_decimal
 from .utils.generation_pipeline import (
     PAPER_HARD_DEADLINE,
@@ -602,7 +603,24 @@ def _generate_type_questions(
             if item:
                 generated.append(item)
             else:
-                logger.warning("Long answer item %s of %s could not be generated.", item_idx, count)
+                logger.warning("Long answer item %s of %s initial attempt failed; attempting immediate retry.", item_idx, count)
+                if not deadline or time.time() < deadline:
+                    alt_topic = selected_topics[item_idx % len(selected_topics)]
+                    alt_chunk = get_relevant_syllabus_chunk(syllabus_text, alt_topic, chunks_map, round_offset=round_offset + 1)
+                    retry_item = _generate_single_long_answer(
+                        model_tag=model_tag,
+                        marks_per_q=marks_per_q,
+                        topic=alt_topic,
+                        difficulty=difficulty,
+                        syllabus_chunk=alt_chunk,
+                        progress_cb=progress_cb,
+                        item_idx=item_idx,
+                        total_items=count,
+                        avoid_questions=avoid_questions,
+                        pedagogical_angle=pedagogical_angle,
+                    )
+                    if retry_item:
+                        generated.append(retry_item)
 
         return generated
 
@@ -612,7 +630,7 @@ def _generate_type_questions(
     elif canon_type == 'mcq':
         batch_size = min(8 if count >= 8 else 5, count)
     elif canon_type == 'short_answer':
-        batch_size = min(3, count)
+        batch_size = min(2, count)
     elif canon_type == 'true_false':
         batch_size = min(8, count)
     else:
@@ -793,14 +811,15 @@ def _save_generated_exam_questions(
                 continue
             raise
 
+    # Status is Completed ONLY when actual marks equal target marks
     final_status = (
-        PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
-        if (has_shortfall or warnings)
-        else PaperGenerationJob.Status.COMPLETED
+        PaperGenerationJob.Status.COMPLETED
+        if marks_shortfall == 0
+        else PaperGenerationJob.Status.COMPLETED_WITH_WARNINGS
     )
     job.status = final_status
     job.progress = 100
-    job.current_step = 'Completed with shortfall' if marks_shortfall > 0 else ('Completed with warnings' if warnings else 'Paper generated successfully')
+    job.current_step = 'Paper generated successfully' if marks_shortfall == 0 else 'Completed with shortfall'
     job.warnings = warnings
     job.question_count_generated = len(generated_questions)
     job.target_marks = int(target_marks_dec)
@@ -1058,10 +1077,13 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                         logger.info("Duplicate question rejected: %s (%s)", q.get('text', '')[:40], reason)
 
                 shortfall_c = target_c - get_accepted_counts().get(question_type, 0)
-                if shortfall_c > 0 and syllabus_text and question_type in ('mcq', 'fill_blank', 'true_false'):
+                if shortfall_c > 0 and syllabus_text and question_type in ('fill_blank', 'true_false'):
                     extract_candidates = ExtractiveGenerator.extract_candidates_from_text(syllabus_text)
                     if extract_candidates:
-                        em_items = ExtractiveGenerator.generate_fill_blank(extract_candidates, shortfall_c, marks_per_q=float(marks_per_q))
+                        if question_type == 'fill_blank':
+                            em_items = ExtractiveGenerator.generate_fill_blank(extract_candidates, shortfall_c, marks_per_q=float(marks_per_q))
+                        else:
+                            em_items = ExtractiveGenerator.generate_true_false(extract_candidates, shortfall_c, marks_per_q=float(marks_per_q))
                         for q in em_items:
                             if get_accepted_counts().get(question_type, 0) >= target_c:
                                 break
@@ -1093,11 +1115,14 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         rejected_duplicates_marks = int(round(sum(float(q['marks']) for q in dropped_items)))
         current_total_marks = int(round(sum(float(q['marks']) for q in generated_questions)))
 
-        # Closed-loop Top-up Rounds (up to 2 rounds max) - STRICTLY PER TYPE
-        MAX_TOPUP_ROUNDS = 2
+        # Closed-loop Top-up Rounds (up to 4 rounds) - STRICTLY PER TYPE
+        import os
+        MAX_TOPUP_ROUNDS = int(os.getenv('MAX_TOPUP_ROUNDS', '4'))
         TOPUP_ANGLES = [
             "Practical scenarios, real-world implementations, and applied problem-solving",
             "Comparative analysis, contrasts, tradeoffs, and distinguishing features",
+            "Underlying mechanisms, edge cases, failure modes, and architectural implications",
+            "Foundational concepts, core definitions, standard workflows, and verification",
         ]
 
         round_idx = 0
@@ -1155,8 +1180,8 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                         topup_batch_all.append(q)
 
             if not topup_batch_all:
-                logger.info("Top-up round %s yielded zero valid items; stopping top-up", round_idx)
-                break
+                logger.info("Top-up round %s yielded zero items; rotating to next angle", round_idx)
+                continue
 
             valid_topup = []
             for q in topup_batch_all:
@@ -1172,8 +1197,8 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                     dropped_items.append(q)
 
             if not valid_topup:
-                logger.info("Top-up round %s yielded only duplicate items; stopping top-up", round_idx)
-                break
+                logger.info("Top-up round %s yielded only duplicate items; continuing to next angle", round_idx)
+                continue
 
             generated_questions.extend(valid_topup)
 
@@ -1200,7 +1225,57 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
 
         generated_questions = final_contract_questions
 
-
+        # --- EXACT-FIT PASS ---
+        cur_marks_sum = int(round(sum(float(q['marks']) for q in generated_questions)))
+        if cur_marks_sum > target_marks:
+            surplus = cur_marks_sum - target_marks
+            candidates_to_drop = [q for q in generated_questions if int(round(float(q.get('marks', 0)))) == surplus]
+            if candidates_to_drop:
+                candidates_to_drop.sort(
+                    key=lambda q: (
+                        q.get('needs_review', False),
+                        -len(q.get('text', ''))
+                    ),
+                    reverse=True
+                )
+                dropped = candidates_to_drop[0]
+                generated_questions.remove(dropped)
+                dropped_dups += 1
+                rejected_duplicates_marks += surplus
+                logger.info("Exact-fit trimmed surplus question: %s (-%d marks)", dropped.get('text', '')[:30], surplus)
+        elif cur_marks_sum < target_marks and (target_marks - cur_marks_sum) <= 5 and syllabus_text:
+            deficit = target_marks - cur_marks_sum
+            fit_type = 'mcq' if deficit == 2 else ('true_false' if deficit == 1 else 'short_answer')
+            fit_chunk = get_relevant_syllabus_chunk(syllabus_text, topics[0] if topics else '', chunks_map, round_offset=8)
+            try:
+                fit_items = _generate_type_questions(
+                    question_type=fit_type,
+                    count=1,
+                    marks_per_q=float(deficit),
+                    model_name=resolved_model_tag,
+                    topics=topics,
+                    difficulty_distribution=difficulty_distribution,
+                    syllabus_text=syllabus_text,
+                    chunks_map=chunks_map,
+                    progress_cb=update_job_step,
+                    avoid_questions=[q.get('text', '') for q in generated_questions if q.get('text')],
+                    pedagogical_angle="Targeted exact fit closing question",
+                    round_offset=12,
+                    job=job,
+                    deadline=deadline,
+                    budget=budget,
+                )
+                for fq in fit_items:
+                    is_dup, _ = dup_detector.is_duplicate(fq)
+                    if not is_dup:
+                        fq['marks'] = float(deficit)
+                        fq['type'] = fit_type
+                        dup_detector.add(fq)
+                        generated_questions.append(fq)
+                        logger.info("Exact-fit added precision question (+%d marks)", deficit)
+                        break
+            except Exception as e:
+                logger.warning("Exact-fit precision addition failed: %s", e)
 
         job.current_step = 'Validating generated questions'
         job.progress = 88
@@ -1476,6 +1551,29 @@ class GeneratePaperView(APIView):
                         'invalid_topics': alien_topics,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Pre-flight content capacity check: verify source material can support target marks
+        if syllabus_text and str(syllabus_text).strip() and not request.data.get('accept_capacity_override'):
+            from .utils.blueprint_allocator import estimate_content_capacity
+            cap = estimate_content_capacity(syllabus_text, topics, total_marks)
+            if not cap.get('is_capacity_sufficient', True):
+                return Response(
+                    {
+                        'error_code': 'CONTENT_CAPACITY_EXCEEDED',
+                        'detail': (
+                            f"The uploaded syllabus ({cap['word_count']} words, {cap['sentence_count']} sentences) "
+                            f"supports a maximum of ~{cap['max_supportable_marks']} marks without repeating questions. "
+                            f"Requested target: {total_marks} marks (Deficit: {cap.get('deficit_marks', 0)} marks)."
+                        ),
+                        'requested_target_marks': total_marks,
+                        'max_supportable_marks': cap['max_supportable_marks'],
+                        'deficit_marks': cap.get('deficit_marks', 0),
+                        'proposed_adjusted_blueprint': cap.get('proposed_adjusted_blueprint'),
+                        'explanation': cap.get('explanation'),
+                        'message': 'Please accept the proposed adjusted blueprint or upload additional syllabus material.',
+                    },
+                    status=status.HTTP_409_CONFLICT,
                 )
 
         idempotency_key = request.headers.get('Idempotency-Key') or request.data.get('idempotency_key')
@@ -1824,7 +1922,7 @@ class GenerateMissingQuestionsView(APIView):
     permission_classes = [IsAuthenticated, IsFacultyUser]
 
     def post(self, request, exam_id):
-        tenant_inst = getattr(request.user, 'institution', None)
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
         exam = Exam.objects.filter(id=exam_id, institution=tenant_inst).first()
         if not exam:
             return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -1862,6 +1960,56 @@ class GenerateMissingQuestionsView(APIView):
                     needed_c = max(1, int(marks_deficit // m_per_q))
                     shortfalls[candidate_type] = needed_c
                     break
+
+        action = str(request.data.get('action') or '').strip().lower()
+
+        # Action: Scale question marks proportionally as integers to equal target marks
+        if action == 'scale_marks':
+            if not existing_questions:
+                return Response({'detail': 'No questions to scale.'}, status=status.HTTP_400_BAD_REQUEST)
+            cur_sum = sum(float(q.marks) for q in existing_questions)
+            if cur_sum <= 0:
+                return Response({'detail': 'Question marks sum must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
+            target = int(exam.target_total_marks or target_marks)
+            floors = []
+            remainders = []
+            for idx, q in enumerate(existing_questions):
+                exact = (float(q.marks) / cur_sum) * target
+                fl = max(1, int(exact))
+                floors.append(fl)
+                remainders.append((exact - fl, idx))
+            diff = target - sum(floors)
+            remainders.sort(key=lambda t: t[0], reverse=True)
+            for d in range(diff):
+                floors[remainders[d % len(existing_questions)][1]] += 1
+            with transaction.atomic():
+                for idx, q in enumerate(existing_questions):
+                    q.marks = floors[idx]
+                    q.rubric = repair_rubric_marks(q.rubric, float(q.marks))
+                    q.save(update_fields=['marks', 'rubric'])
+                exam.total_marks = target
+                exam.marks_shortfall = 0
+                exam.save(update_fields=['total_marks', 'marks_shortfall', 'updated_at'])
+            return Response({
+                'detail': f'Scaled question marks as integers to equal {target} marks exactly.',
+                'actual_total_marks': target,
+                'target_total_marks': target,
+                'marks_shortfall': 0,
+            }, status=status.HTTP_200_OK)
+
+        # Action: Set total marks to current total (accept current total as target)
+        if action == 'set_total':
+            actual_total = int(round(sum(float(q.marks) for q in existing_questions)))
+            exam.total_marks = actual_total
+            exam.target_total_marks = actual_total
+            exam.marks_shortfall = 0
+            exam.save(update_fields=['total_marks', 'target_total_marks', 'marks_shortfall', 'updated_at'])
+            return Response({
+                'detail': f'Target total marks set to current total ({actual_total} marks). Shortfall cleared.',
+                'actual_total_marks': actual_total,
+                'target_total_marks': actual_total,
+                'marks_shortfall': 0,
+            }, status=status.HTTP_200_OK)
 
         if not shortfalls and marks_deficit == 0:
             return Response({

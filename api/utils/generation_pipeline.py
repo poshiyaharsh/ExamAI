@@ -170,9 +170,11 @@ class DuplicateDetector:
             if ratio >= 0.85:
                 return True, f"High sequence similarity (ratio {ratio:.2f}) with question #{idx + 1}"
 
-            # 3. Same answer and stem similarity >= 0.5
+            # 3. Same answer and stem similarity >= 0.65 (excluding boolean/single-letter options)
             exist_ans = str(exist.get('correct_answer') or '').strip().lower()
-            if cand_ans and exist_ans and cand_ans == exist_ans and ratio >= 0.50:
+            cand_type = str(candidate.get('question_type') or candidate.get('type') or '').lower()
+            is_simple_opt_ans = cand_ans in {'true', 'false', 't', 'f', 'a', 'b', 'c', 'd', '1', '0'} or 'true_false' in cand_type
+            if not is_simple_opt_ans and cand_ans and exist_ans and cand_ans == exist_ans and ratio >= 0.65:
                 return True, f"Identical answer with high stem similarity ({ratio:.2f}) with question #{idx + 1}"
 
             # 4. Subjective key points Jaccard >= 0.6
@@ -381,24 +383,25 @@ def generate_pending_subjective_answers_task(exam_id: int):
     Background worker that enriches 6+ mark subjective questions with full model answers.
     Executes in a separate thread without holding database transactions open during generation.
     """
-    from api.models import Question
-    from api.utils.evaluation_config import OLLAMA_MODEL
-    logger.info("Starting background subjective answer generation for Exam %s", exam_id)
+    try:
+        from api.models import Question
+        from api.utils.evaluation_config import OLLAMA_MODEL
+        logger.info("Starting background subjective answer generation for Exam %s", exam_id)
 
-    pending_qs = Question.objects.filter(
-        exam_id=exam_id,
-        question_type__in=['long_answer', 'subjective'],
-        is_deleted=False,
-    ).exclude(model_answer__regex=r'^\s*\S+(?:\s+\S+){25,}')
+        pending_qs = Question.objects.filter(
+            exam_id=exam_id,
+            question_type__in=['long_answer', 'subjective'],
+            is_deleted=False,
+        ).exclude(model_answer__regex=r'^\s*\S+(?:\s+\S+){25,}')
 
-    if not pending_qs.exists():
-        logger.info("No pending subjective model answers needed for Exam %s", exam_id)
-        return
+        if not pending_qs.exists():
+            logger.info("No pending subjective model answers needed for Exam %s", exam_id)
+            return
 
-    model_tag = resolve_model(OLLAMA_MODEL)
+        model_tag = resolve_model(OLLAMA_MODEL)
 
-    for q in pending_qs:
-        prompt = f"""You are an expert university examiner. Write a comprehensive, high-scoring model answer (150-300 words)
+        for q in pending_qs:
+            prompt = f"""You are an expert university examiner. Write a comprehensive, high-scoring model answer (150-300 words)
 for this exam question worth {q.marks} marks:
 
 Question: {q.text}
@@ -415,26 +418,28 @@ Return JSON shape:
 }}
 Return JSON only."""
 
-        try:
-            raw = call_ollama(
-                model=model_tag,
-                prompt=prompt,
-                format_schema='json',
-                temperature=0.2,
-                num_predict=600,
-                keep_alive=OLLAMA_KEEP_ALIVE,
-                timeout=60,
-            )
-            parsed = parse_json_safely(raw)
-            ans = ""
-            if isinstance(parsed, dict):
-                ans = str(parsed.get('model_answer') or '').strip()
-            if ans and len(ans.split()) >= 20:
-                q.model_answer = ans
-                q.save(update_fields=['model_answer'])
-                logger.info("Successfully populated background model answer for Question %s", q.id)
-        except Exception as exc:
-            logger.warning("Failed to generate background model answer for Question %s: %s", q.id, exc)
+            try:
+                raw = call_ollama(
+                    model=model_tag,
+                    prompt=prompt,
+                    format_schema='json',
+                    temperature=0.2,
+                    num_predict=600,
+                    keep_alive=OLLAMA_KEEP_ALIVE,
+                    timeout=60,
+                )
+                parsed = parse_json_safely(raw)
+                ans = ""
+                if isinstance(parsed, dict):
+                    ans = str(parsed.get('model_answer') or '').strip()
+                if ans and len(ans.split()) >= 20:
+                    q.model_answer = ans
+                    q.save(update_fields=['model_answer'])
+                    logger.info("Successfully populated background model answer for Question %s", q.id)
+            except Exception as exc:
+                logger.warning("Failed to generate background model answer for Question %s: %s", q.id, exc)
+    except Exception as outer_exc:
+        logger.warning("Background subjective answer enrichment encountered: %s", outer_exc)
 
 
 def launch_background_subjective_answers(exam_id: int):

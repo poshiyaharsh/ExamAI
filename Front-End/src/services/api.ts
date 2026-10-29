@@ -1620,6 +1620,7 @@ export const facultyPaperApi = {
     starts_at?: string | null;
     ends_at?: string | null;
     display_timezone?: string;
+    accept_capacity_override?: boolean;
   }): Promise<GenerateExamResponse> => {
     const formData = new FormData();
     formData.append("title", payload.title);
@@ -1641,6 +1642,7 @@ export const facultyPaperApi = {
     if (payload.starts_at) formData.append("starts_at", payload.starts_at);
     if (payload.ends_at) formData.append("ends_at", payload.ends_at);
     if (payload.display_timezone) formData.append("display_timezone", payload.display_timezone);
+    if (payload.accept_capacity_override) formData.append("accept_capacity_override", "true");
 
     const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
