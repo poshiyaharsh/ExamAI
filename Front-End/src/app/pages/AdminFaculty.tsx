@@ -176,6 +176,17 @@ export function AdminFaculty() {
   const [selectedFaculty, setSelectedFaculty] = useState<AdminFacultyRow | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [isViewOpen, setIsViewOpen] = useState(false);
+
+  // Auto-open View drawer via URL parameter (?view=<id> or ?faculty_id=<id>)
+  useEffect(() => {
+    const viewParam = searchParams.get("view") || searchParams.get("faculty_id");
+    if (viewParam) {
+      const parsedId = parseInt(viewParam, 10);
+      if (!isNaN(parsedId) && parsedId > 0) {
+        handleViewFaculty(parsedId);
+      }
+    }
+  }, [searchParams]);
   const [copiedFacultyField, setCopiedFacultyField] = useState<string | null>(null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -1372,7 +1383,7 @@ export function AdminFaculty() {
                 {/* Sticky Drawer Header */}
                 <div className="p-5 sm:p-6 bg-gradient-to-br from-indigo-500/10 via-background to-primary/10 border-b border-border shrink-0">
                   <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-4 min-w-0">
+                    <div className="flex items-start gap-4 min-w-0 pr-10">
                       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-primary text-white font-extrabold text-xl flex items-center justify-center shadow-md shrink-0">
                         {getFacultyInitials(selectedFaculty.full_name)}
                       </div>
@@ -1406,10 +1417,7 @@ export function AdminFaculty() {
                         </div>
                       </div>
                     </div>
-                    <SheetClose className="p-1.5 rounded-lg border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                      <X className="w-4 h-4" />
-                      <span className="sr-only">Close</span>
-                    </SheetClose>
+                    
                   </div>
                 </div>
 

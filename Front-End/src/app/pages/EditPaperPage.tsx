@@ -93,8 +93,8 @@ function questionPayload(question: ExamQuestion) {
       ? Number(question.correct_answer)
       : question.correct_answer;
   return {
-    question_type: canonType,
-    difficulty: canonicalizeDifficulty(question.difficulty),
+    question_type: canonType as any,
+    difficulty: canonicalizeDifficulty(question.difficulty) as any,
     text: question.text,
     options: question.options,
     correct_answer: correctAnswer,

@@ -802,6 +802,7 @@ export type FacultyDashboardStats = {
 };
 
 export type FacultyOngoingExamItem = {
+  max_warnings?: number;
   id: number;
   title: string;
   subject: string;

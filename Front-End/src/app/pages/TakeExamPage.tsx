@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { studentExamApi, type StudentExamStartResponse } from "../../services/api";
+import { studentExamApi, type ProctoringViolationResponse, type StudentExamStartResponse } from "../../services/api";
 
 const optionLabels = ["A", "B", "C", "D", "E", "F"];
 

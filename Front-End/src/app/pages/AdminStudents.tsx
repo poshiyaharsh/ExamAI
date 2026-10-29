@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import {
   Search,
@@ -160,7 +160,19 @@ export function AdminStudents() {
   });
 
   // Profile View Drawer
+  const [searchParams, setSearchParams] = useSearchParams();
   const [isViewOpen, setIsViewOpen] = useState(false);
+
+  // Auto-open View drawer via URL parameter (?view=<id> or ?student_id=<id>)
+  useEffect(() => {
+    const viewParam = searchParams.get("view") || searchParams.get("student_id");
+    if (viewParam) {
+      const parsedId = parseInt(viewParam, 10);
+      if (!isNaN(parsedId) && parsedId > 0) {
+        handleViewStudent(parsedId);
+      }
+    }
+  }, [searchParams]);
   const [viewLoading, setViewLoading] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<AdminStudentDetails | null>(null);
   const [viewError, setViewError] = useState("");
@@ -393,8 +405,8 @@ export function AdminStudents() {
 
     try {
       const resResults = await adminStudentsApi.getStudentResults(studentId);
-      if (resResults.status === "success" && resResults.data?.attempts) {
-        setDrawerResults(resResults.data.attempts);
+      if (resResults.status === "success" && resResults.data?.results) {
+        setDrawerResults(resResults.data.results);
       } else {
         setDrawerResults([]);
       }
@@ -1573,7 +1585,7 @@ export function AdminStudents() {
               {/* Sticky Drawer Header */}
               <div className="p-5 sm:p-6 bg-gradient-to-br from-primary/10 via-background to-secondary/10 border-b border-border shrink-0">
                 <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-4 min-w-0">
+                  <div className="flex items-start gap-4 min-w-0 pr-10">
                     <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-secondary text-white font-extrabold text-xl flex items-center justify-center shadow-md shrink-0">
                       {getStudentInitials(selectedStudent.full_name)}
                     </div>
@@ -1601,10 +1613,7 @@ export function AdminStudents() {
                       </div>
                     </div>
                   </div>
-                  <SheetClose className="p-1.5 rounded-lg border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                    <X className="w-4 h-4" />
-                    <span className="sr-only">Close</span>
-                  </SheetClose>
+                  
                 </div>
               </div>
 

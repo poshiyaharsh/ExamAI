@@ -1,5 +1,5 @@
 import axios from "axios";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
 import {
@@ -1183,7 +1183,6 @@ export function FacultyGeneratePaper() {
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
         ends_at: endsAt ? new Date(endsAt).toISOString() : null,
         display_timezone: "Asia/Kolkata",
-        accept_capacity_override: overrideCapacity,
       });
 
       const published = await facultyExamApi.publishExam(examId);
@@ -1756,7 +1755,7 @@ export function FacultyGeneratePaper() {
                   <button
                     type="button"
                     disabled={isGenerating || blueprintSummary.blueprintMarks !== targetMarksNum}
-                    onClick={handleAiGenerate}
+                    onClick={() => void handleAiGenerate(false)}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
                   >
                     <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating Paper..." : "Generate with AI"}
@@ -1910,7 +1909,7 @@ export function FacultyGeneratePaper() {
                             {cleanTopics
                               .filter((t) => !parsedSyllabus.topics.some((st) => st.toLowerCase() === t.toLowerCase()))
                               .map((mt, mtIdx) => {
-                                const existsInDoc = checkTopicExistsInPreview(mt, parsedSyllabus.preview_snippet);
+                                const existsInDoc = checkTopicExistsInPreview(mt, parsedSyllabus.preview);
                                 return (
                                   <div
                                     key={mtIdx}
@@ -3368,7 +3367,7 @@ export function FacultyGeneratePaper() {
                     const proposedBp = capacityAdvisory.proposed_adjusted_blueprint;
                     setTotalMarks(String(proposedMarks));
                     if (proposedBp) {
-                      setActiveBlueprint((prev: any) => {
+                      setBlueprint((prev: any) => {
                         const updated = { ...prev };
                         Object.keys(proposedBp).forEach((k) => {
                           if (updated[k]) {
