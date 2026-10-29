@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   Cpu,
+  Database,
   FileCheck2,
   FileText,
   Loader2,
@@ -41,6 +42,13 @@ export function canonicalizeQuestionType(raw: string | undefined | null): string
   if (s === "short_answer" || s === "short") return "short_answer";
   if (s === "long_answer" || s === "subjective" || s === "long") return "long_answer";
   return s;
+}
+
+export function getOptionText(opt: any): string {
+  if (opt === null || opt === undefined) return "";
+  if (typeof opt === "string") return opt;
+  if (typeof opt === "object" && "text" in opt) return String(opt.text ?? "");
+  return String(opt);
 }
 
 export function canonicalizeDifficulty(raw: string | undefined | null): string {
@@ -653,7 +661,8 @@ export function EditPaperPage() {
     // Check duplicate texts
     const seenTexts = new Set<string>();
     exam.questions.forEach((q, idx) => {
-      const normalized = q.text.trim().toLowerCase();
+      const qText = q.text || "";
+      const normalized = qText.trim().toLowerCase();
       if (seenTexts.has(normalized)) {
         warnings.push(`Question ${q.order || idx + 1} has duplicate or near-duplicate text.`);
       }
@@ -663,12 +672,12 @@ export function EditPaperPage() {
       const canonType = canonicalizeQuestionType(q.question_type);
       if (canonType === "mcq" && q.options && q.options.length > 0) {
         const correctStr = String(q.correct_answer ?? "").trim().toLowerCase();
-        const cleanOpts = q.options.map((o) => o.trim().toLowerCase());
+        const cleanOpts = q.options.map((o) => getOptionText(o).trim().toLowerCase());
         const isLetter = ["a", "b", "c", "d"].includes(correctStr);
         const isNum = ["0", "1", "2", "3"].includes(correctStr);
         const isInList = cleanOpts.includes(correctStr);
         if (!isLetter && !isNum && !isInList && correctStr) {
-          warnings.push(`Question ${q.order || idx + 1} ("${q.text.slice(0, 35)}..."): Correct answer does not match any listed option.`);
+          warnings.push(`Question ${q.order || idx + 1} ("${qText.slice(0, 35)}..."): Correct answer does not match any listed option.`);
         }
       }
     });
@@ -1095,6 +1104,11 @@ export function EditPaperPage() {
                               Unit: {question.topic}
                             </span>
                           )}
+                          {(question.source === "question_bank" || question.source === "faculty_upload") && (
+                            <span className="rounded-full bg-purple-50 border border-purple-200 text-purple-700 px-2.5 py-0.5 text-xs font-semibold flex items-center gap-1">
+                              <Database className="h-3 w-3" /> Question Bank
+                            </span>
+                          )}
                           {(question.is_off_scope || question.scope_status === "off_scope") && (
                             <span
                               className="rounded-full bg-rose-50 border border-rose-300 text-rose-800 px-2.5 py-0.5 text-xs font-bold flex items-center gap-1"
@@ -1177,7 +1191,8 @@ export function EditPaperPage() {
                             Options & Correct Choice
                           </label>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {question.options.map((opt, oIdx) => {
+                            {question.options.map((rawOpt, oIdx) => {
+                              const opt = getOptionText(rawOpt);
                               const letter = String.fromCharCode(65 + oIdx);
                               const isSelected =
                                 String(question.correct_answer).toUpperCase() === letter ||
@@ -1207,7 +1222,7 @@ export function EditPaperPage() {
                                     disabled={isPublished}
                                     value={opt}
                                     onChange={(e) => {
-                                      const next = [...question.options!];
+                                      const next = (question.options || []).map(getOptionText);
                                       next[oIdx] = e.target.value;
                                       updateQuestion(question.id, { options: next });
                                     }}

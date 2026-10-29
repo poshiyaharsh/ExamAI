@@ -264,7 +264,7 @@ export type ExamQuestion = {
   accepted_answers?: string[][];
   rubric?: RubricItem[] | string[];
   word_limit?: number | null;
-  source?: "ai_generated" | "manual";
+  source?: "ai_generated" | "manual" | "question_bank" | "faculty_upload";
   marks: number;
   topic: string;
   source_evidence?: string;

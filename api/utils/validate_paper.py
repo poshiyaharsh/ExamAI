@@ -462,7 +462,7 @@ def audit_question_scope(question_obj, syllabus_text: str, selected_topics: list
         'grounding_verified': bool,
     }
     """
-    if getattr(question_obj, 'source', '') == 'manual':
+    if getattr(question_obj, 'source', '') in ('manual', 'question_bank', 'faculty_upload'):
         return {
             'in_scope': True,
             'reason': 'Manually authored question (excluded from scope check)',
