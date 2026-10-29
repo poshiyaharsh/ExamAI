@@ -21,6 +21,7 @@ from .models import Exam, Notification, PaperGenerationJob, Question, Subject
 from .permissions import IsFacultyUser
 from .tenant import get_user_institution
 from .utils.blueprint_allocator import compute_blueprint_total, to_decimal
+from .utils.validate_paper import allocate_difficulties
 from .utils.generation_pipeline import (
     PAPER_HARD_DEADLINE,
     PAPER_LLM_BUDGET,
@@ -588,12 +589,7 @@ def _generate_type_questions(
     # Handle Long Answer / Subjective with two-step generation
     if canon_type == 'long_answer':
         selected_topics = list(topics) if topics else ['General']
-        difficulties = []
-        for diff, pct in (difficulty_distribution or {'medium': 100}).items():
-            diff_count = max(1, int(round((float(pct) / 100.0) * count))) if float(pct) > 0 else 0
-            difficulties.extend([diff] * diff_count)
-        while len(difficulties) < count:
-            difficulties.append('medium')
+        difficulties = allocate_difficulties(count, difficulty_distribution)
 
         for item_idx in range(1, count + 1):
             if (deadline and time.time() > deadline) or (budget and not budget.can_afford_llm_call(model_tag)):
@@ -704,6 +700,10 @@ def _generate_type_questions(
                 job=job,
             )
             generated.extend(retry_batch[:shortfall])
+
+    target_diffs = allocate_difficulties(len(generated), difficulty_distribution)
+    for idx, item in enumerate(generated):
+        item['difficulty'] = target_diffs[idx]
 
     return generated
 
@@ -939,9 +939,14 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         for q_type in target_counts:
             m_val = MARKS_PER_TYPE.get(q_type, 1)
             if blueprint and isinstance(blueprint, dict):
-                cfg = blueprint.get(q_type) or {}
+                cfg = blueprint.get(q_type)
+                if not cfg:
+                    for bk, bv in blueprint.items():
+                        if canonicalize_type(bk) == q_type:
+                            cfg = bv
+                            break
                 if isinstance(cfg, dict):
-                    bp_m = cfg.get('marksPerQuestion') or cfg.get('marks')
+                    bp_m = cfg.get('marksPerQuestion') or cfg.get('marks') or cfg.get('marks_per_question')
                     if bp_m is not None:
                         try:
                             m_val = float(bp_m)
@@ -1185,12 +1190,25 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         ]
 
         round_idx = 0
+        topup_added_marks = 0
         while round_idx < MAX_TOPUP_ROUNDS:
             cur_counts = get_accepted_counts()
+            cur_marks_sum = int(round(sum(float(q.get('marks', 1)) for q in generated_questions)))
+            marks_deficit = max(0, target_marks - cur_marks_sum)
             needed_by_type = {t: target_counts[t] - cur_counts.get(t, 0) for t in target_counts if target_counts[t] > cur_counts.get(t, 0)}
-            if not needed_by_type:
-                # All blueprint counts met!
+
+            if not needed_by_type and marks_deficit <= 0:
+                # All blueprint counts and target marks met!
                 break
+
+            if not needed_by_type and marks_deficit > 0:
+                # Counts fulfilled but marks deficit remains: select a blueprint type to satisfy remaining marks
+                eligible = [t for t in target_counts if target_marks_per_type.get(t, 1.0) <= marks_deficit]
+                if not eligible:
+                    eligible = list(target_counts.keys())
+                chosen = min(eligible, key=lambda t: abs(marks_deficit - target_marks_per_type.get(t, 1.0)))
+                m_per_q = target_marks_per_type.get(chosen, 1.0)
+                needed_by_type[chosen] = max(1, int(round(marks_deficit / m_per_q))) if m_per_q > 0 else 1
 
             if not budget.can_afford_llm_call(resolved_model_tag) or time.time() > deadline:
                 logger.warning("Paper generation reached deadline during top-up; preserving current items.")
@@ -1259,6 +1277,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 logger.info("Top-up round %s yielded only duplicate items; continuing to next angle", round_idx)
                 continue
 
+            topup_added_marks += int(round(sum(float(q.get('marks', 1)) for q in valid_topup)))
             generated_questions.extend(valid_topup)
 
         # Enforce exact blueprint contract per type: trim any over-generation buffer by quality
@@ -1280,6 +1299,12 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 type_qs = type_qs[:target_c]
             elif len(type_qs) < target_c:
                 shortfall_by_type[q_type] = target_c - len(type_qs)
+
+            # Assign stratified difficulties deterministically matching difficulty_distribution
+            type_diffs = allocate_difficulties(len(type_qs), difficulty_distribution)
+            for idx, q_item in enumerate(type_qs):
+                q_item['difficulty'] = type_diffs[idx]
+
             final_contract_questions.extend(type_qs)
 
         generated_questions = final_contract_questions
@@ -1302,9 +1327,24 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 dropped_dups += 1
                 rejected_duplicates_marks += surplus
                 logger.info("Exact-fit trimmed surplus question: %s (-%d marks)", dropped.get('text', '')[:30], surplus)
-        elif cur_marks_sum < target_marks and (target_marks - cur_marks_sum) <= 5 and syllabus_text:
+        elif cur_marks_sum < target_marks and (target_marks - cur_marks_sum) <= 10 and syllabus_text:
             deficit = target_marks - cur_marks_sum
-            fit_type = 'mcq' if deficit == 2 else ('true_false' if deficit == 1 else 'short_answer')
+            fit_type = 'mcq'
+            for t in target_counts:
+                if int(round(target_marks_per_type.get(t, 1))) == deficit:
+                    fit_type = t
+                    break
+            else:
+                if deficit >= 10 and 'long_answer' in target_counts:
+                    fit_type = 'long_answer'
+                elif deficit >= 5 and 'short_answer' in target_counts:
+                    fit_type = 'short_answer'
+                elif deficit == 2 and 'mcq' in target_counts:
+                    fit_type = 'mcq'
+                elif deficit == 1 and 'true_false' in target_counts:
+                    fit_type = 'true_false'
+                else:
+                    fit_type = 'mcq' if deficit % 2 == 0 else 'true_false'
             fit_chunk = get_relevant_syllabus_chunk(syllabus_text, topics[0] if topics else '', chunks_map, round_offset=8)
             try:
                 fit_items = _generate_type_questions(
@@ -1363,6 +1403,7 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 "generated_marks": initial_generated_marks,
                 "rejected_duplicates_count": dropped_dups,
                 "rejected_duplicates_marks": rejected_duplicates_marks,
+                "topup_added_marks": topup_added_marks,
                 "flagged_for_review_count": needs_review_count,
                 "accepted_questions_count": len(generated_questions),
                 "actual_total_marks": actual_total_marks,
@@ -1370,13 +1411,33 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 "topup_rounds_run": round_idx,
             }
         }
-        warnings.append(f"Marks waterfall: Planned {planned_marks}M -> Generated {initial_generated_marks}M -> Rejected dups -{rejected_duplicates_marks}M -> Final {actual_total_marks}M of {target_marks}M target.")
+        initial_shortfall = max(0, planned_marks - initial_generated_marks)
+        waterfall_parts = [f"Planned {planned_marks}M", f"Generated {initial_generated_marks}M"]
+        if initial_shortfall > 0:
+            waterfall_parts[-1] += f" (Initial shortfall: {initial_shortfall}M)"
+        if rejected_duplicates_marks > 0 or dropped_dups > 0:
+            waterfall_parts.append(f"Rejected dups -{rejected_duplicates_marks}M")
+        if topup_added_marks > 0:
+            waterfall_parts.append(f"Top-ups +{topup_added_marks}M")
+        waterfall_parts.append(f"Final {actual_total_marks}M of {target_marks}M target")
+        warnings.append("Marks waterfall: " + " -> ".join(waterfall_parts) + ".")
 
         if marks_shortfall > 0:
             has_shortfall = True
+            if time.time() > deadline or (budget and not budget.can_afford_llm_call(resolved_model_tag)):
+                reason_msg = "Stopped because the generation time/LLM budget was reached."
+            elif round_idx > 0:
+                reason_msg = f"Completed after {round_idx} top-up round(s). Available material was insufficient for further non-duplicate questions."
+            else:
+                reason_msg = "All requested question slots were fulfilled."
             warnings.insert(
                 0,
-                f"Generated {actual_total_marks} of {target_marks} marks ({marks_shortfall} marks short) after {round_idx} top-up rounds. The selected content is exhausted."
+                f"Generated {actual_total_marks} of {target_marks} marks ({marks_shortfall} marks short). {reason_msg}"
+            )
+        else:
+            warnings.insert(
+                0,
+                f"Successfully generated all {target_marks} marks across {len(generated_questions)} questions matching your blueprint."
             )
 
         # Step: Saving draft

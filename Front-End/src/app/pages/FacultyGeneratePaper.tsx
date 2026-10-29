@@ -501,8 +501,26 @@ export function FacultyGeneratePaper() {
       endsAt,
       topics,
       examId,
+      blueprint,
+      difficultyMode,
+      difficultyMix,
     });
-  }, [isDirty, currentUser?.id, currentStep, examTitle, subjectName, duration, totalMarks, startsAt, endsAt, topics, examId]);
+  }, [
+    isDirty,
+    currentUser?.id,
+    currentStep,
+    examTitle,
+    subjectName,
+    duration,
+    totalMarks,
+    startsAt,
+    endsAt,
+    topics,
+    examId,
+    blueprint,
+    difficultyMode,
+    difficultyMix,
+  ]);
 
   // Fetch Faculty Profile to Lock Department
   useEffect(() => {
@@ -778,6 +796,14 @@ export function FacultyGeneratePaper() {
     setTopics(detectedDraft.topics && detectedDraft.topics.length ? detectedDraft.topics : []);
     if (detectedDraft.examId) setExamId(detectedDraft.examId);
     if (detectedDraft.currentStep) setCurrentStep(detectedDraft.currentStep);
+    if (detectedDraft.blueprint) {
+      setBlueprint(detectedDraft.blueprint);
+      try {
+        localStorage.setItem("examai_faculty_blueprint_customized", "true");
+      } catch {}
+    }
+    if (detectedDraft.difficultyMode) setDifficultyMode(detectedDraft.difficultyMode);
+    if (detectedDraft.difficultyMix) setDifficultyMix(detectedDraft.difficultyMix);
 
     // Validate if saved start time is in past
     const s = new Date(detectedDraft.startsAt).getTime();
@@ -882,7 +908,7 @@ export function FacultyGeneratePaper() {
       return;
     }
 
-    const activeBlueprint: Record<string, { count: number; marks: number; marksPerQuestion: number }> = {};
+    const activeBlueprint: Record<string, { count: number; marks: number; marksPerQuestion: number; enabled: boolean }> = {};
     const activeTypes: string[] = [];
     (Object.keys(blueprint) as (keyof BlueprintState)[]).forEach((typeKey) => {
       if (blueprint[typeKey].enabled && blueprint[typeKey].count > 0) {
@@ -890,6 +916,7 @@ export function FacultyGeneratePaper() {
           count: blueprint[typeKey].count,
           marks: blueprint[typeKey].marks,
           marksPerQuestion: blueprint[typeKey].marks,
+          enabled: true,
         };
         activeTypes.push(typeKey);
       }

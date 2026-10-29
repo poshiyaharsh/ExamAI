@@ -17,6 +17,9 @@ export interface WizardDraftData {
   endsAt: string;
   topics: string[];
   examId: number | null;
+  blueprint?: any;
+  difficultyMode?: "mixed" | "easy" | "medium" | "hard";
+  difficultyMix?: { easy: number; medium: number; hard: number };
 }
 
 const WIZARD_DRAFT_VERSION = 3;

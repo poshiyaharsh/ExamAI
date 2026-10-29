@@ -66,6 +66,41 @@ def canonicalize_difficulty(diff: str) -> str:
     return 'medium'
 
 
+def allocate_difficulties(count: int, difficulty_distribution: dict) -> list:
+    """
+    Deterministically allocates 'easy', 'medium', 'hard' counts matching difficulty_distribution.
+    Uses Hamilton-Hare largest remainder method for exact integer apportionment summing to count.
+    """
+    if count <= 0:
+        return []
+    if not difficulty_distribution or not isinstance(difficulty_distribution, dict):
+        return ['medium'] * count
+
+    diff_order = ['easy', 'medium', 'hard']
+    norm_dist = {}
+    total_pct = sum(float(difficulty_distribution.get(d, 0) or 0) for d in diff_order)
+    if total_pct <= 0:
+        return ['medium'] * count
+
+    for d in diff_order:
+        norm_dist[d] = (float(difficulty_distribution.get(d, 0) or 0) / total_pct) * 100.0
+
+    alloc = {d: int((norm_dist[d] / 100.0) * count) for d in diff_order}
+    remainder = count - sum(alloc.values())
+    fractions = sorted(
+        diff_order,
+        key=lambda d: ((norm_dist[d] / 100.0) * count) - alloc[d],
+        reverse=True
+    )
+    for i in range(remainder):
+        alloc[fractions[i % len(fractions)]] += 1
+
+    result = []
+    for d in diff_order:
+        result.extend([d] * alloc[d])
+    return result
+
+
 def _normalise_correct_answer(question_type, raw_answer, options):
     canon = canonicalize_type(question_type)
     if canon == 'true_false':
@@ -114,7 +149,7 @@ def compute_question_counts(question_types, total_marks, blueprint=None):
                 c = int(config.get('count', 0))
                 if c > 0:
                     c_type = canonicalize_type(q_type)
-                    counts[c_type] = c
+                    counts[c_type] = counts.get(c_type, 0) + c
         actual_total = compute_blueprint_total(blueprint)
         return counts, float(actual_total)
 
