@@ -62,6 +62,7 @@ const AdminQuestionBank = lazy(() => import("./pages/AdminQuestionBank").then((m
 const AdminFaculty = lazy(() => import("./pages/AdminFaculty").then((m) => ({ default: m.AdminFaculty })));
 const FacultyDashboard = lazy(() => import("./pages/FacultyDashboard").then((m) => ({ default: m.FacultyDashboard })));
 const FacultyGeneratePaper = lazy(() => import("./pages/FacultyGeneratePaper").then((m) => ({ default: m.FacultyGeneratePaper })));
+const FacultyCreateBankPaper = lazy(() => import("./pages/FacultyCreateBankPaper").then((m) => ({ default: m.FacultyCreateBankPaper })));
 const FacultyGeneratingPaper = lazy(() => import("./pages/FacultyGeneratingPaper").then((m) => ({ default: m.FacultyGeneratingPaper })));
 const FacultyExamHistory = lazy(() => import("./pages/FacultyExamHistory").then((m) => ({ default: m.FacultyExamHistory })));
 const FacultyLiveMonitor = lazy(() => import("./pages/FacultyLiveMonitor").then((m) => ({ default: m.FacultyLiveMonitor })));
@@ -167,6 +168,14 @@ export const router = createBrowserRouter([
     Component: () => (
       <FacultyOnly>
         <FacultyGeneratePaper />
+      </FacultyOnly>
+    ),
+  },
+  {
+    path: "/faculty/create-bank-paper",
+    Component: () => (
+      <FacultyOnly>
+        <FacultyCreateBankPaper />
       </FacultyOnly>
     ),
   },

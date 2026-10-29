@@ -13,11 +13,23 @@ import {
   AlertCircle,
   Info,
   Check,
+  LayoutDashboard,
+  Sparkles,
+  Database,
+  History,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../context/useAuth";
 import { ADMIN_SIDEBAR_ITEMS, AdminSidebar } from "./AdminSidebar";
 import { authApi, notificationApi, type AppNotification } from "../../services/api";
+
+export const FACULTY_SIDEBAR_ITEMS = [
+  { label: "Dashboard", path: "/faculty", icon: LayoutDashboard },
+  { label: "Generate Paper (AI)", path: "/faculty/generate", icon: Sparkles },
+  { label: "Create Paper (Question Bank)", path: "/faculty/create-bank-paper", icon: Database },
+  { label: "Exam History", path: "/faculty/history", icon: History },
+  { label: "Settings", path: "/faculty/settings", icon: Settings },
+];
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -39,7 +51,12 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const navigate = useNavigate();
   const { session, clearAuthenticatedSession } = useAuth();
   const isAdminLayout = userRole.toLowerCase() === "admin";
-  const sidebarItems = isAdminLayout ? ADMIN_SIDEBAR_ITEMS : menuItems ?? [];
+  const isFacultyLayout = userRole.toLowerCase() === "faculty";
+  const sidebarItems = isAdminLayout
+    ? ADMIN_SIDEBAR_ITEMS
+    : isFacultyLayout
+    ? FACULTY_SIDEBAR_ITEMS
+    : menuItems ?? [];
   const dashboardPath = sidebarItems[0]?.path || "/";
 
   useEffect(() => {
