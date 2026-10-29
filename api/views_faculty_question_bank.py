@@ -14,7 +14,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
@@ -493,7 +493,9 @@ class FacultyQuestionBankListView(APIView):
 
         subject_id = params.get('subject_id') or params.get('subject')
         if subject_id:
-            if str(subject_id).isdigit():
+            if str(subject_id).lower() in ('general', 'uncategorized', 'none', 'null'):
+                qs = qs.filter(subject__isnull=True)
+            elif str(subject_id).isdigit():
                 qs = qs.filter(subject_id=int(subject_id))
             else:
                 qs = qs.filter(subject__name__icontains=str(subject_id))
@@ -524,11 +526,13 @@ class FacultyQuestionBankListView(APIView):
             items.append({
                 'id': q.id,
                 'text': q.text,
+                'question_text': q.text,
                 'question_type': q.question_type,
                 'difficulty': q.difficulty,
                 'marks': float(q.marks),
                 'topic': q.topic_text,
                 'subject': q.subject.name if q.subject else '',
+                'subject_name': q.subject.name if q.subject else '',
                 'subject_id': q.subject_id,
                 'department': q.department,
                 'options': opts,
@@ -547,6 +551,56 @@ class FacultyQuestionBankListView(APIView):
             'offset': offset,
             'questions': items,
         }, status=status.HTTP_200_OK)
+
+
+class FacultyQuestionBankBanksView(APIView):
+    """
+    GET /api/faculty/question-bank/banks/
+    Returns accessible question banks / subjects with active question counts.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def get(self, request):
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant_inst:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        faculty_dept = get_faculty_department(request.user) or ''
+
+        base_qs = Question.objects.filter(
+            institution=tenant_inst,
+            exam__isnull=True,
+            is_deleted=False,
+            status=Question.Status.ACTIVE,
+        ).filter(
+            Q(created_by=request.user) | Q(is_shared=True, department=faculty_dept)
+        )
+
+        subject_counts = base_qs.exclude(subject__isnull=True).values(
+            'subject_id', 'subject__name', 'subject__code', 'subject__department'
+        ).annotate(count=Count('id')).order_by('subject__name')
+
+        banks = []
+        for item in subject_counts:
+            banks.append({
+                'id': item['subject_id'],
+                'name': item['subject__name'],
+                'code': item['subject__code'] or '',
+                'department': item['subject__department'] or faculty_dept,
+                'question_count': item['count'],
+            })
+
+        uncategorized_count = base_qs.filter(subject__isnull=True).count()
+        if uncategorized_count > 0:
+            banks.append({
+                'id': 'general',
+                'name': 'General / Unassigned Bank',
+                'code': 'GEN',
+                'department': faculty_dept,
+                'question_count': uncategorized_count,
+            })
+
+        return Response({'banks': banks, 'total_banks': len(banks)}, status=status.HTTP_200_OK)
 
 
 class AssemblePaperFromBankView(APIView):
@@ -573,8 +627,23 @@ class AssemblePaperFromBankView(APIView):
                 return Response({'detail': 'Exam not found.'}, status=status.HTTP_404_NOT_FOUND)
             if exam.status == Exam.Status.PUBLISHED or exam.is_immutable:
                 return Response({'detail': 'Cannot modify published or immutable exams.'}, status=status.HTTP_400_BAD_REQUEST)
+            if 'title' in request.data:
+                raw_title = request.data.get('title')
+                if not raw_title or not str(raw_title).strip():
+                    return Response({'detail': 'Exam title is required and cannot be empty or whitespace.'}, status=status.HTTP_400_BAD_REQUEST)
+                title = str(raw_title).strip()
+                if len(title) > 255:
+                    return Response({'detail': 'Exam title cannot exceed 255 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+                exam.title = title
+                exam.save(update_fields=['title'])
         else:
-            title = (request.data.get('title') or 'Exam from Question Bank').strip()
+            raw_title = request.data.get('title')
+            if not raw_title or not str(raw_title).strip():
+                return Response({'detail': 'Exam title is required and cannot be empty or whitespace.'}, status=status.HTTP_400_BAD_REQUEST)
+            title = str(raw_title).strip()
+            if len(title) > 255:
+                return Response({'detail': 'Exam title cannot exceed 255 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
             subj = str(request.data.get('subject') or '')[:80].strip()
             dur = int(request.data.get('duration_minutes') or 60)
             t_marks = int(request.data.get('target_marks') or 50)
@@ -611,6 +680,16 @@ class AssemblePaperFromBankView(APIView):
         ).filter(
             Q(created_by=request.user) | Q(is_shared=True, department=faculty_dept)
         ).select_related('subject').prefetch_related('option_items')
+
+        # Filter candidates by subject_id if specified in payload or query params
+        cand_subject_id = request.data.get('subject_id') or request.query_params.get('subject_id')
+        if cand_subject_id:
+            if str(cand_subject_id).lower() in ('general', 'uncategorized', 'none', 'null'):
+                bank_qs = bank_qs.filter(subject__isnull=True)
+            elif str(cand_subject_id).isdigit():
+                bank_qs = bank_qs.filter(subject_id=int(cand_subject_id))
+            else:
+                bank_qs = bank_qs.filter(subject__name__icontains=str(cand_subject_id))
 
         selected_bank_items: List[Question] = []
 

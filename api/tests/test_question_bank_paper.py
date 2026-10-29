@@ -11,7 +11,7 @@ from api.models import Exam, Option, Question, Subject
 from api.serializers import FacultyQuestionSerializer
 from api.utils.options import clean_options_list
 from api.utils.validate_paper import audit_question_scope
-from api.views_faculty_question_bank import AssemblePaperFromBankView
+from api.views_faculty_question_bank import AssemblePaperFromBankView, FacultyQuestionBankBanksView
 
 User = get_user_model()
 
@@ -225,3 +225,87 @@ class QuestionBankPaperTests(TestCase):
         audit = audit_question_scope(q, syllabus_text="")
         self.assertTrue(audit["in_scope"])
         self.assertTrue(audit["is_manual"])
+
+    def test_assemble_paper_title_validation_empty_and_whitespace(self):
+        view = AssemblePaperFromBankView.as_view()
+
+        # 1. Empty string
+        req1 = self.factory.post(
+            "/api/faculty/exams/assemble-from-bank/",
+            {"title": "", "auto_assemble": True},
+            format="json",
+        )
+        req1.tenant = self.institution
+        force_authenticate(req1, user=self.faculty_user)
+        res1 = view(req1)
+        self.assertEqual(res1.status_code, 400)
+        self.assertIn("required", res1.data["detail"].lower())
+
+        # 2. Whitespace-only string
+        req2 = self.factory.post(
+            "/api/faculty/exams/assemble-from-bank/",
+            {"title": "    \t \n   ", "auto_assemble": True},
+            format="json",
+        )
+        req2.tenant = self.institution
+        force_authenticate(req2, user=self.faculty_user)
+        res2 = view(req2)
+        self.assertEqual(res2.status_code, 400)
+        self.assertIn("whitespace", res2.data["detail"].lower())
+
+        # 3. Missing title
+        req3 = self.factory.post(
+            "/api/faculty/exams/assemble-from-bank/",
+            {"auto_assemble": True},
+            format="json",
+        )
+        req3.tenant = self.institution
+        force_authenticate(req3, user=self.faculty_user)
+        res3 = view(req3)
+        self.assertEqual(res3.status_code, 400)
+
+    def test_assemble_paper_title_validation_max_length(self):
+        view = AssemblePaperFromBankView.as_view()
+        too_long_title = "A" * 256
+        req = self.factory.post(
+            "/api/faculty/exams/assemble-from-bank/",
+            {"title": too_long_title, "auto_assemble": True},
+            format="json",
+        )
+        req.tenant = self.institution
+        force_authenticate(req, user=self.faculty_user)
+        res = view(req)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("255 characters", res.data["detail"])
+
+    def test_assemble_paper_title_trimmed_properly(self):
+        view = AssemblePaperFromBankView.as_view()
+        req = self.factory.post(
+            "/api/faculty/exams/assemble-from-bank/",
+            {
+                "title": "   Midterm Algorithms & Data Structures   ",
+                "target_marks": 2,
+                "auto_assemble": True,
+                "blueprint": {"mcq": 2},
+            },
+            format="json",
+        )
+        req.tenant = self.institution
+        force_authenticate(req, user=self.faculty_user)
+        res = view(req)
+        self.assertEqual(res.status_code, 200)
+        exam = Exam.objects.get(id=res.data["exam_id"])
+        self.assertEqual(exam.title, "Midterm Algorithms & Data Structures")
+
+    def test_faculty_question_bank_banks_view(self):
+        view = FacultyQuestionBankBanksView.as_view()
+        req = self.factory.get("/api/faculty/question-bank/banks/")
+        req.tenant = self.institution
+        force_authenticate(req, user=self.faculty_user)
+        res = view(req)
+        self.assertEqual(res.status_code, 200)
+        banks = res.data["banks"]
+        self.assertGreaterEqual(len(banks), 1)
+        ds_bank = next((b for b in banks if b["name"] == "Data Structures"), None)
+        self.assertIsNotNone(ds_bank)
+        self.assertGreater(ds_bank["question_count"], 0)

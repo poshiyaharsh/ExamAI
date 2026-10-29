@@ -426,7 +426,44 @@ export type StudentExamSummary = {
   completed: boolean;
   attempt_id: number | null;
   available: boolean;
+  availability_reason?: string;
+  schedule_phase?: "upcoming" | "live" | "ended";
+  starts_at?: string | null;
+  ends_at?: string | null;
+  display_timezone?: string;
+  schedule_display?: {
+    timezone: string;
+    starts_at_iso: string | null;
+    ends_at_iso: string | null;
+    starts_at_display: string | null;
+    ends_at_display: string | null;
+    summary: string;
+    phase: "upcoming" | "live" | "ended";
+  };
 };
+
+export interface FacultySubject {
+  id: number;
+  name: string;
+  code?: string;
+  department?: string;
+  description?: string;
+  material_count?: number;
+  question_count?: number;
+}
+
+export interface FacultyStudyMaterial {
+  id: number;
+  subject_id: number;
+  subject_name?: string;
+  original_filename: string;
+  content_type?: string;
+  char_count?: number;
+  detected_topics?: string[];
+  preview?: string;
+  created_at?: string;
+}
+
 
 export type StudentAttempt = {
   id: number;
@@ -1641,6 +1678,7 @@ export const facultyPaperApi = {
     ends_at?: string | null;
     display_timezone?: string;
     accept_capacity_override?: boolean;
+    material_ids?: number[];
   }): Promise<GenerateExamResponse> => {
     const formData = new FormData();
     formData.append("title", payload.title);
@@ -1663,6 +1701,9 @@ export const facultyPaperApi = {
     if (payload.ends_at) formData.append("ends_at", payload.ends_at);
     if (payload.display_timezone) formData.append("display_timezone", payload.display_timezone);
     if (payload.accept_capacity_override) formData.append("accept_capacity_override", "true");
+    if (payload.material_ids && payload.material_ids.length > 0) {
+      payload.material_ids.forEach((id) => formData.append("material_ids", String(id)));
+    }
 
     const response = await apiClient.post<GenerateExamResponse>("/api/faculty/exams/generate/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -2827,7 +2868,7 @@ export interface AssemblePaperFromBankPayload {
   question_ids?: number[];
   target_marks?: number;
   blueprint?: Record<string, any>;
-  subject_id?: number;
+  subject_id?: number | string;
   action?: 'replace' | 'append';
   title?: string;
   subject?: string;
@@ -2848,6 +2889,10 @@ export interface AssemblePaperFromBankResponse {
 }
 
 export const facultyQuestionBankApi = {
+  getBanks: async (): Promise<{ banks: Array<{ id: number | string; name: string; code?: string; department?: string; question_count: number }>; total_banks: number }> => {
+    const response = await apiClient.get<{ banks: Array<{ id: number | string; name: string; code?: string; department?: string; question_count: number }>; total_banks: number }>('/api/faculty/question-bank/banks/');
+    return response.data;
+  },
   getQuestions: async (params?: Record<string, any>): Promise<FacultyQuestionBankListResponse> => {
     const response = await apiClient.get<FacultyQuestionBankListResponse>('/api/faculty/question-bank/', { params });
     return response.data;
@@ -2915,6 +2960,45 @@ export const facultyQuestionBankApi = {
   },
 };
 
+export const facultySubjectApi = {
+  getSubjects: async (): Promise<{ subjects: FacultySubject[]; total_count: number }> => {
+    const response = await apiClient.get<{ subjects: FacultySubject[]; total_count: number }>('/api/faculty/subjects/');
+    return response.data;
+  },
+  createSubject: async (payload: { name: string; code?: string; description?: string }): Promise<FacultySubject> => {
+    const response = await apiClient.post<FacultySubject>('/api/faculty/subjects/', payload);
+    return response.data;
+  },
+};
 
-
-
+export const facultyStudyMaterialApi = {
+  getMaterials: async (subjectId?: number | string): Promise<{ materials: FacultyStudyMaterial[]; total_count: number }> => {
+    const response = await apiClient.get<{ materials: FacultyStudyMaterial[]; total_count: number }>('/api/faculty/materials/', {
+      params: subjectId ? { subject_id: subjectId } : undefined,
+    });
+    return response.data;
+  },
+  uploadMaterial: async (
+    subjectIdOrFormData: number | string | null | undefined | FormData,
+    file?: File,
+    subjectName?: string
+  ): Promise<{ detail: string; material: FacultyStudyMaterial }> => {
+    let formData: FormData;
+    if (subjectIdOrFormData instanceof FormData) {
+      formData = subjectIdOrFormData;
+    } else {
+      formData = new FormData();
+      if (subjectIdOrFormData) formData.append('subject_id', String(subjectIdOrFormData));
+      if (subjectName) formData.append('subject_name', subjectName);
+      if (file) formData.append('file', file);
+    }
+    const response = await apiClient.post<{ detail: string; material: FacultyStudyMaterial }>('/api/faculty/materials/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+  deleteMaterial: async (id: number): Promise<{ detail: string }> => {
+    const response = await apiClient.delete<{ detail: string }>(`/api/faculty/materials/${id}/`);
+    return response.data;
+  },
+};

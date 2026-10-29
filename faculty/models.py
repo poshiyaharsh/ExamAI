@@ -104,6 +104,15 @@ def faculty_syllabus_upload_path(instance, filename):
 class SyllabusUpload(models.Model):
     faculty = models.ForeignKey(FacultyProfile, on_delete=models.CASCADE, related_name='syllabus_uploads')
     institution = models.ForeignKey(AdminInstitution, on_delete=models.CASCADE, related_name='syllabus_uploads')
+    subject = models.ForeignKey(
+        'api.Subject',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='study_materials',
+        db_index=True,
+    )
+    detected_topics = models.JSONField(default=list, blank=True)
     original_file = models.FileField(upload_to=faculty_syllabus_upload_path)
     original_filename = models.CharField(max_length=255)
     content_type = models.CharField(max_length=120, blank=True, default='')

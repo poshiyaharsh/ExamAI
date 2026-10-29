@@ -1,6 +1,7 @@
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { FacultyCreateBankPaper } from "./FacultyCreateBankPaper";
 import { DashboardLayout } from "../components/DashboardLayout";
 import {
   AlertCircle,
@@ -61,6 +62,10 @@ import {
   type PaperGenerationJob,
   type PaperQuestionType,
   type SyllabusUploadData,
+  facultySubjectApi,
+  facultyStudyMaterialApi,
+  type FacultySubject,
+  type FacultyStudyMaterial,
 } from "../../services/api";
 import { authStorage } from "../../services/auth";
 import {
@@ -163,6 +168,34 @@ export function FacultyGeneratePaper() {
   const [facultyDept, setFacultyDept] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(true);
 
+  // Mode switcher (AI vs Manual Question Bank)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mode = searchParams.get("mode") === "manual" ? "manual" : "ai";
+
+  const handleModeChange = (newMode: "ai" | "manual") => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (newMode === "manual") {
+        next.set("mode", "manual");
+      } else {
+        next.delete("mode");
+      }
+      return next;
+    });
+  };
+
+  // Subject Management & Multi-Tenancy Scoping (Phase 3)
+  const [facultySubjects, setFacultySubjects] = useState<FacultySubject[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
+  const [isCustomSubject, setIsCustomSubject] = useState(false);
+
+  // Subject-specific Study Materials (Phase 3)
+  const [subjectMaterials, setSubjectMaterials] = useState<FacultyStudyMaterial[]>([]);
+  const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
+  const [uploadingMaterial, setUploadingMaterial] = useState(false);
+
   // Step 1: Details (Always start clean)
   const [examTitle, setExamTitle] = useState("");
   const [subjectName, setSubjectName] = useState("");
@@ -255,7 +288,6 @@ export function FacultyGeneratePaper() {
   const [generationProgress, setGenerationProgress] = useState(0);
 
   // Part B: Build Paper from Question Bank (No AI)
-  const [paperSourceMode, setPaperSourceMode] = useState<"ai" | "question_bank">("ai");
   const [bankQuestions, setBankQuestions] = useState<FacultyQuestionBankItem[]>([]);
   const [isLoadingBank, setIsLoadingBank] = useState<boolean>(false);
   const [selectedBankIds, setSelectedBankIds] = useState<number[]>([]);
@@ -304,6 +336,119 @@ export function FacultyGeneratePaper() {
     proposed_adjusted_blueprint?: any;
     explanation?: string;
   } | null>(null);
+
+  // Load faculty subjects
+  const loadFacultySubjects = useCallback(async () => {
+    setLoadingSubjects(true);
+    try {
+      const res = await facultySubjectApi.getSubjects();
+      setFacultySubjects(res.subjects || []);
+    } catch (err) {
+      console.error("Failed to load faculty subjects", err);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFacultySubjects();
+  }, [loadFacultySubjects]);
+
+  // Load materials for selected subject
+  const loadSubjectMaterials = useCallback(async (subjId: number) => {
+    setLoadingMaterials(true);
+    try {
+      const res = await facultyStudyMaterialApi.getMaterials(subjId);
+      const mats = res.materials || [];
+      setSubjectMaterials(mats);
+      setSelectedMaterialIds(mats.map((m) => m.id));
+
+      // Append any detected topics to topics pool
+      const detected = Array.from(new Set(mats.flatMap((m) => m.detected_topics || [])));
+      if (detected.length > 0) {
+        setTopics((prev) => Array.from(new Set([...prev, ...detected])));
+      }
+    } catch (err) {
+      console.error("Failed to load subject materials", err);
+      setSubjectMaterials([]);
+      setSelectedMaterialIds([]);
+    } finally {
+      setLoadingMaterials(false);
+    }
+  }, []);
+
+  const handleSubjectSelect = (val: string) => {
+    if (val === "new") {
+      setIsCustomSubject(true);
+      setSelectedSubjectId(null);
+      setSubjectName("");
+      setSubjectMaterials([]);
+      setSelectedMaterialIds([]);
+      return;
+    }
+    setIsCustomSubject(false);
+    const id = Number(val);
+    if (isNaN(id) || !id) {
+      setSelectedSubjectId(null);
+      setSubjectName("");
+      setSubjectMaterials([]);
+      setSelectedMaterialIds([]);
+      return;
+    }
+    const found = facultySubjects.find((s) => s.id === id);
+    if (found) {
+      setSelectedSubjectId(found.id);
+      setSubjectName(found.name);
+      loadSubjectMaterials(found.id);
+      setIsDirty(true);
+    }
+  };
+
+  const toggleMaterialSelection = (materialId: number) => {
+    setSelectedMaterialIds((prev) =>
+      prev.includes(materialId) ? prev.filter((id) => id !== materialId) : [...prev, materialId]
+    );
+  };
+
+  const handleUploadSubjectMaterial = async (file: File) => {
+    if (!selectedSubjectId && !subjectName.trim()) {
+      toast.error("Please specify a Subject name before uploading study materials.");
+      return;
+    }
+    setUploadingMaterial(true);
+    try {
+      const res = await facultyStudyMaterialApi.uploadMaterial(selectedSubjectId, file, subjectName.trim());
+      toast.success(res.detail || "Study material uploaded and analyzed successfully!");
+      if (res.material) {
+        if (!selectedSubjectId && res.material.subject_id) {
+          setSelectedSubjectId(res.material.subject_id);
+          loadFacultySubjects();
+        }
+        setSubjectMaterials((prev) => [res.material, ...prev]);
+        setSelectedMaterialIds((prev) => Array.from(new Set([...prev, res.material.id])));
+        if (res.material.detected_topics && res.material.detected_topics.length > 0) {
+          setTopics((prev) => Array.from(new Set([...prev, ...res.material.detected_topics])));
+        }
+      }
+    } catch (err: any) {
+      toast.error(extractApiErrorMessage(err, "Failed to upload study material."));
+    } finally {
+      setUploadingMaterial(false);
+    }
+  };
+
+  const handleDeleteSubjectMaterial = async (materialId: number, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this study material from this subject?")) return;
+    try {
+      await facultyStudyMaterialApi.deleteMaterial(materialId);
+      toast.success("Study material deleted.");
+      setSubjectMaterials((prev) => prev.filter((m) => m.id !== materialId));
+      setSelectedMaterialIds((prev) => prev.filter((id) => id !== materialId));
+    } catch (err: any) {
+      toast.error(extractApiErrorMessage(err, "Failed to delete study material."));
+    }
+  };
 
   // Check for active running generation job on mount (restore after refresh / tab switch)
   useEffect(() => {
@@ -810,6 +955,8 @@ export function FacultyGeneratePaper() {
         syllabus: syllabusFile,
         avoidRepeats,
         subject: subjectName.trim() || undefined,
+        subjectId: selectedSubjectId || undefined,
+        material_ids: selectedMaterialIds.length > 0 ? selectedMaterialIds : undefined,
         selectedTopics: cleanTopics,
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
         ends_at: endsAt ? new Date(endsAt).toISOString() : null,
@@ -873,11 +1020,6 @@ export function FacultyGeneratePaper() {
     }
   }, []);
 
-  useEffect(() => {
-    if (paperSourceMode === "question_bank") {
-      fetchBankQuestions();
-    }
-  }, [paperSourceMode, fetchBankQuestions]);
 
   // Selected Bank Questions Running Marks
   const selectedBankMarks = useMemo(() => {
@@ -1213,6 +1355,47 @@ export function FacultyGeneratePaper() {
           </p>
         </div>
 
+        {/* Top-Level Mode Selector (AI vs Manual Question Bank) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-white border border-slate-200/90 shadow-xs">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Paper Generation Method</h2>
+            <p className="text-xs text-slate-500">
+              Select whether to synthesize questions with local AI or build deterministically from question banks.
+            </p>
+          </div>
+          <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => handleModeChange("ai")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                mode === "ai"
+                  ? "bg-white text-blue-600 shadow-xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Sparkles className="w-4 h-4 text-blue-600" />
+              AI Paper Generation
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange("manual")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                mode === "manual"
+                  ? "bg-white text-indigo-600 shadow-xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Database className="w-4 h-4 text-indigo-600" />
+              Manual Paper Generation (Question Bank)
+            </button>
+          </div>
+        </div>
+
+        {mode === "manual" ? (
+          <FacultyCreateBankPaper hideLayout />
+        ) : (
+          <>
+
         {/* 4-Step Progress Stepper Header */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
           <div className="grid grid-cols-4 gap-2 sm:gap-4">
@@ -1369,20 +1552,65 @@ export function FacultyGeneratePaper() {
                 </p>
               </div>
 
-              {/* Subject */}
+              {/* Subject Selection (Scoped by Department & Institution) */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Subject / Course Name</label>
-                <input
-                  type="text"
-                  autoComplete="off"
-                  value={subjectName}
-                  onChange={(e) => {
-                    setSubjectName(e.target.value);
-                    setIsDirty(true);
-                  }}
-                  placeholder="e.g., CS-402 Network Protocols"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700">Subject / Course *</label>
+                  {!isCustomSubject && (
+                    <button
+                      type="button"
+                      onClick={() => handleSubjectSelect("new")}
+                      className="text-[11px] font-semibold text-blue-600 hover:underline"
+                    >
+                      + Create New Subject
+                    </button>
+                  )}
+                  {isCustomSubject && facultySubjects.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomSubject(false);
+                        if (facultySubjects[0]) handleSubjectSelect(String(facultySubjects[0].id));
+                      }}
+                      className="text-[11px] font-semibold text-slate-500 hover:underline"
+                    >
+                      Choose from Existing
+                    </button>
+                  )}
+                </div>
+
+                {!isCustomSubject && facultySubjects.length > 0 ? (
+                  <select
+                    value={selectedSubjectId ? String(selectedSubjectId) : ""}
+                    onChange={(e) => handleSubjectSelect(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all font-medium text-slate-800"
+                  >
+                    <option value="" disabled>-- Select a Department Subject --</option>
+                    {facultySubjects.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} {s.code ? `(${s.code})` : ""} - {s.material_count || 0} material(s)
+                      </option>
+                    ))}
+                    <option value="new">+ Enter New Subject Name...</option>
+                  </select>
+                ) : (
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={subjectName}
+                      onChange={(e) => {
+                        setSubjectName(e.target.value);
+                        setIsDirty(true);
+                      }}
+                      placeholder="e.g., CS-402 Database Management Systems"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                    />
+                    <p className="text-[11px] text-slate-500">
+                      Enter course name. Uploaded materials for this course will be strictly bound to it.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Duration */}
@@ -1706,35 +1934,7 @@ export function FacultyGeneratePaper() {
               </div>
             )}
 
-            {/* Mode Selector: AI Generation vs Build from Question Bank */}
-            <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
-              <button
-                type="button"
-                onClick={() => setPaperSourceMode("ai")}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  paperSourceMode === "ai"
-                    ? "bg-white text-blue-700 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Sparkles className="h-4 w-4" /> AI Blueprint & Generation
-              </button>
-              <button
-                type="button"
-                onClick={() => setPaperSourceMode("question_bank")}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-                  paperSourceMode === "question_bank"
-                    ? "bg-white text-indigo-700 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Database className="h-4 w-4" /> Build Paper from Bank (No AI)
-              </button>
-            </div>
-
-            {paperSourceMode === "ai" ? (
-              <>
-                {/* Top Bar for Questions */}
+            {/* Top Bar for Questions */}
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Step 2: Question Blueprint & Content Studio</h2>
@@ -1769,16 +1969,152 @@ export function FacultyGeneratePaper() {
               </div>
             </div>
 
-            {/* 1. Syllabus Source-of-Truth Box */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+            {/* 1. Subject Study Materials & Syllabus Context */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-5">
               <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-blue-600" />
-                  <h3 className="text-sm font-bold text-slate-900">Syllabus Context (Source of Truth)</h3>
+                  <BookOpen className="h-4 w-4 text-blue-600" />
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Subject Study Materials & Syllabus
+                  </h3>
+                  {subjectName && (
+                    <span className="ml-1 text-xs px-2.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                      {subjectName}
+                    </span>
+                  )}
                 </div>
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-                  <Shield className="h-3 w-3" /> Questions synthesized strictly from syllabus
+                  <ShieldCheck className="h-3 w-3" /> Questions synthesized strictly from verified materials
                 </span>
+              </div>
+
+              {/* Subject Materials Library List */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800">
+                      Subject Materials ({selectedMaterialIds.length} of {subjectMaterials.length} selected)
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Select which study materials to feed into generation. Unchecking excludes a file without deleting it.
+                    </p>
+                  </div>
+                  {subjectMaterials.length > 0 && (
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMaterialIds(subjectMaterials.map((m) => m.id))}
+                        className="font-semibold text-blue-600 hover:underline"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMaterialIds([])}
+                        className="font-semibold text-slate-500 hover:underline"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {loadingMaterials ? (
+                  <div className="py-6 text-center text-xs text-slate-500 rounded-xl bg-slate-50 border border-slate-200/60">
+                    <Loader2 className="h-4 w-4 animate-spin inline mr-1.5 text-blue-600" />
+                    Loading study materials for {subjectName || "this subject"}...
+                  </div>
+                ) : subjectMaterials.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {subjectMaterials.map((m) => {
+                      const isChecked = selectedMaterialIds.includes(m.id);
+                      return (
+                        <div
+                          key={m.id}
+                          onClick={() => toggleMaterialSelection(m.id)}
+                          className={`flex items-start justify-between p-3 rounded-xl border transition-all cursor-pointer ${
+                            isChecked
+                              ? "border-blue-400 bg-blue-50/40 shadow-2xs ring-1 ring-blue-500/20"
+                              : "border-slate-200 bg-white hover:bg-slate-50 opacity-70"
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleMaterialSelection(m.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div className="min-w-0">
+                              <span className="text-xs font-bold text-slate-800 block truncate" title={m.original_filename}>
+                                {m.original_filename}
+                              </span>
+                              <span className="text-[10px] text-slate-500 block">
+                                {m.char_count?.toLocaleString()} characters
+                              </span>
+                              {m.detected_topics && m.detected_topics.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {m.detected_topics.slice(0, 3).map((t, tIdx) => (
+                                    <span
+                                      key={tIdx}
+                                      className="text-[9px] font-medium bg-white border border-slate-200 px-1.5 py-0.2 rounded text-slate-600"
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                  {m.detected_topics.length > 3 && (
+                                    <span className="text-[9px] text-slate-400 font-medium">
+                                      +{m.detected_topics.length - 3} more
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteSubjectMaterial(m.id, e)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0 ml-2"
+                            title="Delete this material"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="py-4 px-3 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                    No study materials uploaded yet for this subject. Upload your textbook chapters or syllabus document below.
+                  </div>
+                )}
+
+                {/* Upload Button for Subject Material */}
+                <div className="pt-1">
+                  <label className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/70 px-3.5 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100/80 transition-colors cursor-pointer shadow-2xs">
+                    {uploadingMaterial ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {uploadingMaterial ? "Uploading & Analyzing..." : `+ Upload Study Material for ${subjectName || "Subject"}`}
+                    <input
+                      type="file"
+                      disabled={uploadingMaterial}
+                      accept=".pdf,.docx,.doc,.txt"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleUploadSubjectMaterial(file);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                  </label>
+                  <span className="text-[11px] text-slate-500 ml-2.5">
+                    Supports PDF, DOCX, TXT up to 25MB. Text and topics are extracted automatically.
+                  </span>
+                </div>
               </div>
 
               {parsedSyllabus ? (
@@ -2438,305 +2774,6 @@ export function FacultyGeneratePaper() {
                 </div>
               )}
             </div>
-          </>
-        ) : (
-          <div className="space-y-6">
-            {/* Header & Controls */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <Database className="h-5 w-5 text-indigo-600" />
-                  Build Paper from Question Bank (No AI)
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Select questions from your faculty repository or auto-assemble to exact target marks with zero LLM hallucinations.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-                  <span className="font-semibold text-slate-700">Mode:</span>
-                  <select
-                    value={assembleAction}
-                    onChange={(e) => setAssembleAction(e.target.value as "replace" | "append")}
-                    className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
-                  >
-                    <option value="replace">Replace exam questions</option>
-                    <option value="append">Append to existing questions</option>
-                  </select>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={isAssemblingBank || isLoadingBank || bankQuestions.length === 0}
-                  onClick={handleAutoAssembleFromBank}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-indigo-700 hover:to-purple-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
-                >
-                  {isAssemblingBank ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CheckSquare className="h-4 w-4" />
-                  )}
-                  Auto-Assemble Exact ({targetMarksNum} Marks)
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isAssemblingBank || selectedBankIds.length === 0}
-                  onClick={handleManualAssembleFromBank}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
-                >
-                  <Plus className="h-4 w-4" />
-                  Assemble Selected ({selectedBankMarks}m)
-                </button>
-              </div>
-            </div>
-
-            {/* Running Marks Tracker Card */}
-            <div
-              className={`rounded-2xl border p-4 shadow-xs transition-all ${
-                selectedBankMarks === targetMarksNum
-                  ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
-                  : selectedBankMarks > targetMarksNum
-                  ? "border-rose-200 bg-rose-50/90 text-rose-950"
-                  : "border-blue-200 bg-blue-50/90 text-blue-950"
-              }`}
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  {selectedBankMarks === targetMarksNum ? (
-                    <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-                  ) : (
-                    <AlertCircle
-                      className={`h-5 w-5 shrink-0 ${
-                        selectedBankMarks > targetMarksNum ? "text-rose-600" : "text-blue-600"
-                      }`}
-                    />
-                  )}
-                  <div>
-                    <div className="flex items-center gap-3 flex-wrap text-xs sm:text-sm">
-                      <span>Target: <strong>{targetMarksNum}</strong> marks</span>
-                      <span className="opacity-40">|</span>
-                      <span>Selected in Bank: <strong>{selectedBankIds.length}</strong> questions</span>
-                      <span className="opacity-40">|</span>
-                      <span>Selected Marks: <strong>{selectedBankMarks}</strong> marks</span>
-                      <span className="opacity-40">|</span>
-                      <span>
-                        Difference:{" "}
-                        <strong>
-                          {selectedBankMarks - targetMarksNum >= 0 ? "+" : ""}
-                          {selectedBankMarks - targetMarksNum}
-                        </strong>
-                      </span>
-                    </div>
-                    <p className="text-[11px] font-medium opacity-90 mt-0.5">
-                      {selectedBankMarks === targetMarksNum
-                        ? "Selected questions match target marks exactly!"
-                        : selectedBankMarks > targetMarksNum
-                        ? `Selection is ${selectedBankMarks - targetMarksNum} marks above target.`
-                        : `Need ${targetMarksNum - selectedBankMarks} more marks to reach target ${targetMarksNum}.`}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-                  {selectedBankIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedBankIds([])}
-                      className="px-3 py-1 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors"
-                    >
-                      Clear Selection
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Search & Filter Bar */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs space-y-3">
-              <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="sm:col-span-2">
-                  <div className="relative">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search questions by text or topic..."
-                      value={bankSearchQuery}
-                      onChange={(e) => setBankSearchQuery(e.target.value)}
-                      className="w-full pl-10 pr-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <select
-                    value={bankDiffFilter}
-                    onChange={(e) => setBankDiffFilter(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="all">All Difficulties</option>
-                    <option value="easy">Easy</option>
-                    <option value="medium">Medium</option>
-                    <option value="hard">Hard</option>
-                  </select>
-                </div>
-                <div>
-                  <select
-                    value={bankTypeFilter}
-                    onChange={(e) => setBankTypeFilter(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="all">All Question Types</option>
-                    <option value="mcq">Multiple Choice (MCQ)</option>
-                    <option value="true_false">True / False</option>
-                    <option value="fill_blank">Fill in Blank</option>
-                    <option value="short_answer">Short Answer</option>
-                    <option value="long_answer">Long Answer</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-                <span>
-                  Showing {filteredBankQuestions.length} of {bankQuestions.length} bank questions
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allFilteredIds = filteredBankQuestions.map((q) => q.id);
-                      setSelectedBankIds(Array.from(new Set([...selectedBankIds, ...allFilteredIds])));
-                    }}
-                    className="text-indigo-600 hover:text-indigo-800 font-semibold text-xs cursor-pointer"
-                  >
-                    Select All Filtered
-                  </button>
-                  <span>•</span>
-                  <button
-                    type="button"
-                    onClick={fetchBankQuestions}
-                    className="text-slate-600 hover:text-slate-800 font-medium inline-flex items-center gap-1 text-xs cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${isLoadingBank ? "animate-spin" : ""}`} /> Refresh Bank
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Bank Questions Items Grid */}
-            {isLoadingBank ? (
-              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
-                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-indigo-600" />
-                <p className="text-sm">Loading question repository...</p>
-              </div>
-            ) : filteredBankQuestions.length === 0 ? (
-              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
-                <Database className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                <p className="font-semibold text-slate-800 text-sm">No bank questions found</p>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                  {bankQuestions.length === 0
-                    ? "You haven't uploaded questions to your question bank yet."
-                    : "No questions match your search filters."}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => navigate("/question-bank")}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 shadow-sm cursor-pointer"
-                >
-                  Open Question Bank to Upload Files
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
-                {filteredBankQuestions.map((q) => {
-                  const isSelected = selectedBankIds.includes(q.id);
-                  return (
-                    <div
-                      key={q.id}
-                      onClick={() => {
-                        if (isSelected) {
-                          setSelectedBankIds(selectedBankIds.filter((id) => id !== q.id));
-                        } else {
-                          setSelectedBankIds([...selectedBankIds, q.id]);
-                        }
-                      }}
-                      className={`group rounded-2xl border p-4 transition-all cursor-pointer flex items-start gap-3.5 ${
-                        isSelected
-                          ? "border-indigo-400 bg-indigo-50/40 shadow-xs"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50"
-                      }`}
-                    >
-                      <div className="pt-0.5">
-                        {isSelected ? (
-                          <CheckSquare className="h-5 w-5 text-indigo-600 shrink-0" />
-                        ) : (
-                          <Square className="h-5 w-5 text-slate-300 group-hover:text-slate-400 shrink-0" />
-                        )}
-                      </div>
-                      <div className="flex-1 space-y-1.5 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 border border-indigo-200">
-                            {q.marks} {Number(q.marks) === 1 ? "Mark" : "Marks"}
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 uppercase">
-                            {q.question_type?.replace("_", " ")}
-                          </span>
-                          <span
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
-                              q.difficulty?.toLowerCase() === "easy"
-                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                : q.difficulty?.toLowerCase() === "medium"
-                                ? "bg-amber-50 text-amber-700 border-amber-200"
-                                : "bg-rose-50 text-rose-700 border-rose-200"
-                            }`}
-                          >
-                            {q.difficulty?.toUpperCase()}
-                          </span>
-                          {q.topic && (
-                            <span className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] font-medium text-slate-500">
-                              {q.topic}
-                            </span>
-                          )}
-                          {q.is_shared && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200">
-                              <Share2 className="w-2.5 h-2.5" /> Dept Shared
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs sm:text-sm font-medium text-slate-800 leading-snug">
-                          {q.question_text}
-                        </p>
-                        {q.options && q.options.length > 0 && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pt-1 text-xs text-slate-600">
-                            {q.options.map((opt: any, oIdx: number) => {
-                              const text = typeof opt === "string" ? opt : opt?.text || "";
-                              const isCorrect =
-                                typeof opt === "object" && opt?.is_correct !== undefined
-                                  ? opt.is_correct
-                                  : String.fromCharCode(65 + oIdx) === q.correct_answer;
-                              return (
-                                <div
-                                  key={oIdx}
-                                  className={`px-2 py-0.5 rounded text-[11px] border ${
-                                    isCorrect
-                                      ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold"
-                                      : "bg-slate-50 text-slate-600 border-slate-200/60"
-                                  }`}
-                                >
-                                  {String.fromCharCode(65 + oIdx)}. {text}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
             {/* 5. Generated Questions List (if any exist) */}
             {questions.length > 0 && (
@@ -3407,6 +3444,9 @@ export function FacultyGeneratePaper() {
               </div>
             </div>
           </div>
+        )}
+
+          </>
         )}
 
         {/* Real-time Generation Progress / Status Modal */}

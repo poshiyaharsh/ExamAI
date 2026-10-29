@@ -56,12 +56,18 @@ def extract_syllabus_text(django_file, institution_id: Optional[int] = None) -> 
     is_docx = extension == '.docx' or raw.startswith(b'PK\x03\x04')
     text = ""
 
+    is_txt = extension in ('.txt', '.text')
     if is_pdf:
         text, _ = _extract_pdf_pages_and_text(raw, filename)
     elif is_docx:
         text = _extract_docx_text(django_file)
+    elif is_txt:
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            text = raw.decode('latin-1', errors='ignore')
     else:
-        raise ValueError('Unsupported syllabus type. Upload a PDF or DOCX file.')
+        raise ValueError('Unsupported file type. Upload a PDF, DOCX, or TXT file.')
 
     if not text or len(text.strip()) < 15:
         if is_pdf:
@@ -187,7 +193,16 @@ def extract_syllabus_pages(django_file) -> List[Dict[str, Any]]:
                 'char_count': curr_len,
             })
         return pages_data
-    return []
+    else:
+        try:
+            txt_content = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            txt_content = raw.decode('latin-1', errors='ignore')
+        return [{
+            'page_number': 1,
+            'text': txt_content.strip(),
+            'char_count': len(txt_content.strip()),
+        }]
 
 
 def detect_pdf_bookmarks_or_outlines(raw_bytes: bytes) -> List[Dict[str, Any]]:

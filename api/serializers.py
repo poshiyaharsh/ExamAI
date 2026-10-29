@@ -257,16 +257,30 @@ class StudentQuestionSerializer(serializers.ModelSerializer):
 class StudentExamSerializer(serializers.ModelSerializer):
     questions = StudentQuestionSerializer(many=True, read_only=True)
     total_marks = serializers.SerializerMethodField()
+    schedule_display = serializers.SerializerMethodField()
+    schedule_phase = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
-        fields = ('id', 'title', 'subject', 'description', 'department', 'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at', 'questions')
+        fields = (
+            'id', 'title', 'subject', 'description', 'department',
+            'duration_minutes', 'total_marks', 'topics', 'starts_at', 'ends_at',
+            'display_timezone', 'schedule_display', 'schedule_phase', 'questions'
+        )
 
     def get_total_marks(self, obj):
         try:
             return float(obj.total_marks) if obj.total_marks is not None else 0.0
         except (ValueError, TypeError):
             return 0.0
+
+    def get_schedule_display(self, obj):
+        from .utils.schedule import format_exam_schedule_display
+        return format_exam_schedule_display(obj)
+
+    def get_schedule_phase(self, obj):
+        from .utils.schedule import get_exam_schedule_phase
+        return get_exam_schedule_phase(obj)
 
 
 

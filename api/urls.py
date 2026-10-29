@@ -19,11 +19,17 @@ from .faculty_dashboard import FacultyDashboardView
 from .views_faculty_question_bank import (
     AssemblePaperFromBankView,
     FacultyQuestionBankAiAssistView,
+    FacultyQuestionBankBanksView,
     FacultyQuestionBankExportCleanedView,
     FacultyQuestionBankExportReportView,
     FacultyQuestionBankListView,
     FacultyQuestionBankTemplateView,
     FacultyQuestionBankUploadView,
+)
+from .views_faculty_materials import (
+    FacultySubjectsListView,
+    FacultyStudyMaterialsView,
+    FacultyStudyMaterialDetailView,
 )
 from faculty.views import FacultyAIModelsView
 from .faculty_monitor import FacultyLiveMonitorView
@@ -131,6 +137,16 @@ urlpatterns = [
     path('faculty/exams/assemble-from-bank/', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank-create'),
     path('faculty/exams/<int:exam_id>/assemble-from-bank', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank-no-slash'),
     path('faculty/exams/<int:exam_id>/assemble-from-bank/', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank'),
+    path('faculty/subjects', FacultySubjectsListView.as_view(), name='faculty-subjects-no-slash'),
+    path('faculty/subjects/', FacultySubjectsListView.as_view(), name='faculty-subjects'),
+    path('faculty/materials', FacultyStudyMaterialsView.as_view(), name='faculty-materials-no-slash'),
+    path('faculty/materials/', FacultyStudyMaterialsView.as_view(), name='faculty-materials'),
+    path('faculty/materials/upload', FacultyStudyMaterialsView.as_view(), name='faculty-materials-upload-no-slash'),
+    path('faculty/materials/upload/', FacultyStudyMaterialsView.as_view(), name='faculty-materials-upload'),
+    path('faculty/materials/<int:pk>', FacultyStudyMaterialDetailView.as_view(), name='faculty-materials-detail-no-slash'),
+    path('faculty/materials/<int:pk>/', FacultyStudyMaterialDetailView.as_view(), name='faculty-materials-detail'),
+    path('faculty/question-bank/banks', FacultyQuestionBankBanksView.as_view(), name='faculty-qb-banks-no-slash'),
+    path('faculty/question-bank/banks/', FacultyQuestionBankBanksView.as_view(), name='faculty-qb-banks'),
     path('faculty/question-bank/upload', FacultyQuestionBankUploadView.as_view(), name='faculty-qb-upload-no-slash'),
     path('faculty/question-bank/upload/', FacultyQuestionBankUploadView.as_view(), name='faculty-qb-upload'),
     path('faculty/question-bank/ai-assist', FacultyQuestionBankAiAssistView.as_view(), name='faculty-qb-ai-assist-no-slash'),

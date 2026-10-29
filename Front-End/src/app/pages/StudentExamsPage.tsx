@@ -28,34 +28,24 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/student/settings" },
 ];
 
-function formatWindow(exam: StudentExam) {
-  if (exam.schedule_display?.summary) {
-    return exam.schedule_display.summary;
-  }
-  const now = new Date();
-  if (exam.ends_at && new Date(exam.ends_at) < now) {
-    return "Window closed";
-  }
-  if (exam.starts_at && new Date(exam.starts_at) > now) {
-    const diffMs = new Date(exam.starts_at).getTime() - now.getTime();
-    const diffHours = Math.floor(diffMs / (3600 * 1000));
-    const diffMins = Math.floor((diffMs % (3600 * 1000)) / (60 * 1000));
-    const rel = diffHours > 24
-      ? `${Math.floor(diffHours / 24)}d ${diffHours % 24}h`
-      : diffHours > 0
-      ? `${diffHours}h ${diffMins}m`
-      : `${diffMins}m`;
-    return `Opens in ${rel}`;
-  }
-  if (exam.ends_at) {
-    return `Closes ${new Date(exam.ends_at).toLocaleTimeString([], {
+function formatScheduleDateTime(isoString?: string | null, timezone?: string): string | null {
+  if (!isoString) return null;
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return null;
+
+    return new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
-      hour: "2-digit",
+      year: "numeric",
+      hour: "numeric",
       minute: "2-digit",
-    })}`;
+      hour12: true,
+      timeZone: timezone && timezone !== "UTC" ? timezone : undefined,
+    }).format(date);
+  } catch {
+    return null;
   }
-  return "Live (Open Schedule)";
 }
 
 export function StudentExamsPage() {
@@ -171,7 +161,8 @@ export function StudentExamsPage() {
         ) : (
           /* Cards Grid */
           <div className="grid gap-5 md:grid-cols-2">
-            {filteredExams.map(({ exam, completed, attempt_id: attemptId, available }) => {
+            {filteredExams.map((item) => {
+              const { exam, completed, attempt_id: attemptId, available } = item;
               const questionCount = exam.question_count || exam.questions?.length || 0;
               const hasMoreTopics = exam.topics && exam.topics.length > 3;
 
@@ -269,13 +260,13 @@ export function StudentExamsPage() {
                       </div>
                     )}
 
-                    {/* Exam Specs Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 text-xs">
+                    {/* Exam Specs Grid (3-column) */}
+                    <div className="grid grid-cols-3 gap-2.5 pt-2 text-xs">
                       <div className="rounded-xl bg-slate-50 border border-slate-100 p-2.5">
                         <span className="text-[10px] text-muted-foreground block font-medium">Duration</span>
                         <span className="font-bold text-foreground flex items-center gap-1 mt-0.5">
                           <Clock className="w-3.5 h-3.5 text-blue-500" />
-                          {exam.duration_minutes}m
+                          {exam.duration_minutes} mins
                         </span>
                       </div>
                       <div className="rounded-xl bg-slate-50 border border-slate-100 p-2.5">
@@ -289,17 +280,50 @@ export function StudentExamsPage() {
                         <span className="text-[10px] text-muted-foreground block font-medium">Questions</span>
                         <span className="font-bold text-foreground flex items-center gap-1 mt-0.5">
                           <HelpCircle className="w-3.5 h-3.5 text-purple-500" />
-                          {questionCount}
-                        </span>
-                      </div>
-                      <div className="rounded-xl bg-slate-50 border border-slate-100 p-2.5">
-                        <span className="text-[10px] text-muted-foreground block font-medium">Schedule</span>
-                        <span className="font-bold text-foreground flex items-center gap-1 mt-0.5 truncate" title={formatWindow(exam)}>
-                          <Calendar className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                          <span className="truncate">{formatWindow(exam)}</span>
+                          {questionCount} Qs
                         </span>
                       </div>
                     </div>
+
+                    {/* Dedicated Responsive Schedule Section */}
+                    {(() => {
+                      const schedObj = exam.schedule_display || item.schedule_display;
+                      const rawStarts = exam.starts_at || item.starts_at;
+                      const rawEnds = exam.ends_at || item.ends_at;
+                      const tz = schedObj?.timezone || exam.display_timezone || item.display_timezone || "Asia/Kolkata";
+                      const startsDisplay = schedObj?.starts_at_display || formatScheduleDateTime(rawStarts, tz);
+                      const endsDisplay = schedObj?.ends_at_display || formatScheduleDateTime(rawEnds, tz);
+
+                      return (
+                        <div className="rounded-xl bg-slate-50/80 border border-slate-200/80 p-3 text-xs space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 border-b border-slate-200/60 pb-1.5">
+                            <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> Schedule Window
+                            </span>
+                            {tz && (
+                              <span className="text-[10px] font-semibold text-slate-500 px-2 py-0.5 rounded-md bg-white border border-slate-200">
+                                {tz}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground block font-medium">Starts:</span>
+                              <span className="font-semibold text-foreground text-xs break-words">
+                                {startsDisplay || "Open immediately (No start restriction)"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-muted-foreground block font-medium">Closes:</span>
+                              <span className="font-semibold text-foreground text-xs break-words">
+                                {endsDisplay || "No deadline (Open closing window)"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Footer & Action Button */}

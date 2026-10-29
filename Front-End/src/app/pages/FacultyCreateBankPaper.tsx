@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Calendar,
   Database,
@@ -14,11 +16,14 @@ import {
   FileCheck2,
   FileText,
   FileUp,
+  FolderOpen,
   HelpCircle,
+  Layers,
   Loader2,
   Minus,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   Sparkles,
@@ -43,14 +48,28 @@ interface TypeBlueprint {
   marksPerQuestion: number;
 }
 
-export function FacultyCreateBankPaper() {
+interface QuestionBankSummary {
+  id: number | string;
+  name: string;
+  code?: string;
+  department?: string;
+  question_count: number;
+}
+
+export interface FacultyCreateBankPaperProps {
+  hideLayout?: boolean;
+}
+
+export function FacultyCreateBankPaper({ hideLayout = false }: FacultyCreateBankPaperProps = {}) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const draftIdParam = searchParams.get("draft_id") || searchParams.get("exam_id");
 
   // Current Stepper Step
   const [currentStep, setCurrentStep] = useState<Step>(1);
 
-  // Step 1: Exam Details & Schedule
-  const [title, setTitle] = useState("Question Bank Exam");
+  // Step 1: Exam Details & Schedule (Starts empty for new papers)
+  const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [targetMarks, setTargetMarks] = useState(50);
@@ -59,7 +78,11 @@ export function FacultyCreateBankPaper() {
   const [shuffleQuestions, setShuffleQuestions] = useState(true);
   const [shuffleOptions, setShuffleOptions] = useState(true);
 
-  // Step 2: Question Bank Pool & Upload
+  // Step 2: Question Bank Selection & Upload
+  const [availableBanks, setAvailableBanks] = useState<QuestionBankSummary[]>([]);
+  const [loadingBanksList, setLoadingBanksList] = useState(false);
+  const [selectedBankId, setSelectedBankId] = useState<number | string | null>(null);
+
   const [bankQuestions, setBankQuestions] = useState<FacultyQuestionBankItem[]>([]);
   const [loadingBank, setLoadingBank] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -71,6 +94,8 @@ export function FacultyCreateBankPaper() {
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<number>>(new Set());
   const [manualSearch, setManualSearch] = useState("");
   const [manualTypeFilter, setManualTypeFilter] = useState("all");
+  const [manualPage, setManualPage] = useState(1);
+  const manualPageSize = 10;
 
   // Step 4: Assembled Paper & Publishing
   const [assembling, setAssembling] = useState(false);
@@ -79,70 +104,149 @@ export function FacultyCreateBankPaper() {
   const [publishing, setPublishing] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
 
-  // Fetch accessible bank questions
-  const loadBankQuestions = useCallback(async () => {
-    setLoadingBank(true);
+  // Load available banks list on mount
+  const loadAvailableBanks = useCallback(async () => {
+    setLoadingBanksList(true);
     try {
-      const res = await facultyQuestionBankApi.getQuestions({ page_size: 200 });
-      const questions = res.questions || [];
-      setBankQuestions(questions);
-
-      // Analyze question types available
-      const typeMap: Record<string, { count: number; defaultMarks: number; label: string }> = {
-        mcq: { count: 0, defaultMarks: 1, label: "Multiple Choice (MCQ)" },
-        true_false: { count: 0, defaultMarks: 1, label: "True / False" },
-        short: { count: 0, defaultMarks: 5, label: "Short Answer" },
-        long: { count: 0, defaultMarks: 10, label: "Long Answer" },
-        fill_blank: { count: 0, defaultMarks: 1, label: "Fill in Blank" },
-      };
-
-      questions.forEach((q) => {
-        const rawT = (q.question_type || "mcq").toLowerCase();
-        const t =
-          rawT === "multiple_choice"
-            ? "mcq"
-            : rawT === "truefalse" || rawT === "tf"
-            ? "true_false"
-            : rawT === "short_answer"
-            ? "short"
-            : rawT === "long_answer"
-            ? "long"
-            : rawT;
-
-        if (!typeMap[t]) {
-          typeMap[t] = {
-            count: 0,
-            defaultMarks: Number(q.marks) || 1,
-            label: t.replace("_", " ").toUpperCase(),
-          };
-        }
-        typeMap[t].count += 1;
-      });
-
-      // Initialize blueprints
-      const initialBlueprints: Record<string, TypeBlueprint> = {};
-      Object.entries(typeMap).forEach(([k, v]) => {
-        if (v.count > 0) {
-          initialBlueprints[k] = {
-            type: k,
-            label: v.label,
-            availableCount: v.count,
-            selectedCount: 0,
-            marksPerQuestion: v.defaultMarks,
-          };
-        }
-      });
-      setTypeBlueprints(initialBlueprints);
+      const res = await facultyQuestionBankApi.getBanks();
+      setAvailableBanks(res.banks || []);
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || "Failed to load question bank items.");
+      console.error("Failed to load question banks", err);
     } finally {
-      setLoadingBank(false);
+      setLoadingBanksList(false);
     }
   }, []);
 
   useEffect(() => {
-    loadBankQuestions();
-  }, [loadBankQuestions]);
+    loadAvailableBanks();
+  }, [loadAvailableBanks]);
+
+  // Load existing draft if draft_id query parameter is present (preserves saved title)
+  useEffect(() => {
+    if (draftIdParam) {
+      const loadDraft = async () => {
+        try {
+          const exam = await facultyExamApi.getExam(Number(draftIdParam));
+          if (exam) {
+            setTitle(exam.title || "");
+            setSubject(exam.subject || "");
+            if (exam.duration_minutes) setDurationMinutes(exam.duration_minutes);
+            if (exam.target_total_marks || exam.total_marks) {
+              setTargetMarks(exam.target_total_marks || exam.total_marks);
+            }
+            if (exam.starts_at) setStartsAt(exam.starts_at);
+            if (exam.ends_at) setEndsAt(exam.ends_at);
+            setAssembledExamId(exam.id);
+          }
+        } catch (err) {
+          console.error("Failed to load draft exam", err);
+        }
+      };
+      loadDraft();
+    }
+  }, [draftIdParam]);
+
+  // Handle bank selection: loads questions strictly for that bank and resets previous selections
+  const handleSelectBank = useCallback(
+    async (bankId: number | string) => {
+      setSelectedBankId(bankId);
+      // Clean slate for questions & blueprints when picking or switching bank
+      setSelectedQuestionIds(new Set());
+      setTypeBlueprints({});
+      setManualPage(1);
+      setLoadingBank(true);
+
+      // Auto-populate subject in Step 1 if currently empty
+      const bankObj = availableBanks.find((b) => String(b.id) === String(bankId));
+      if (bankObj && (!subject || subject.trim() === "") && bankObj.id !== "general") {
+        setSubject(bankObj.name);
+      }
+
+      try {
+        const res = await facultyQuestionBankApi.getQuestions({
+          subject_id: bankId,
+          limit: 200,
+        });
+        const questions = res.questions || [];
+        setBankQuestions(questions);
+
+        // Analyze question types available in this specific bank
+        const typeMap: Record<string, { count: number; defaultMarks: number; label: string }> = {
+          mcq: { count: 0, defaultMarks: 1, label: "Multiple Choice (MCQ)" },
+          true_false: { count: 0, defaultMarks: 1, label: "True / False" },
+          short: { count: 0, defaultMarks: 5, label: "Short Answer" },
+          long: { count: 0, defaultMarks: 10, label: "Long Answer" },
+          fill_blank: { count: 0, defaultMarks: 1, label: "Fill in Blank" },
+        };
+
+        questions.forEach((q) => {
+          const rawT = (q.question_type || "mcq").toLowerCase();
+          const t =
+            rawT === "multiple_choice"
+              ? "mcq"
+              : rawT === "truefalse" || rawT === "tf"
+              ? "true_false"
+              : rawT === "short_answer"
+              ? "short"
+              : rawT === "long_answer"
+              ? "long"
+              : rawT;
+
+          if (!typeMap[t]) {
+            typeMap[t] = {
+              count: 0,
+              defaultMarks: Number(q.marks) || 1,
+              label: t.replace("_", " ").toUpperCase(),
+            };
+          }
+          typeMap[t].count += 1;
+        });
+
+        // Initialize blueprints with 0 selected
+        const initialBlueprints: Record<string, TypeBlueprint> = {};
+        Object.entries(typeMap).forEach(([k, v]) => {
+          if (v.count > 0) {
+            initialBlueprints[k] = {
+              type: k,
+              label: v.label,
+              availableCount: v.count,
+              selectedCount: 0,
+              marksPerQuestion: v.defaultMarks,
+            };
+          }
+        });
+        setTypeBlueprints(initialBlueprints);
+      } catch (err: any) {
+        toast.error(err?.response?.data?.detail || "Failed to load question bank items.");
+      } finally {
+        setLoadingBank(false);
+      }
+    },
+    [availableBanks, subject]
+  );
+
+  // Reset entire wizard state cleanly
+  const handleResetWizard = useCallback(() => {
+    setTitle("");
+    setSubject("");
+    setDurationMinutes(60);
+    setTargetMarks(50);
+    setStartsAt("");
+    setEndsAt("");
+    setShuffleQuestions(true);
+    setShuffleOptions(true);
+    setSelectedBankId(null);
+    setBankQuestions([]);
+    setSelectedQuestionIds(new Set());
+    setTypeBlueprints({});
+    setManualSearch("");
+    setManualTypeFilter("all");
+    setManualPage(1);
+    setAssembledExamId(null);
+    setAssembledSummary(null);
+    setCurrentStep(1);
+    toast.info("Wizard reset. Ready to create a new exam paper.");
+  }, []);
 
   // Handle Bank File Upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,7 +263,10 @@ export function FacultyCreateBankPaper() {
 
       const res = await facultyQuestionBankApi.uploadFile(formData);
       toast.success(res.detail || `Successfully imported ${res.imported_count || res.valid_count} question(s)!`);
-      await loadBankQuestions();
+      await loadAvailableBanks();
+      if (selectedBankId) {
+        await handleSelectBank(selectedBankId);
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || "Failed to upload question bank file.");
     } finally {
@@ -256,10 +363,43 @@ export function FacultyCreateBankPaper() {
     });
   };
 
+  // Filtered Questions for Manual Mode
+  const filteredManualQuestions = useMemo(() => {
+    return bankQuestions.filter((q) => {
+      if (manualTypeFilter !== "all" && (q.question_type || "").toLowerCase() !== manualTypeFilter)
+        return false;
+      if (manualSearch.trim()) {
+        const s = manualSearch.toLowerCase();
+        return (
+          (q.question_text || "").toLowerCase().includes(s) ||
+          (q.topic || "").toLowerCase().includes(s)
+        );
+      }
+      return true;
+    });
+  }, [bankQuestions, manualTypeFilter, manualSearch]);
+
+  const totalManualPages = Math.max(1, Math.ceil(filteredManualQuestions.length / manualPageSize));
+  const paginatedManualQuestions = useMemo(() => {
+    const start = (manualPage - 1) * manualPageSize;
+    return filteredManualQuestions.slice(start, start + manualPageSize);
+  }, [filteredManualQuestions, manualPage, manualPageSize]);
+
+  // Currently active bank object
+  const activeBankObj = useMemo(() => {
+    return availableBanks.find((b) => String(b.id) === String(selectedBankId));
+  }, [availableBanks, selectedBankId]);
+
   // Assemble Paper Submission
   const handleAssemblePaper = async () => {
-    if (!title.trim()) {
-      toast.error("Please provide an exam title.");
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      toast.error("Exam Title is required and cannot be empty or whitespace.");
+      setCurrentStep(1);
+      return;
+    }
+    if (trimmedTitle.length > 255) {
+      toast.error("Exam Title cannot exceed 255 characters.");
       setCurrentStep(1);
       return;
     }
@@ -279,8 +419,9 @@ export function FacultyCreateBankPaper() {
       });
 
       const payload = {
-        title: title.trim(),
+        title: trimmedTitle,
         subject: subject.trim(),
+        subject_id: selectedBankId !== "general" ? selectedBankId : undefined,
         duration_minutes: Number(durationMinutes) || 60,
         target_marks: Number(targetMarks) || activeSummary.totalMarks,
         starts_at: startsAt || null,
@@ -290,7 +431,7 @@ export function FacultyCreateBankPaper() {
         question_ids: selectionMode === "manual" ? Array.from(selectedQuestionIds) : undefined,
       };
 
-      const res = await facultyQuestionBankApi.assemblePaperFromBank(null, payload);
+      const res = await facultyQuestionBankApi.assemblePaperFromBank(assembledExamId, payload);
       setAssembledExamId(res.exam_id);
       setAssembledSummary(res);
       toast.success(res.detail || "Paper successfully assembled from question bank!");
@@ -331,9 +472,8 @@ export function FacultyCreateBankPaper() {
     }
   };
 
-  return (
-    <DashboardLayout userRole="Faculty">
-      <div className="space-y-6 max-w-6xl mx-auto pb-12">
+  const pageContent = (
+    <div className="space-y-6 max-w-6xl mx-auto pb-12">
         {/* Header Breadcrumbs */}
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -351,20 +491,30 @@ export function FacultyCreateBankPaper() {
               Assemble and publish verified exams directly from your question bank without AI hallucination risk.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate("/faculty/history")}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to Exams
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleResetWizard}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-slate-50 transition-colors shadow-2xs"
+              title="Reset all wizard fields and start fresh"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Start Over
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/faculty/history")}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to Exams
+            </button>
+          </div>
         </div>
 
         {/* Stepper Progress Bar */}
         <div className="grid grid-cols-4 gap-2 sm:gap-4 p-3 bg-muted/30 rounded-2xl border border-border">
           {[
             { step: 1, label: "Exam Details", desc: "Title & Schedule" },
-            { step: 2, label: "Bank Selection", desc: "Review / Upload" },
+            { step: 2, label: "Bank Selection", desc: "Select / Upload Bank" },
             { step: 3, label: "Blueprint Counts", desc: "Choose by Type" },
             { step: 4, label: "Paper & Publish", desc: "Review & Deploy" },
           ].map((s) => {
@@ -408,7 +558,7 @@ export function FacultyCreateBankPaper() {
               <div>
                 <h2 className="text-lg font-bold text-foreground">Step 1: Exam Configuration & Schedule</h2>
                 <p className="text-xs text-muted-foreground">
-                  Set target marks, duration, and scheduling parameters for this paper.
+                  Enter your exam title, target marks, duration, and scheduling parameters.
                 </p>
               </div>
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-primary/10 text-primary">
@@ -418,12 +568,15 @@ export function FacultyCreateBankPaper() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-semibold text-foreground">Exam Title *</label>
+                <label className="text-xs font-semibold text-foreground">
+                  Exam Title * <span className="text-[11px] font-normal text-muted-foreground">(Required, max 255 chars)</span>
+                </label>
                 <input
                   type="text"
+                  maxLength={255}
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Midterm Examination - Data Structures"
+                  placeholder="e.g. MCA Semester 2 Internal Examination"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20"
                 />
               </div>
@@ -434,7 +587,7 @@ export function FacultyCreateBankPaper() {
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  placeholder="e.g. Computer Science / Algorithms"
+                  placeholder="e.g. Data Structures & Algorithms"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-border text-sm focus:outline-hidden focus:ring-2 focus:ring-primary/20"
                 />
               </div>
@@ -509,8 +662,13 @@ export function FacultyCreateBankPaper() {
               <button
                 type="button"
                 onClick={() => {
-                  if (!title.trim()) {
-                    toast.error("Please enter an exam title.");
+                  const trimmed = title.trim();
+                  if (!trimmed) {
+                    toast.error("Please enter an exam title before proceeding.");
+                    return;
+                  }
+                  if (trimmed.length > 255) {
+                    toast.error("Exam title cannot exceed 255 characters.");
                     return;
                   }
                   setCurrentStep(2);
@@ -530,7 +688,7 @@ export function FacultyCreateBankPaper() {
               <div>
                 <h2 className="text-lg font-bold text-foreground">Step 2: Choose or Upload Question Bank</h2>
                 <p className="text-xs text-muted-foreground">
-                  Select existing questions from your institution repository or upload a new question bank file.
+                  Select a specific question bank from your department repository or upload a new bank file.
                 </p>
               </div>
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-primary/10 text-primary">
@@ -584,51 +742,143 @@ export function FacultyCreateBankPaper() {
               </div>
             </div>
 
-            {/* Current Bank Overview */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                  <Database className="h-4 w-4 text-primary" /> Available Bank Pool Overview
-                </h3>
-                <button
-                  type="button"
-                  onClick={loadBankQuestions}
-                  disabled={loadingBank}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${loadingBank ? "animate-spin" : ""}`} /> Refresh Pool
-                </button>
-              </div>
+            {/* Question Bank Selection State */}
+            {!selectedBankId ? (
+              /* EMPTY STATE: Prompt to choose a bank before questions appear */
+              <div className="p-8 rounded-2xl border border-dashed border-border bg-slate-50/60 text-center space-y-4">
+                <div className="h-12 w-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                  <Database className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">
+                    Select a question bank to view its available questions.
+                  </h3>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto mt-1">
+                    Choose one of your department question banks below to inspect its pool and draw questions for this exam.
+                  </p>
+                </div>
 
-              {loadingBank ? (
-                <div className="py-8 flex flex-col items-center justify-center text-muted-foreground gap-2">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                  <p className="text-xs font-medium">Loading question bank items...</p>
-                </div>
-              ) : bankQuestions.length === 0 ? (
-                <div className="p-8 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground space-y-2">
-                  <p>Your question bank currently has 0 questions.</p>
-                  <p>Upload a CSV, XLSX, or DOCX above to import your questions.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-3.5 rounded-xl border border-border bg-slate-50/50">
-                    <div className="text-[11px] font-semibold text-muted-foreground uppercase">Total In Bank</div>
-                    <div className="text-2xl font-bold text-foreground mt-0.5">{bankQuestions.length}</div>
-                    <div className="text-[10px] text-muted-foreground">verified questions</div>
+                {loadingBanksList ? (
+                  <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading available banks...
                   </div>
-                  {Object.values(typeBlueprints).map((bp) => (
-                    <div key={bp.type} className="p-3.5 rounded-xl border border-border bg-slate-50/50">
-                      <div className="text-[11px] font-semibold text-muted-foreground uppercase truncate">
-                        {bp.label}
-                      </div>
-                      <div className="text-2xl font-bold text-primary mt-0.5">{bp.availableCount}</div>
-                      <div className="text-[10px] text-muted-foreground">available to draw</div>
+                ) : availableBanks.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 max-w-md mx-auto">
+                    No question banks found for your department. Please upload a bank file above to get started.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-left max-w-3xl mx-auto pt-2">
+                    {availableBanks.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => handleSelectBank(b.id)}
+                        className="p-4 rounded-xl border border-border bg-white hover:border-primary/50 hover:bg-primary/5 transition-all text-left shadow-2xs group flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 uppercase">
+                              {b.code || "BANK"}
+                            </span>
+                            <span className="text-xs font-bold text-primary">
+                              {b.question_count} Questions
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors line-clamp-1">
+                            {b.name}
+                          </h4>
+                          {b.department && (
+                            <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{b.department}</p>
+                          )}
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-border/60 flex items-center justify-between text-xs font-semibold text-primary">
+                          <span>Select Bank</span>
+                          <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* SELECTED BANK VIEW */
+              <div className="space-y-4">
+                {/* Active Bank Header Bar */}
+                <div className="p-4 rounded-2xl border border-primary/30 bg-primary/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
+                      <Database className="h-5 w-5" />
                     </div>
-                  ))}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-foreground">
+                          {activeBankObj?.name || "Selected Question Bank"}
+                        </h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                          Active Bank
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {bankQuestions.length} verified questions loaded from this bank
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={loadingBank}
+                      onClick={() => handleSelectBank(selectedBankId)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-white text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-slate-50 transition-colors shadow-2xs"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${loadingBank ? "animate-spin" : ""}`} /> Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedBankId(null);
+                        setBankQuestions([]);
+                        setSelectedQuestionIds(new Set());
+                        setTypeBlueprints({});
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-white text-xs font-semibold text-primary hover:bg-primary/5 transition-colors shadow-2xs"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" /> Switch Bank
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
+
+                {/* Pool Overview Cards */}
+                {loadingBank ? (
+                  <div className="py-8 flex flex-col items-center justify-center text-muted-foreground gap-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    <p className="text-xs font-medium">Loading bank questions...</p>
+                  </div>
+                ) : bankQuestions.length === 0 ? (
+                  <div className="p-8 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground space-y-2">
+                    <p>This question bank currently has 0 questions.</p>
+                    <p>Upload a CSV, XLSX, or DOCX above to import questions into this bank.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-xl border border-border bg-slate-50/50">
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase">Total In Bank</div>
+                      <div className="text-2xl font-bold text-foreground mt-0.5">{bankQuestions.length}</div>
+                      <div className="text-[10px] text-muted-foreground">verified questions</div>
+                    </div>
+                    {Object.values(typeBlueprints).map((bp) => (
+                      <div key={bp.type} className="p-3.5 rounded-xl border border-border bg-slate-50/50">
+                        <div className="text-[11px] font-semibold text-muted-foreground uppercase truncate">
+                          {bp.label}
+                        </div>
+                        <div className="text-2xl font-bold text-primary mt-0.5">{bp.availableCount}</div>
+                        <div className="text-[10px] text-muted-foreground">available to draw</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center justify-between pt-4 border-t border-border/80">
               <button
@@ -640,9 +890,9 @@ export function FacultyCreateBankPaper() {
               </button>
               <button
                 type="button"
-                disabled={bankQuestions.length === 0}
+                disabled={!selectedBankId || bankQuestions.length === 0}
                 onClick={() => setCurrentStep(3)}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-xs disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Configure Questions <ArrowRight className="h-4 w-4" />
               </button>
@@ -657,7 +907,8 @@ export function FacultyCreateBankPaper() {
               <div>
                 <h2 className="text-lg font-bold text-foreground">Step 3: Question Selection & Type Blueprint</h2>
                 <p className="text-xs text-muted-foreground">
-                  Specify how many questions of each type to draw (e.g. 50 MCQ, 20 TF, 15 Short, 10 Long).
+                  Specify quotas by type or pick individual verified questions from{" "}
+                  <strong className="text-foreground">{activeBankObj?.name || "your bank"}</strong>.
                 </p>
               </div>
 
@@ -728,7 +979,7 @@ export function FacultyCreateBankPaper() {
             {selectionMode === "blueprint" ? (
               <div className="space-y-4">
                 <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Question Type Quotas
+                  Question Type Quotas ({activeBankObj?.name || "Selected Bank"})
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {Object.values(typeBlueprints).map((bp) => {
@@ -793,7 +1044,7 @@ export function FacultyCreateBankPaper() {
                 </div>
               </div>
             ) : (
-              /* MANUAL PICK MODE */
+              /* MANUAL PICK MODE WITH SEARCH, FILTER, AND PAGINATION */
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="relative flex-1">
@@ -802,13 +1053,19 @@ export function FacultyCreateBankPaper() {
                       type="text"
                       placeholder="Search questions by text or topic..."
                       value={manualSearch}
-                      onChange={(e) => setManualSearch(e.target.value)}
+                      onChange={(e) => {
+                        setManualSearch(e.target.value);
+                        setManualPage(1);
+                      }}
                       className="w-full pl-9 pr-4 py-2 rounded-xl border border-border text-xs focus:outline-hidden focus:ring-2 focus:ring-primary/20"
                     />
                   </div>
                   <select
                     value={manualTypeFilter}
-                    onChange={(e) => setManualTypeFilter(e.target.value)}
+                    onChange={(e) => {
+                      setManualTypeFilter(e.target.value);
+                      setManualPage(1);
+                    }}
                     className="px-3 py-2 rounded-xl border border-border text-xs bg-white focus:outline-hidden"
                   >
                     <option value="all">All Types</option>
@@ -816,24 +1073,17 @@ export function FacultyCreateBankPaper() {
                     <option value="true_false">True / False</option>
                     <option value="short">Short Answer</option>
                     <option value="long">Long Answer</option>
+                    <option value="fill_blank">Fill in Blank</option>
                   </select>
                 </div>
 
-                <div className="max-h-96 overflow-y-auto space-y-2 border border-border rounded-xl p-3 bg-slate-50/30">
-                  {bankQuestions
-                    .filter((q) => {
-                      if (manualTypeFilter !== "all" && (q.question_type || "").toLowerCase() !== manualTypeFilter)
-                        return false;
-                      if (manualSearch.trim()) {
-                        const s = manualSearch.toLowerCase();
-                        return (
-                          (q.question_text || "").toLowerCase().includes(s) ||
-                          (q.topic || "").toLowerCase().includes(s)
-                        );
-                      }
-                      return true;
-                    })
-                    .map((q) => {
+                <div className="space-y-2 border border-border rounded-xl p-3 bg-slate-50/30">
+                  {paginatedManualQuestions.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-muted-foreground">
+                      No questions matched your search and filter criteria.
+                    </div>
+                  ) : (
+                    paginatedManualQuestions.map((q) => {
                       const isSelected = selectedQuestionIds.has(q.id);
                       return (
                         <div
@@ -853,7 +1103,7 @@ export function FacultyCreateBankPaper() {
                           />
                           <div className="flex-1 min-w-0">
                             <div className="text-xs font-semibold text-foreground leading-snug line-clamp-2">
-                              {q.question_text}
+                              {q.question_text || (q as any).text}
                             </div>
                             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 uppercase">
@@ -869,8 +1119,41 @@ export function FacultyCreateBankPaper() {
                           </div>
                         </div>
                       );
-                    })}
+                    })
+                  )}
                 </div>
+
+                {/* Pagination Controls */}
+                {totalManualPages > 1 && (
+                  <div className="flex items-center justify-between px-2 pt-2 text-xs text-muted-foreground">
+                    <div>
+                      Showing {(manualPage - 1) * manualPageSize + 1} -{" "}
+                      {Math.min(manualPage * manualPageSize, filteredManualQuestions.length)} of{" "}
+                      {filteredManualQuestions.length} questions
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={manualPage <= 1}
+                        onClick={() => setManualPage((p) => Math.max(1, p - 1))}
+                        className="p-1.5 rounded-lg border border-border bg-white text-foreground hover:bg-slate-50 disabled:opacity-40 transition-colors"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <span className="px-2 font-semibold text-foreground">
+                        {manualPage} / {totalManualPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={manualPage >= totalManualPages}
+                        onClick={() => setManualPage((p) => Math.min(totalManualPages, p + 1))}
+                        className="p-1.5 rounded-lg border border-border bg-white text-foreground hover:bg-slate-50 disabled:opacity-40 transition-colors"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -880,7 +1163,7 @@ export function FacultyCreateBankPaper() {
                 onClick={() => setCurrentStep(2)}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
               >
-                <ArrowLeft className="h-3.5 w-3.5" /> Back to Bank
+                <ArrowLeft className="h-3.5 w-3.5" /> Back to Bank Selection
               </button>
 
               <button
@@ -928,7 +1211,7 @@ export function FacultyCreateBankPaper() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/80 pb-3">
                 <div>
                   <h3 className="text-base font-bold text-foreground">{title}</h3>
-                  <p className="text-xs text-muted-foreground">{subject || "General Subject"}</p>
+                  <p className="text-xs text-muted-foreground">{subject || activeBankObj?.name || "General Subject"}</p>
                 </div>
                 <div className="text-xs text-muted-foreground">Exam ID #{assembledExamId}</div>
               </div>
@@ -959,16 +1242,16 @@ export function FacultyCreateBankPaper() {
               </div>
             </div>
 
-            {/* Action Buttons: Direct Publish vs Review & Edit */}
+            {/* Action Buttons: Direct Publish vs Review & Edit vs Create Another */}
             <div className="p-5 rounded-2xl border border-primary/20 bg-primary/5 space-y-4">
               <div>
                 <h4 className="text-sm font-bold text-foreground">Next Actions</h4>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Choose whether to immediately publish this exam to your students, or inspect questions in the editor.
+                  Choose whether to immediately publish this exam to your students, inspect questions in the editor, or create another paper.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="flex flex-col sm:flex-row items-center gap-3 flex-wrap">
                 <button
                   type="button"
                   onClick={() => setShowPublishModal(true)}
@@ -983,6 +1266,14 @@ export function FacultyCreateBankPaper() {
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-border bg-white text-foreground text-sm font-bold hover:bg-slate-50 transition-colors shadow-2xs"
                 >
                   <FileText className="h-4 w-4" /> Open in Review & Edit
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleResetWizard}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-primary/30 bg-white text-primary text-sm font-bold hover:bg-primary/5 transition-colors shadow-2xs"
+                >
+                  <RotateCcw className="h-4 w-4" /> Create Another Paper
                 </button>
 
                 <button
@@ -1057,6 +1348,15 @@ export function FacultyCreateBankPaper() {
           </div>
         )}
       </div>
+  );
+
+  if (hideLayout) {
+    return pageContent;
+  }
+
+  return (
+    <DashboardLayout userRole="Faculty">
+      {pageContent}
     </DashboardLayout>
   );
 }

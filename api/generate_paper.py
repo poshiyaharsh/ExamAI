@@ -1539,6 +1539,67 @@ class GeneratePaperView(APIView):
         else:
             logger.debug('No syllabus uploaded; generation will use topics only.')
 
+        # Check for subject-specific study materials
+        raw_materials = []
+        if hasattr(request.data, 'getlist'):
+            raw_materials = request.data.getlist('material_ids')
+        if not raw_materials:
+            v = request.data.get('material_ids')
+            if v is not None:
+                raw_materials = v if isinstance(v, list) else [v]
+
+        material_ids = []
+        for item in raw_materials:
+            if isinstance(item, int):
+                material_ids.append(item)
+            elif isinstance(item, str):
+                import json
+                try:
+                    parsed = json.loads(item)
+                    if isinstance(parsed, list):
+                        material_ids.extend([int(x) for x in parsed if str(x).isdigit() or isinstance(x, int)])
+                    elif isinstance(parsed, int):
+                        material_ids.append(parsed)
+                    elif str(parsed).isdigit():
+                        material_ids.append(int(parsed))
+                except Exception:
+                    for part in item.split(','):
+                        if part.strip().isdigit():
+                            material_ids.append(int(part.strip()))
+
+        if material_ids:
+            from faculty.models import SyllabusUpload
+            materials = list(SyllabusUpload.objects.filter(
+                id__in=material_ids,
+                institution=tenant_inst,
+            ).select_related('subject'))
+
+            if len(materials) != len(material_ids):
+                return Response({'detail': 'One or more selected study materials were not found or not authorized.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Strict cross-subject data leakage prevention
+            raw_subj_param = str(request.data.get('subject') or request.data.get('subject_name') or '').strip()
+            exam_subject_str = raw_subj_param.lower()
+            subject_id = request.data.get('subject_id')
+            for mat in materials:
+                if subject_id and str(subject_id).isdigit():
+                    if mat.subject_id and mat.subject_id != int(subject_id):
+                        return Response({
+                            'detail': f"Cross-subject violation: Material '{mat.original_filename}' belongs to subject '{mat.subject.name if mat.subject else ''}', not the selected subject."
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                elif exam_subject_str and mat.subject and mat.subject.name.strip().lower() != exam_subject_str:
+                    return Response({
+                        'detail': f"Cross-subject violation: Material '{mat.original_filename}' belongs to subject '{mat.subject.name}', not '{raw_subj_param}'."
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            mat_texts = [m.extracted_text for m in materials if m.extracted_text]
+            if mat_texts:
+                combined_mat_text = "\n\n---\n\n".join(mat_texts)
+                if syllabus_text:
+                    syllabus_text = f"{syllabus_text}\n\n---\n\n{combined_mat_text}"
+                else:
+                    syllabus_text = combined_mat_text
+
         # Validate that every submitted topic belongs to the uploaded syllabus document
         if syllabus_text and str(syllabus_text).strip() and topics:
             from .utils.extract_text import validate_topics_against_syllabus
