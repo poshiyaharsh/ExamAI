@@ -6,7 +6,10 @@ Faculty Question Bank Views:
 4. AssemblePaperFromBankView: Assembles exam papers from bank questions manually or auto-assembled via deterministic knapsack solver.
 """
 
+import csv
 from decimal import Decimal
+import io
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -35,8 +38,14 @@ logger = logging.getLogger(__name__)
 class FacultyQuestionBankUploadView(APIView):
     """
     POST /api/faculty/question-bank/upload/
-    Uploads question bank files (.csv, .xlsx, .docx, .json).
-    Supports dry-run preview and transactional import.
+    Uploads and processes question bank files (.csv, .xlsx, .docx, .json, .pdf, .txt).
+    Supports:
+    1. Intelligent sniffing, header detection, column mapping, and dry-run preview.
+    2. Interactive preview and inline row curation.
+    3. Transactional atomic commit with selectable import modes:
+       - 'ready_only': imports only 100% verified rows.
+       - 'ready_and_reviewed': imports ready and faculty-reviewed rows.
+       - 'all': imports all valid rows, skipping fatal errors.
     """
     permission_classes = [IsAuthenticated, IsFacultyUser]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -47,25 +56,65 @@ class FacultyQuestionBankUploadView(APIView):
             return Response({'detail': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
 
         faculty_dept = get_faculty_department(request.user) or ''
+        is_shared = str(request.data.get('is_shared', 'true')).lower() not in ('false', '0', 'no')
+        import_valid_only = str(request.data.get('import_valid_rows_only', 'false')).lower() in ('true', '1', 'yes')
+        has_explicit_import_mode = 'import_mode' in request.data
+        import_mode = str(request.data.get('import_mode') or 'all').lower()
+        mode = str(request.data.get('mode') or ('analyze' if str(request.data.get('dry_run', 'false')).lower() in ('true', '1', 'yes') else 'commit')).lower()
+
+        # Check for direct curated questions list payload (e.g. from frontend preview editor)
+        direct_questions = request.data.get('questions')
+        if direct_questions and isinstance(direct_questions, list):
+            return self._commit_direct_questions(
+                request=request,
+                tenant_inst=tenant_inst,
+                faculty_dept=faculty_dept,
+                questions=direct_questions,
+                is_shared=is_shared,
+            )
 
         uploaded_file = request.FILES.get('file') or request.FILES.get('question_file')
         if not uploaded_file:
-            return Response({'detail': 'No file uploaded. Please provide a CSV, XLSX, DOCX, or JSON file.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'No file uploaded. Please provide a CSV, XLSX, DOCX, JSON, PDF, or TXT file.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Parse mapping and defaults if passed
+        raw_mapping = request.data.get('custom_mapping')
+        custom_mapping = None
+        if raw_mapping:
+            if isinstance(raw_mapping, dict):
+                custom_mapping = raw_mapping
+            elif isinstance(raw_mapping, str):
+                try:
+                    custom_mapping = json.loads(raw_mapping)
+                except Exception:
+                    custom_mapping = None
+
+        sheet_name = request.data.get('sheet_name') or None
+        default_marks = float(request.data.get('default_marks') or 1.0)
+        default_difficulty = str(request.data.get('default_difficulty') or 'medium').lower()
+        default_type = request.data.get('default_type') or None
+        use_smart = str(request.data.get('smart_import', 'true')).lower() in ('true', '1', 'yes')
 
         # Parse and validate file container and all rows
         try:
-            report = parse_and_validate_question_bank_file(uploaded_file)
+            report = parse_and_validate_question_bank_file(
+                uploaded_file=uploaded_file,
+                use_smart_import=use_smart,
+                custom_mapping=custom_mapping,
+                default_marks=default_marks,
+                default_difficulty=default_difficulty,
+                default_type=default_type,
+                sheet_name=sheet_name,
+            )
         except ValueError as val_err:
             return Response({'detail': str(val_err)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.error("Error parsing question bank file: %s", exc)
             return Response({'detail': f'Failed to process file: {str(exc)}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        is_dry_run = str(request.data.get('dry_run', 'false')).lower() in ('true', '1', 'yes')
-        import_valid_only = str(request.data.get('import_valid_rows_only', 'false')).lower() in ('true', '1', 'yes')
-        is_shared = str(request.data.get('is_shared', 'true')).lower() not in ('false', '0', 'no')
+        is_dry_run = mode == 'analyze' or str(request.data.get('dry_run', 'false')).lower() in ('true', '1', 'yes')
 
-        # If dry run, return preview immediately without touching database
+        # If analyze / dry run, return preview immediately without touching database
         if is_dry_run:
             return Response({
                 'dry_run': True,
@@ -73,41 +122,102 @@ class FacultyQuestionBankUploadView(APIView):
                 'format': report['format'],
                 'total_rows': report['total_rows'],
                 'valid_count': report['valid_count'],
+                'ready_count': report.get('ready_count', report['valid_count']),
+                'needs_review_count': report.get('needs_review_count', 0),
                 'invalid_count': report['invalid_count'],
                 'duplicate_count': report['duplicate_count'],
                 'has_errors': report['has_errors'],
+                'sheet_names': report.get('sheet_names', []),
+                'selected_sheet': report.get('selected_sheet'),
+                'columns': report.get('columns', []),
+                'header_row_index': report.get('header_row_index'),
                 'errors': report['errors'][:50],
                 'warnings': report['warnings'][:50],
                 'preview_rows': report['preview_rows'],
+                'all_rows': report.get('all_rows', []),
             }, status=status.HTTP_200_OK)
 
-        # Non-dry-run: check all-or-nothing rollback rule
-        if report['has_errors'] and not import_valid_only:
+        # Non-dry-run: check all-or-nothing rollback rule if strict mode
+        if report['has_errors'] and not import_valid_only and (not has_explicit_import_mode or import_mode == 'all'):
             return Response({
                 'detail': f"File contains {report['invalid_count']} invalid row(s). No rows were imported. Check the errors or enable 'Import valid rows only'.",
                 'has_errors': True,
                 'total_rows': report['total_rows'],
                 'valid_count': report['valid_count'],
+                'ready_count': report.get('ready_count', report['valid_count']),
+                'needs_review_count': report.get('needs_review_count', 0),
                 'invalid_count': report['invalid_count'],
                 'errors': report['errors'],
                 'preview_rows': report['preview_rows'],
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        rows_to_save = [
-            r['data'] for r in report['all_rows']
-            if r['is_valid'] and (not r.get('is_duplicate') or import_valid_only)
-        ]
+        if import_mode == 'ready_only':
+            rows_to_save = [
+                r['data'] for r in report['all_rows']
+                if (r.get('status') == 'ready' or (r.get('is_valid') and not r.get('status')))
+                and (not r.get('is_duplicate') or import_valid_only)
+            ]
+        elif import_mode in ('ready_and_reviewed', 'all'):
+            rows_to_save = [
+                r['data'] for r in report['all_rows']
+                if r['is_valid'] and (not r.get('is_duplicate') or import_valid_only)
+            ]
+        else:
+            rows_to_save = [
+                r['data'] for r in report['all_rows']
+                if r['is_valid'] and (not r.get('is_duplicate') or import_valid_only)
+            ]
 
         if not rows_to_save:
-            return Response({'detail': 'No valid questions found to import.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'No eligible questions found to import with current mode.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Subject cache
+        return self._insert_questions(
+            tenant_inst=tenant_inst,
+            faculty_dept=faculty_dept,
+            user=request.user,
+            rows_to_save=rows_to_save,
+            filename=report['filename'],
+            file_format=report['format'],
+            total_rows=report['total_rows'],
+            invalid_count=report['invalid_count'],
+            duplicate_count=report['duplicate_count'],
+            errors=report['errors'],
+            is_shared=is_shared,
+        )
+
+    def _commit_direct_questions(self, request, tenant_inst, faculty_dept, questions: List[Any], is_shared: bool):
+        filename = request.data.get('filename') or 'curated_question_bank.json'
+        file_format = request.data.get('format') or 'json'
+
+        rows_to_save = []
+        for q in questions:
+            item = q.get('data') if isinstance(q, dict) and 'data' in q else q
+            if isinstance(item, dict) and (item.get('question_text') or item.get('text')):
+                rows_to_save.append(item)
+
+        if not rows_to_save:
+            return Response({'detail': 'No valid questions found in payload.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return self._insert_questions(
+            tenant_inst=tenant_inst,
+            faculty_dept=faculty_dept,
+            user=request.user,
+            rows_to_save=rows_to_save,
+            filename=filename,
+            file_format=file_format,
+            total_rows=len(questions),
+            invalid_count=len(questions) - len(rows_to_save),
+            duplicate_count=0,
+            errors=[],
+            is_shared=is_shared,
+        )
+
+    def _insert_questions(self, tenant_inst, faculty_dept, user, rows_to_save, filename, file_format, total_rows, invalid_count, duplicate_count, errors, is_shared):
         sub_cache = {s.name.lower(): s for s in Subject.objects.filter(institution=tenant_inst)}
-
         imported_count = 0
+
         with transaction.atomic():
             for row in rows_to_save:
-                # Find or assign Subject
                 sub_name = (row.get('subject') or 'General').strip()
                 sub_key = sub_name.lower()
                 subject_obj = sub_cache.get(sub_key)
@@ -120,61 +230,205 @@ class FacultyQuestionBankUploadView(APIView):
                     )
                     sub_cache[sub_key] = subject_obj
 
-                # Create Question Bank item (exam=None)
+                raw_options = row.get('options') or []
+                cleaned_opts = clean_options_list(raw_options) if raw_options else []
+
                 q = Question.objects.create(
                     institution=tenant_inst,
                     department=faculty_dept,
                     subject=subject_obj,
                     topic_text=row.get('topic') or '',
-                    created_by=request.user,
+                    created_by=user,
                     question_type=row.get('question_type') or 'mcq',
                     difficulty=row.get('difficulty') or 'medium',
-                    text=row.get('question_text') or '',
+                    text=row.get('question_text') or row.get('text') or '',
                     explanation=row.get('explanation') or '',
                     marks=Decimal(str(row.get('marks') or 1)),
                     status=Question.Status.ACTIVE,
                     source='faculty_upload',
                     is_shared=is_shared,
-                    options=clean_options_list(row.get('options')) if row.get('options') else [],
+                    options=cleaned_opts,
                     correct_answer=row.get('correct_answer'),
                     model_answer=row.get('model_answer') or '',
                     rubric=row.get('rubric') or [],
                     exam=None,
                 )
 
-                # If MCQ, create relational Option records
-                if row.get('question_type') == 'mcq' and row.get('options'):
-                    for opt_data in row['options']:
-                        Option.objects.create(
-                            question=q,
-                            text=opt_data.get('text', ''),
-                            is_correct=bool(opt_data.get('is_correct')),
-                            order=int(opt_data.get('order', 1)),
-                        )
+                if row.get('question_type') == 'mcq' and raw_options:
+                    for idx_opt, opt_data in enumerate(raw_options, start=1):
+                        if isinstance(opt_data, dict):
+                            opt_text = opt_data.get('text', '')
+                            opt_is_correct = bool(opt_data.get('is_correct'))
+                            opt_order = int(opt_data.get('order', idx_opt))
+                        else:
+                            opt_text = str(opt_data)
+                            corr = str(row.get('correct_answer', '')).strip().lower()
+                            letter = chr(64 + idx_opt).lower()
+                            opt_is_correct = (corr == opt_text.strip().lower() or corr == letter)
+                            opt_order = idx_opt
+                        if opt_text:
+                            Option.objects.create(
+                                question=q,
+                                text=opt_text,
+                                is_correct=opt_is_correct,
+                                order=opt_order,
+                            )
 
                 imported_count += 1
 
-            # Create audit log
             QuestionImportLog.objects.create(
                 institution=tenant_inst,
-                created_by=request.user,
-                filename=report['filename'],
-                file_format=report['format'],
-                total_rows=report['total_rows'],
+                created_by=user,
+                filename=filename,
+                file_format=file_format,
+                total_rows=total_rows,
                 imported_count=imported_count,
-                duplicate_count=report['duplicate_count'],
-                failed_count=report['invalid_count'],
-                error_details=report['errors'][:50],
+                duplicate_count=duplicate_count,
+                failed_count=invalid_count,
+                error_details=errors[:50],
             )
 
         return Response({
             'detail': f"Successfully imported {imported_count} question(s) into your question bank.",
             'imported_count': imported_count,
-            'total_rows': report['total_rows'],
-            'failed_count': report['invalid_count'],
-            'duplicate_count': report['duplicate_count'],
+            'total_rows': total_rows,
+            'failed_count': invalid_count,
+            'duplicate_count': duplicate_count,
             'is_shared': is_shared,
         }, status=status.HTTP_201_CREATED)
+
+
+class FacultyQuestionBankAiAssistView(APIView):
+    """
+    POST /api/faculty/question-bank/ai-assist/
+    Runs local Ollama LLM with strict XML isolation and JSON schema
+    to parse complex, unstructured question text blocks.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def post(self, request):
+        tenant_inst = getattr(request, 'tenant', None) or get_user_institution(request.user)
+        if not tenant_inst:
+            return Response({'detail': 'No active institution found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        unstructured_text = request.data.get('text') or ''
+        if not unstructured_text and 'items' in request.data:
+            unstructured_text = "\n\n".join([str(item.get('question_text') or item) for item in request.data['items']])
+
+        if not unstructured_text.strip():
+            return Response({'detail': 'Please provide text or items to assist with.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from api.utils.smart_importer.ai_extractor import extract_questions_with_ai
+        extracted = extract_questions_with_ai(unstructured_text)
+
+        return Response({
+            'success': True,
+            'extracted_count': len(extracted),
+            'questions': extracted,
+        }, status=status.HTTP_200_OK)
+
+
+class FacultyQuestionBankExportReportView(APIView):
+    """
+    POST /api/faculty/question-bank/export-report/
+    Exports a CSV report of skipped, invalid, or needs_review rows.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def post(self, request):
+        rows = request.data.get('rows') or []
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Row Number', 'Status', 'Question Text', 'Question Type', 'Errors', 'Review Notes / Warnings'])
+
+        for r in rows:
+            data = r.get('data') or r
+            row_num = r.get('row_number') or data.get('row_number', '')
+            st = r.get('status', 'invalid')
+            q_text = data.get('question_text', '')
+            q_type = data.get('question_type', '')
+            errs = "; ".join(r.get('errors') or [])
+            warns = "; ".join(r.get('warnings') or r.get('review_notes') or [])
+            writer.writerow([row_num, st, q_text, q_type, errs, warns])
+
+        resp = HttpResponse(output.getvalue(), content_type='text/csv')
+        resp['Content-Disposition'] = 'attachment; filename="question_import_error_report.csv"'
+        resp['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return resp
+
+
+class FacultyQuestionBankExportCleanedView(APIView):
+    """
+    POST /api/faculty/question-bank/export-cleaned/
+    Exports parsed / edited question bank items into a standard, clean XLSX workbook.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyUser]
+
+    def post(self, request):
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        rows = request.data.get('questions') or request.data.get('rows') or []
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Question Bank"
+
+        headers = [
+            "Question Text", "Question Type", "Marks", "Difficulty",
+            "Topic", "Subject", "Option A", "Option B", "Option C", "Option D",
+            "Correct Answer", "Explanation"
+        ]
+        ws.append(headers)
+
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+        for col_num in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for r in rows:
+            data = r.get('data') or r
+            opts = data.get('options_raw') or []
+            if not opts and data.get('options'):
+                raw_o = data.get('options')
+                if isinstance(raw_o, list):
+                    opts = [o.get('text', '') if isinstance(o, dict) else str(o) for o in raw_o]
+
+            opt_a = opts[0] if len(opts) > 0 else ""
+            opt_b = opts[1] if len(opts) > 1 else ""
+            opt_c = opts[2] if len(opts) > 2 else ""
+            opt_d = opts[3] if len(opts) > 3 else ""
+
+            ws.append([
+                data.get('question_text', ''),
+                data.get('question_type', 'mcq'),
+                float(data.get('marks') or 1.0),
+                data.get('difficulty', 'medium'),
+                data.get('topic', ''),
+                data.get('subject', ''),
+                opt_a,
+                opt_b,
+                opt_c,
+                opt_d,
+                data.get('correct_answer', ''),
+                data.get('explanation', ''),
+            ])
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = min(50, max(max_len + 3, 12))
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        resp = HttpResponse(output.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        resp['Content-Disposition'] = 'attachment; filename="cleaned_question_bank.xlsx"'
+        resp['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return resp
 
 
 class FacultyQuestionBankTemplateView(APIView):

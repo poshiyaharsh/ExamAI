@@ -2761,16 +2761,65 @@ export interface FacultyQuestionBankListResponse {
   };
 }
 
+export interface SmartImportDetectedColumn {
+  index: number;
+  original_header: string;
+  proposed_target: string;
+  confidence: number;
+  sample_values: string[];
+}
+
+export interface SmartImportRow {
+  row_number: number;
+  status: 'ready' | 'needs_review' | 'invalid';
+  is_valid: boolean;
+  is_ready: boolean;
+  needs_review: boolean;
+  is_duplicate?: boolean;
+  errors: string[];
+  warnings: string[];
+  review_notes?: string[];
+  data: {
+    row_number?: number;
+    question_text: string;
+    question_type: string;
+    marks: number;
+    difficulty: string;
+    topic?: string;
+    subject?: string;
+    department?: string;
+    options?: Array<{ text: string; is_correct: boolean; order: number }> | string[];
+    options_raw?: string[];
+    correct_answer?: string;
+    model_answer?: string;
+    rubric?: any[];
+    explanation?: string;
+    _ai_extracted?: boolean;
+  };
+}
+
 export interface QuestionBankUploadResponse {
   dry_run: boolean;
+  filename?: string;
   format: string;
   total_rows: number;
   valid_count: number;
+  ready_count?: number;
+  needs_review_count?: number;
   invalid_count: number;
-  preview_rows: any[];
+  duplicate_count?: number;
+  has_errors?: boolean;
+  sheet_names?: string[];
+  selected_sheet?: string;
+  columns?: SmartImportDetectedColumn[];
+  header_row_index?: number;
+  preview_rows: SmartImportRow[];
+  all_rows?: SmartImportRow[];
   errors: any[];
+  warnings?: any[];
   imported_count?: number;
   detail?: string;
+  is_shared?: boolean;
 }
 
 export interface AssemblePaperFromBankPayload {
@@ -2808,6 +2857,44 @@ export const facultyQuestionBankApi = {
     const response = await apiClient.post<QuestionBankUploadResponse>('/api/faculty/question-bank/upload/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+    return response.data;
+  },
+
+  analyzeFile: async (formData: FormData): Promise<QuestionBankUploadResponse> => {
+    formData.set('mode', 'analyze');
+    formData.set('dry_run', 'true');
+    const response = await apiClient.post<QuestionBankUploadResponse>('/api/faculty/question-bank/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  commitCuratedQuestions: async (payload: {
+    questions: any[];
+    is_shared?: boolean;
+    filename?: string;
+    format?: string;
+  }): Promise<QuestionBankUploadResponse> => {
+    const response = await apiClient.post<QuestionBankUploadResponse>('/api/faculty/question-bank/upload/', payload);
+    return response.data;
+  },
+
+  exportReport: async (rows: SmartImportRow[]): Promise<Blob> => {
+    const response = await apiClient.post('/api/faculty/question-bank/export-report/', { rows }, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  exportCleaned: async (questions: any[]): Promise<Blob> => {
+    const response = await apiClient.post('/api/faculty/question-bank/export-cleaned/', { questions }, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  aiAssist: async (payload: { text?: string; items?: any[] }): Promise<{ success: boolean; extracted_count: number; questions: any[] }> => {
+    const response = await apiClient.post('/api/faculty/question-bank/ai-assist/', payload);
     return response.data;
   },
 

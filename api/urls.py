@@ -18,6 +18,9 @@ from .exam_management import (
 from .faculty_dashboard import FacultyDashboardView
 from .views_faculty_question_bank import (
     AssemblePaperFromBankView,
+    FacultyQuestionBankAiAssistView,
+    FacultyQuestionBankExportCleanedView,
+    FacultyQuestionBankExportReportView,
     FacultyQuestionBankListView,
     FacultyQuestionBankTemplateView,
     FacultyQuestionBankUploadView,
@@ -130,6 +133,12 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/assemble-from-bank/', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank'),
     path('faculty/question-bank/upload', FacultyQuestionBankUploadView.as_view(), name='faculty-qb-upload-no-slash'),
     path('faculty/question-bank/upload/', FacultyQuestionBankUploadView.as_view(), name='faculty-qb-upload'),
+    path('faculty/question-bank/ai-assist', FacultyQuestionBankAiAssistView.as_view(), name='faculty-qb-ai-assist-no-slash'),
+    path('faculty/question-bank/ai-assist/', FacultyQuestionBankAiAssistView.as_view(), name='faculty-qb-ai-assist'),
+    path('faculty/question-bank/export-report', FacultyQuestionBankExportReportView.as_view(), name='faculty-qb-export-report-no-slash'),
+    path('faculty/question-bank/export-report/', FacultyQuestionBankExportReportView.as_view(), name='faculty-qb-export-report'),
+    path('faculty/question-bank/export-cleaned', FacultyQuestionBankExportCleanedView.as_view(), name='faculty-qb-export-cleaned-no-slash'),
+    path('faculty/question-bank/export-cleaned/', FacultyQuestionBankExportCleanedView.as_view(), name='faculty-qb-export-cleaned'),
     path('faculty/question-bank/templates', FacultyQuestionBankTemplateView.as_view(), name='faculty-qb-templates-no-slash'),
     path('faculty/question-bank/templates/', FacultyQuestionBankTemplateView.as_view(), name='faculty-qb-templates'),
     path('faculty/question-bank', FacultyQuestionBankListView.as_view(), name='faculty-qb-list-no-slash'),

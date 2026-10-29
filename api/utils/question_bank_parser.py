@@ -23,10 +23,10 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = __import__('logging').getLogger(__name__)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-MAX_ROWS = 500
+MAX_ROWS = 2000
 
 DANGEROUS_FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
-DANGEROUS_BIN_HEADERS = (b'MZ', b'\x7fELF', b'%PDF')
+DANGEROUS_BIN_HEADERS = (b'MZ', b'\x7fELF')
 
 
 def sanitize_cell_value(val: Any) -> Any:
@@ -81,14 +81,16 @@ def validate_file_signature(file_bytes: bytes, filename: str) -> str:
         raise ValueError(f"File size exceeds 10MB limit ({len(file_bytes) / (1024 * 1024):.1f}MB).")
 
     ext = filename.split('.')[-1].lower() if '.' in filename else ''
-    if ext not in ('csv', 'xlsx', 'docx', 'json'):
-        raise ValueError("Unsupported file extension. Only .csv, .xlsx, .docx, and .json files are accepted.")
+    if ext not in ('csv', 'xlsx', 'docx', 'json', 'pdf', 'txt'):
+        raise ValueError("Unsupported file extension. Only .csv, .xlsx, .docx, .json, .pdf, and .txt files are accepted.")
 
     # Reject binary executable headers disguised with another extension
-    header_start = file_bytes[:4]
     for bad_header in DANGEROUS_BIN_HEADERS:
         if file_bytes.startswith(bad_header):
             raise ValueError(f"File contents do not match the .{ext} extension (detected unsupported binary header).")
+
+    if ext != 'pdf' and file_bytes.startswith(b'%PDF'):
+        raise ValueError(f"File contents do not match the .{ext} extension (detected PDF header in non-PDF file).")
 
     if ext in ('xlsx', 'docx'):
         # Must be a valid zip archive
@@ -129,6 +131,21 @@ def validate_file_signature(file_bytes: bytes, filename: str) -> str:
                 continue
         if decoded is None:
             raise ValueError("CSV file must be valid UTF-8 or Latin-1 text.")
+
+    elif ext == 'pdf':
+        if not file_bytes.startswith(b'%PDF'):
+            raise ValueError("Invalid .pdf file: missing standard PDF header (%PDF).")
+
+    elif ext == 'txt':
+        decoded = None
+        for enc in ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1'):
+            try:
+                decoded = file_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if decoded is None:
+            raise ValueError("Text file must be valid UTF-8, CP1252, or Latin-1 text.")
 
     return ext
 
@@ -438,10 +455,19 @@ def normalize_row_data(raw: Dict[str, Any], row_idx: int) -> Tuple[bool, Dict[st
     return is_valid, normalized, errors, warnings
 
 
-def parse_and_validate_question_bank_file(uploaded_file) -> Dict[str, Any]:
+def parse_and_validate_question_bank_file(
+    uploaded_file,
+    use_smart_import: bool = False,
+    custom_mapping: Optional[Dict[str, str]] = None,
+    default_marks: float = 1.0,
+    default_difficulty: str = 'medium',
+    default_type: Optional[str] = None,
+    sheet_name: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Main entry point: safely validates file container, parses rows up to MAX_ROWS,
     normalizes all fields, and returns a detailed dry-run/preview report.
+    Supports both legacy template parsing and intelligent non-template Smart Import.
     """
     filename = getattr(uploaded_file, 'name', 'question_file.csv') or 'question_file.csv'
     if hasattr(uploaded_file, 'seek'):
@@ -449,6 +475,18 @@ def parse_and_validate_question_bank_file(uploaded_file) -> Dict[str, Any]:
     file_bytes = uploaded_file.read() if hasattr(uploaded_file, 'read') else bytes(uploaded_file)
 
     fmt = validate_file_signature(file_bytes, filename)
+
+    if use_smart_import or fmt in ('pdf', 'txt'):
+        from api.utils.smart_importer import parse_and_normalize_smart_import
+        return parse_and_normalize_smart_import(
+            file_bytes=file_bytes,
+            filename=filename,
+            custom_mapping=custom_mapping,
+            default_marks=default_marks,
+            default_difficulty=default_difficulty,
+            default_type=default_type,
+            sheet_name=sheet_name,
+        )
 
     if fmt == 'csv':
         raw_rows = parse_csv(file_bytes)
@@ -462,7 +500,20 @@ def parse_and_validate_question_bank_file(uploaded_file) -> Dict[str, Any]:
         raise ValueError(f"Unsupported format '{fmt}'.")
 
     if not raw_rows:
-        raise ValueError("Uploaded file contains no question records.")
+        # Fallback to smart import if docx or xlsx has text outside standard tables/paragraphs
+        try:
+            from api.utils.smart_importer import parse_and_normalize_smart_import
+            return parse_and_normalize_smart_import(
+                file_bytes=file_bytes,
+                filename=filename,
+                custom_mapping=custom_mapping,
+                default_marks=default_marks,
+                default_difficulty=default_difficulty,
+                default_type=default_type,
+                sheet_name=sheet_name,
+            )
+        except Exception:
+            raise ValueError("Uploaded file contains no question records.")
 
     if len(raw_rows) > MAX_ROWS:
         raise ValueError(f"File contains {len(raw_rows)} rows. Maximum allowed per import is {MAX_ROWS} rows.")
@@ -503,16 +554,37 @@ def parse_and_validate_question_bank_file(uploaded_file) -> Dict[str, Any]:
             'warnings': warns,
         })
 
+    # If standard template parser had 0 valid rows (e.g. non-template real faculty doc/sheet),
+    # automatically attempt smart import fallback before giving up
+    if valid_count == 0 and len(raw_rows) > 0:
+        try:
+            from api.utils.smart_importer import parse_and_normalize_smart_import
+            smart_report = parse_and_normalize_smart_import(
+                file_bytes=file_bytes,
+                filename=filename,
+                custom_mapping=custom_mapping,
+                default_marks=default_marks,
+                default_difficulty=default_difficulty,
+                default_type=default_type,
+                sheet_name=sheet_name,
+            )
+            if smart_report.get('valid_count', 0) > 0:
+                return smart_report
+        except Exception as exc:
+            logger.warning("Smart import fallback attempt produced: %s", exc)
+
     return {
         'filename': filename,
         'format': fmt,
         'total_rows': len(raw_rows),
         'valid_count': valid_count,
         'invalid_count': invalid_count,
+        'ready_count': valid_count,
+        'needs_review_count': 0,
         'duplicate_count': duplicate_count,
         'has_errors': invalid_count > 0,
         'errors': all_errors,
         'warnings': all_warnings,
-        'preview_rows': [r for r in parsed_rows[:10]],
+        'preview_rows': [r for r in parsed_rows[:15]],
         'all_rows': parsed_rows,
     }
