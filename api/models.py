@@ -302,6 +302,7 @@ class Question(models.Model):
 	last_used_at = models.DateTimeField(null=True, blank=True)
 	tags = models.JSONField(default=list, blank=True)
 	source = models.CharField(max_length=20, default='ai_generated', blank=True)
+	is_shared = models.BooleanField(default=True, db_index=True)
 	accepted_answers = models.JSONField(default=list, blank=True)
 	rubric = models.JSONField(default=list, blank=True)
 	word_limit = models.PositiveIntegerField(null=True, blank=True)

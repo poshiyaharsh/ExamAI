@@ -2710,5 +2710,104 @@ export const questionBankApi = {
   },
 };
 
+export interface FacultyQuestionBankItem {
+  id: number;
+  question_text: string;
+  question_type: string;
+  difficulty: string;
+  marks: number;
+  subject_id?: number | null;
+  subject_name?: string;
+  topic?: string;
+  is_shared: boolean;
+  options?: any[];
+  correct_answer?: string;
+  model_answer?: string;
+  explanation?: string;
+  created_by?: string;
+  created_at?: string;
+}
+
+export interface FacultyQuestionBankListResponse {
+  questions: FacultyQuestionBankItem[];
+  total_count: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+  filter_options: {
+    question_types: string[];
+    difficulties: string[];
+    subjects: { id: number; name: string }[];
+  };
+}
+
+export interface QuestionBankUploadResponse {
+  dry_run: boolean;
+  format: string;
+  total_rows: number;
+  valid_count: number;
+  invalid_count: number;
+  preview_rows: any[];
+  errors: any[];
+  imported_count?: number;
+  detail?: string;
+}
+
+export interface AssemblePaperFromBankPayload {
+  auto_assemble?: boolean;
+  question_ids?: number[];
+  target_marks?: number;
+  blueprint?: Record<string, any>;
+  subject_id?: number;
+  action?: 'replace' | 'append';
+  title?: string;
+  subject?: string;
+  duration_minutes?: number;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  topics?: string[];
+}
+
+export interface AssemblePaperFromBankResponse {
+  detail: string;
+  exam_id: number;
+  total_marks: number;
+  target_total_marks: number;
+  marks_shortfall: number;
+  question_count: number;
+  questions: any[];
+}
+
+export const facultyQuestionBankApi = {
+  getQuestions: async (params?: Record<string, any>): Promise<FacultyQuestionBankListResponse> => {
+    const response = await apiClient.get<FacultyQuestionBankListResponse>('/api/faculty/question-bank/', { params });
+    return response.data;
+  },
+
+  uploadFile: async (formData: FormData): Promise<QuestionBankUploadResponse> => {
+    const response = await apiClient.post<QuestionBankUploadResponse>('/api/faculty/question-bank/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  downloadTemplate: async (format: 'csv' | 'xlsx' | 'docx' | 'json' = 'csv'): Promise<Blob> => {
+    const response = await apiClient.get('/api/faculty/question-bank/templates/', {
+      params: { format },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  assemblePaperFromBank: async (examId?: number | string | null, payload?: AssemblePaperFromBankPayload): Promise<AssemblePaperFromBankResponse> => {
+    const url = examId
+      ? `/api/faculty/exams/${examId}/assemble-from-bank/`
+      : `/api/faculty/exams/assemble-from-bank/`;
+    const response = await apiClient.post<AssemblePaperFromBankResponse>(url, payload || {});
+    return response.data;
+  },
+};
+
+
 
 

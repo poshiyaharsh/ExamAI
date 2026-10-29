@@ -16,6 +16,12 @@ from .exam_management import (
     SwapQuestionView,
 )
 from .faculty_dashboard import FacultyDashboardView
+from .views_faculty_question_bank import (
+    AssemblePaperFromBankView,
+    FacultyQuestionBankListView,
+    FacultyQuestionBankTemplateView,
+    FacultyQuestionBankUploadView,
+)
 from faculty.views import FacultyAIModelsView
 from .faculty_monitor import FacultyLiveMonitorView
 from .faculty_evaluation import (
@@ -118,6 +124,16 @@ urlpatterns = [
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
     path('faculty/exams/<int:exam_id>/adjust-marks/', AdjustMarksView.as_view(), name='faculty-exam-adjust-marks'),
+    path('faculty/exams/assemble-from-bank', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank-create-no-slash'),
+    path('faculty/exams/assemble-from-bank/', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank-create'),
+    path('faculty/exams/<int:exam_id>/assemble-from-bank', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank-no-slash'),
+    path('faculty/exams/<int:exam_id>/assemble-from-bank/', AssemblePaperFromBankView.as_view(), name='faculty-exam-assemble-from-bank'),
+    path('faculty/question-bank/upload', FacultyQuestionBankUploadView.as_view(), name='faculty-qb-upload-no-slash'),
+    path('faculty/question-bank/upload/', FacultyQuestionBankUploadView.as_view(), name='faculty-qb-upload'),
+    path('faculty/question-bank/templates', FacultyQuestionBankTemplateView.as_view(), name='faculty-qb-templates-no-slash'),
+    path('faculty/question-bank/templates/', FacultyQuestionBankTemplateView.as_view(), name='faculty-qb-templates'),
+    path('faculty/question-bank', FacultyQuestionBankListView.as_view(), name='faculty-qb-list-no-slash'),
+    path('faculty/question-bank/', FacultyQuestionBankListView.as_view(), name='faculty-qb-list'),
     path('faculty/exams/<int:exam_id>/live-monitor/', FacultyLiveMonitorView.as_view(), name='faculty-exam-live-monitor'),
     path('faculty/exams/<int:exam_id>/attempts/', FacultyExamAttemptsListView.as_view(), name='faculty-exam-attempts'),
     path('faculty/attempts/<int:attempt_id>/re-evaluate/', FacultyReevaluateAttemptView.as_view(), name='faculty-attempt-reevaluate'),
