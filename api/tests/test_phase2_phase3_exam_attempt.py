@@ -126,7 +126,7 @@ class ExamAttemptSecurityAndShuffleTests(TestCase):
             status=Exam.Status.PUBLISHED,
             shuffle_questions=True,
             shuffle_options=True,
-            max_warnings=3,
+            max_warnings=1,
             allow_retakes=False,
             starts_at=timezone.now() - timedelta(hours=1),
             ends_at=timezone.now() + timedelta(hours=5),
@@ -212,45 +212,46 @@ class ExamAttemptSecurityAndShuffleTests(TestCase):
 
     def test_violation_tracking_and_auto_submit_on_exceeding_max_warnings(self):
         """
-        Max warnings = 3.
-        Violations 1, 2, 3 return warnings.
-        Violation 4 automatically submits attempt with reason 'violations'.
+        Max warnings = 1 (Root rule: 1 warning, 2nd auto-submits).
+        Violation 1 returns final warning.
+        Violation 2 automatically submits attempt with reason 'violations'.
         """
         self.auth_student(self.token_student1)
         start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
         attempt_id = start_res.json()["attempt_id"]
 
-        # Violations 1, 2, 3
-        for v_num in range(1, 4):
-            res = self.client.post(
-                f"/api/student/attempts/{attempt_id}/violation/",
-                {"event_type": "fullscreen_exit", "metadata": {"attempt": v_num}},
-                format="json",
-            )
-            self.assertEqual(res.status_code, status.HTTP_200_OK)
-            self.assertFalse(res.json()["auto_submitted"])
-            self.assertEqual(res.json()["violation_count"], v_num)
-
-        # 4th violation exceeds limit of 3
-        res4 = self.client.post(
+        # Violation 1: Returns final warning (warnings_left=0)
+        res1 = self.client.post(
             f"/api/student/attempts/{attempt_id}/violation/",
-            {"event_type": "tab_hidden", "metadata": {"reason": "switched tab"}},
+            {"event_type": "fullscreen_exit", "metadata": {"attempt": 1}},
             format="json",
         )
-        self.assertEqual(res4.status_code, status.HTTP_200_OK)
-        data4 = res4.json()
-        self.assertTrue(data4["auto_submitted"])
-        self.assertEqual(data4["submit_reason"], "violations")
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertFalse(res1.json()["auto_submitted"])
+        self.assertEqual(res1.json()["violation_count"], 1)
+        self.assertEqual(res1.json()["warnings_left"], 0)
+
+        # Violation 2: Exceeds limit of 1 -> triggers auto submit
+        res2 = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            {"event_type": "fullscreen_exit", "metadata": {"reason": "exited fullscreen second time"}},
+            format="json",
+        )
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        data2 = res2.json()
+        self.assertTrue(data2["auto_submitted"])
+        self.assertEqual(data2["submit_reason"], "violations")
+        self.assertEqual(data2["violation_count"], 2)
 
         # Verify attempt state in DB
         attempt = StudentAttempt.objects.get(id=attempt_id)
         self.assertEqual(attempt.status, StudentAttempt.Status.AUTO_SUBMITTED)
         self.assertEqual(attempt.submit_reason, "violations")
-        self.assertEqual(attempt.violation_count, 4)
+        self.assertEqual(attempt.violation_count, 2)
 
         # Verify AttemptEvent logs created
         events = AttemptEvent.objects.filter(attempt=attempt)
-        self.assertEqual(events.count(), 4)
+        self.assertEqual(events.count(), 2)
 
     def test_server_deadline_auto_submits_expired_attempt(self):
         """When student attempt passes deadline, save answer or heartbeat auto-submits."""

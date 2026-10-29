@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api.constants import MAX_WARNINGS, VIOLATION_INCIDENT_DEBOUNCE_SECONDS
 from api.tenant import get_tenant_cache_key, get_user_institution
 from .models import AttemptEvent, Exam, Question, StudentAnswer, StudentAttempt
 from .permissions import IsStudentUser
@@ -657,6 +658,9 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
     """
     Records proctoring violation events (fullscreen exit, tab hidden, window blur, etc.).
     Automatically submits attempt if violation_count exceeds exam.max_warnings.
+    Single source of truth:
+    - Count == 1: returns final warning (warnings_left: 0).
+    - Count >= 2 (exceeds max_warnings): auto-submits exam immediately.
     """
     throttle_classes = []  # Exempt from aggressive rate limiting to allow proctoring bursts
 
@@ -701,14 +705,55 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
             if event_id and AttemptEvent.objects.filter(attempt=attempt, event_id=event_id).exists():
                 current_count = attempt.violation_count
                 warnings_left = max(0, max_warnings - current_count)
-                is_auto = current_count > max_warnings
+                is_auto = current_count > max_warnings or attempt.status != StudentAttempt.Status.IN_PROGRESS
+                if is_auto and attempt.status == StudentAttempt.Status.IN_PROGRESS:
+                    finalize_student_attempt(
+                        attempt=attempt,
+                        submit_reason='violations',
+                        buffered_answers=buffered_answers,
+                    )
                 return Response({
                     'already_recorded': True,
                     'auto_submitted': is_auto,
+                    'status': attempt.status,
                     'submit_reason': attempt.submit_reason if is_auto else None,
                     'violation_count': current_count,
                     'max_warnings': max_warnings,
                     'warnings_left': warnings_left,
+                    'redirect_url': f'/student/results/{attempt.id}' if is_auto else None,
+                    'server_now': timezone.now().isoformat(),
+                }, status=status.HTTP_200_OK)
+
+            # 2b. Debounce check: group concurrent triggers (fullscreen exit, tab hidden, window blur)
+            # firing within ~1 second for the same real incident.
+            recent_cutoff = timezone.now() - timedelta(seconds=VIOLATION_INCIDENT_DEBOUNCE_SECONDS)
+            recent_incident = AttemptEvent.objects.filter(
+                attempt=attempt,
+                timestamp__gte=recent_cutoff,
+            ).exclude(event_type=AttemptEvent.EventType.HEARTBEAT).first()
+
+            if recent_incident and recent_incident.event_type != event_type:
+                # Record auxiliary audit event without double incrementing count
+                AttemptEvent.objects.create(
+                    attempt=attempt,
+                    institution=tenant,
+                    event_type=event_type,
+                    event_id=event_id,
+                    metadata={'debounced_from': recent_incident.event_type, **metadata},
+                    timestamp=timezone.now(),
+                )
+                current_count = attempt.violation_count
+                warnings_left = max(0, max_warnings - current_count)
+                is_auto = current_count > max_warnings
+                return Response({
+                    'debounced': True,
+                    'auto_submitted': is_auto,
+                    'status': attempt.status,
+                    'submit_reason': attempt.submit_reason if is_auto else None,
+                    'violation_count': current_count,
+                    'max_warnings': max_warnings,
+                    'warnings_left': warnings_left,
+                    'message': 'Violation clustered with recent incident.',
                     'redirect_url': f'/student/results/{attempt.id}' if is_auto else None,
                     'server_now': timezone.now().isoformat(),
                 }, status=status.HTTP_200_OK)
@@ -730,7 +775,7 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
                 timestamp=timezone.now(),
             )
 
-            # 5. Check auto-submit threshold (4th violation when max_warnings=3)
+            # 5. Check auto-submit threshold (exceeds max_warnings; e.g. 2nd violation when max_warnings=1)
             if new_count > max_warnings:
                 req_id = str(uuid.uuid4())
                 attempt, _ = finalize_student_attempt(
@@ -751,14 +796,19 @@ class ViolationEventView(StudentExamPermissionMixin, APIView):
                     'server_now': timezone.now().isoformat(),
                 }, status=status.HTTP_200_OK)
 
-            # 6. Warnings 1, 2, 3
+            # 6. Return Warning (e.g., 1st violation when max_warnings=1 is final warning)
             warnings_left = max(0, max_warnings - new_count)
+            if warnings_left == 0:
+                warning_message = 'Final warning: you left the exam screen. Another violation will submit your exam automatically.'
+            else:
+                warning_message = f'Warning {new_count} of {max_warnings}: Proctoring violation detected ({event_type}).'
+
             return Response({
                 'auto_submitted': False,
                 'violation_count': new_count,
                 'max_warnings': max_warnings,
                 'warnings_left': warnings_left,
-                'message': f'Warning {new_count} of {max_warnings}: Proctoring violation detected ({event_type}).',
+                'message': warning_message,
                 'server_now': timezone.now().isoformat(),
             }, status=status.HTTP_200_OK)
 

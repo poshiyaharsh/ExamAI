@@ -372,3 +372,7 @@ MAX_SUPER_ADMIN_COUNT = int(os.getenv('MAX_SUPER_ADMIN_COUNT', '1'))
 SUPER_ADMIN_SESSION_AGE = 15 * 60  # 15 minutes idle timeout
 SUPER_ADMIN_MAX_AGE = 8 * 3600  # 8 hours absolute session max age
 SUPER_ADMIN_ALERT_EMAIL = os.getenv('SUPER_ADMIN_ALERT_EMAIL', 'harshposhiya92@gmail.com')
+
+# Proctoring Rules Configuration
+MAX_WARNINGS = int(os.getenv('MAX_WARNINGS', '1'))
+

@@ -544,7 +544,7 @@ export function FacultyLiveMonitor() {
                 <div className="bg-card p-2.5 rounded-lg border border-border/50">
                   <p className="text-[10px] text-muted-foreground uppercase font-medium">Violations Logged</p>
                   <p className={`font-bold mt-0.5 ${selectedStudent.violation_count > 0 ? "text-rose-600" : "text-foreground"}`}>
-                    {selectedStudent.violation_count} of {exam?.max_warnings || 3} allowed
+                    {selectedStudent.violation_count} of {exam?.max_warnings ?? 1} allowed
                   </p>
                 </div>
               </div>

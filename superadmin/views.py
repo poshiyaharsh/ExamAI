@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from admins.models import AdminDepartment, AdminInstitution, AdminProfile, DepartmentChangeAuditLog
+from api.constants import MAX_WARNINGS
 from api.models import Exam, PaperGenerationJob, Question, StudentAttempt
 from api.utils.departments import DEFAULT_DEPARTMENT_NAMES
 from faculty.models import FacultyProfile
@@ -1407,7 +1408,7 @@ class SuperAdminSystemSettingsAPIView(APIView):
 
     def get(self, request):
         maintenance = SystemSetting.get_setting('maintenance_mode', {'enabled': False, 'message': ''})
-        max_warnings = SystemSetting.get_setting('max_warnings', 3)
+        max_warnings = SystemSetting.get_setting('max_warnings', MAX_WARNINGS)
         rate_limits = SystemSetting.get_setting('rate_limits', {'anon': '120/min', 'user': '1200/min'})
         return Response(
             {

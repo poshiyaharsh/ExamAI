@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from admins.models import AdminDepartment, AdminInstitution
+from api.constants import MAX_WARNINGS, MIN_ALLOWED_WARNINGS, MAX_ALLOWED_WARNINGS
 from .models import Exam, Question, StudentAnswer, StudentAttempt
 from .utils.validate_paper import canonicalize_type, canonicalize_difficulty
 
@@ -131,6 +132,12 @@ class ExamListSerializer(serializers.ModelSerializer):
     attempts_count = serializers.IntegerField(read_only=True)
     schedule_display = serializers.SerializerMethodField()
     schedule_phase = serializers.ReadOnlyField()
+    max_warnings = serializers.IntegerField(
+        required=False,
+        min_value=MIN_ALLOWED_WARNINGS,
+        max_value=MAX_ALLOWED_WARNINGS,
+        default=MAX_WARNINGS,
+    )
 
     class Meta:
         model = Exam
@@ -155,6 +162,12 @@ class ExamDetailSerializer(serializers.ModelSerializer):
     questions = FacultyQuestionSerializer(many=True, read_only=True)
     schedule_display = serializers.SerializerMethodField()
     schedule_phase = serializers.ReadOnlyField()
+    max_warnings = serializers.IntegerField(
+        required=False,
+        min_value=MIN_ALLOWED_WARNINGS,
+        max_value=MAX_ALLOWED_WARNINGS,
+        default=MAX_WARNINGS,
+    )
 
     class Meta:
         model = Exam
@@ -177,6 +190,12 @@ class ExamDetailSerializer(serializers.ModelSerializer):
 
 
 class ExamUpdateSerializer(serializers.ModelSerializer):
+    max_warnings = serializers.IntegerField(
+        required=False,
+        min_value=MIN_ALLOWED_WARNINGS,
+        max_value=MAX_ALLOWED_WARNINGS,
+        default=MAX_WARNINGS,
+    )
     class Meta:
         model = Exam
         fields = (

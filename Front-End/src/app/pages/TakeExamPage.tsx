@@ -146,7 +146,7 @@ export function TakeExamPage() {
         if (axios.isAxiosError(error) && error.response?.data?.redirect_url) {
           const detail = error.response.data.detail || "This exam attempt has already been submitted.";
           if (error.response.data.submit_reason === "violations" || error.response.data.error_code === "EXAM_SUBMITTED_VIOLATIONS") {
-            toast.error("Your exam was submitted because of repeated rule violations.");
+            toast.error("Your exam was submitted automatically because of repeated rule violations.");
           } else {
             toast.info(detail);
           }
@@ -240,7 +240,7 @@ export function TakeExamPage() {
           submitLock.current = true;
           isArmedRef.current = false;
           if (hb.submit_reason === "violations") {
-            toast.error("Your exam was submitted because of repeated rule violations.");
+            toast.error("Your exam was submitted automatically because of repeated rule violations.");
           } else if (hb.submit_reason === "window_closed") {
             toast.warning("The exam window has closed on the server.");
           } else {
@@ -284,7 +284,7 @@ export function TakeExamPage() {
         submitLock.current = true;
         isArmedRef.current = false;
         if ((saveRes as any)?.submit_reason === "violations") {
-          toast.error("Your exam was submitted because of repeated rule violations.");
+          toast.error("Your exam was submitted automatically because of repeated rule violations.");
         } else {
           toast.warning("This exam attempt has already been submitted.");
         }
@@ -321,7 +321,7 @@ export function TakeExamPage() {
           submitLock.current = true;
           isArmedRef.current = false;
           if (errData?.submit_reason === "violations" || errData?.error_code === "EXAM_SUBMITTED_VIOLATIONS") {
-            toast.error("Your exam was submitted because of repeated rule violations.");
+            toast.error("Your exam was submitted automatically because of repeated rule violations.");
           } else {
             toast.warning(errData?.detail || "The exam deadline has passed. Your attempt has been finalized.");
           }
@@ -422,9 +422,9 @@ export function TakeExamPage() {
   const reportViolation = async (eventType: string, meta: Record<string, unknown> = {}) => {
     if (!session || !isArmedRef.current || submitLock.current) return;
 
-    // Minimum throttle between distinct violation triggers (400ms instead of 1500ms so legitimate events are not dropped)
+    // Debounce fullscreen exit, tab hidden, and window blur firing together for the same action (1-second window)
     const now = Date.now();
-    if (now - lastViolationTimeRef.current < 400) {
+    if (now - lastViolationTimeRef.current < 1000) {
       return;
     }
     lastViolationTimeRef.current = now;
@@ -474,7 +474,7 @@ export function TakeExamPage() {
       submitLock.current = true;
       isArmedRef.current = false;
       setViolationModal(null);
-      toast.error("Your exam was submitted because of repeated rule violations.", { duration: 6000 });
+      toast.error("Your exam was submitted automatically because of repeated rule violations.", { duration: 6000 });
       navigate(res.redirect_url || `/student/results/${session.attempt_id}`);
       return;
     }
@@ -545,13 +545,9 @@ export function TakeExamPage() {
     };
 
     const handleWindowBlur = () => {
-      // Debounce blur to avoid double firing with fullscreen change
-      if (blurDebounceRef.current) window.clearTimeout(blurDebounceRef.current);
-      blurDebounceRef.current = window.setTimeout(() => {
-        if (!document.fullscreenElement && isArmedRef.current && !submitLock.current) {
-          reportViolation("window_blur", { details: "Browser window lost focus." });
-        }
-      }, 400);
+      if (!document.fullscreenElement && isArmedRef.current && !submitLock.current) {
+        reportViolation("window_blur", { details: "Browser window lost focus." });
+      }
     };
 
     // Deterrents
@@ -633,7 +629,7 @@ export function TakeExamPage() {
 
   const isWarningTimer = secondsLeft <= 600;
   const isCriticalTimer = secondsLeft <= 120;
-  const maxWarnings = session.max_warnings ?? session.exam.max_warnings ?? 3;
+  const maxWarnings = session.max_warnings ?? session.exam.max_warnings ?? 1;
   const currentViolations = violationModal?.violationCount ?? session.violation_count ?? 0;
 
   return (
@@ -706,7 +702,7 @@ export function TakeExamPage() {
               title="Proctoring Warnings"
             >
               <ShieldAlert className="h-3.5 w-3.5" />
-              <span>Warnings: {currentViolations} / {maxWarnings}</span>
+              <span>Warnings {currentViolations}/{maxWarnings}</span>
             </div>
 
             {/* Countdown Timer with color-shifting & pulsing */}
@@ -1129,9 +1125,18 @@ export function TakeExamPage() {
                   <strong className="text-slate-800">Proctoring Enforcement:</strong> Switching tabs, minimizing the window, or exiting fullscreen records a proctoring violation.
                 </li>
                 <li>
-                  <strong className="text-slate-800">Strict Warning Limit:</strong> You have a maximum of{" "}
-                  <span className="font-bold text-rose-600">{maxWarnings} warnings</span>. The{" "}
-                  {maxWarnings + 1}th violation will immediately and permanently auto-submit your exam.
+                  <strong className="text-slate-800">Strict Warning Limit:</strong>{" "}
+                  {maxWarnings === 1 ? (
+                    <>
+                      <span className="font-bold text-rose-600">1 warning, then automatic submission</span>. Any further violation beyond 1 warning will immediately and permanently auto-submit your exam.
+                    </>
+                  ) : (
+                    <>
+                      You have a maximum of{" "}
+                      <span className="font-bold text-rose-600">{maxWarnings} warnings</span>. The{" "}
+                      {maxWarnings + 1}th violation will immediately and permanently auto-submit your exam.
+                    </>
+                  )}
                 </li>
                 <li>
                   <strong className="text-slate-800">Server-Side Timer:</strong> The countdown timer ({session.exam.duration_minutes} minutes) runs on the server and cannot be paused.
@@ -1187,14 +1192,20 @@ export function TakeExamPage() {
                   {violationModal.autoSubmitted ? "Exam Terminated" : "Proctoring Alert"}
                 </h3>
                 <p className="text-xs font-semibold text-rose-600">
-                  Warning {violationModal.violationCount} of {violationModal.maxWarnings}
+                  {violationModal.maxWarnings === 1
+                    ? "Final Warning"
+                    : `Warning ${violationModal.violationCount} of ${violationModal.maxWarnings}`}
                 </p>
               </div>
             </div>
 
             <div className="mt-4 rounded-xl bg-rose-50/60 p-4 text-xs sm:text-sm text-slate-700">
-              <p className="font-medium text-slate-900">{violationModal.message}</p>
-              {!violationModal.autoSubmitted && (
+              <p className="font-semibold text-slate-900">
+                {violationModal.violationCount === 1
+                  ? "Final warning: you left the exam screen. Another violation will submit your exam automatically."
+                  : violationModal.message}
+              </p>
+              {!violationModal.autoSubmitted && violationModal.maxWarnings > 1 && (
                 <p className="mt-2 font-semibold text-rose-700">
                   {violationModal.violationCount >= violationModal.maxWarnings
                     ? "⚠️ FINAL WARNING: Any further violation will automatically submit your exam immediately."
@@ -1219,7 +1230,7 @@ export function TakeExamPage() {
                 onClick={handleResumeFromViolation}
                 className="w-full rounded-xl bg-rose-600 py-3 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-rose-700 transition-all"
               >
-                {violationModal.autoSubmitted ? "View Results" : "Re-enter Fullscreen & Continue"}
+                {violationModal.autoSubmitted ? "View Results" : "Return to fullscreen"}
               </button>
             </div>
           </div>

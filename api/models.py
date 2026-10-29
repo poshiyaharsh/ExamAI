@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password, make_password
 from django.utils import timezone
+from api.constants import MAX_WARNINGS, MIN_ALLOWED_WARNINGS, MAX_ALLOWED_WARNINGS
 
 
 class PasswordResetOTP(models.Model):
@@ -81,7 +82,7 @@ class Exam(models.Model):
 	shuffle_questions = models.BooleanField(default=True)
 	shuffle_options = models.BooleanField(default=True)
 	random_subset_size = models.PositiveIntegerField(null=True, blank=True)
-	max_warnings = models.PositiveIntegerField(default=3)
+	max_warnings = models.PositiveIntegerField(default=MAX_WARNINGS)
 	allow_retakes = models.BooleanField(default=False)
 	show_result_immediately = models.BooleanField(default=True)
 	starts_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -108,6 +109,8 @@ class Exam(models.Model):
 			)
 		except ValidationError as ve:
 			raise ve
+		if self.max_warnings is not None and (self.max_warnings < MIN_ALLOWED_WARNINGS or self.max_warnings > MAX_ALLOWED_WARNINGS):
+			raise ValidationError({'max_warnings': f'max_warnings must be between {MIN_ALLOWED_WARNINGS} and {MAX_ALLOWED_WARNINGS}.'})
 		if self.institution_id and self.created_by_id:
 			fac_profile = getattr(self.created_by, 'faculty_profile', None)
 			if fac_profile and fac_profile.institution_id and fac_profile.institution_id != self.institution_id:

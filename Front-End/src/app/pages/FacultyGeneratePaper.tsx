@@ -264,7 +264,7 @@ export function FacultyGeneratePaper() {
   const [shuffleQuestions, setShuffleQuestions] = useState(true);
   const [shuffleOptions, setShuffleOptions] = useState(true);
   const [randomSubsetSize, setRandomSubsetSize] = useState<string>("");
-  const [maxWarnings, setMaxWarnings] = useState("3");
+  const [maxWarnings, setMaxWarnings] = useState("1");
   const [allowRetakes, setAllowRetakes] = useState(false);
   const [showResultImmediately, setShowResultImmediately] = useState(true);
 
@@ -948,7 +948,7 @@ export function FacultyGeneratePaper() {
           shuffle_questions: shuffleQuestions,
           shuffle_options: shuffleOptions,
           random_subset_size: randomSubsetSize ? Number(randomSubsetSize) : null,
-          max_warnings: Number(maxWarnings) || 3,
+          max_warnings: Number(maxWarnings) || 1,
           allow_retakes: allowRetakes,
           show_result_immediately: showResultImmediately,
           starts_at: startsAt ? new Date(startsAt).toISOString() : null,
@@ -1024,7 +1024,7 @@ export function FacultyGeneratePaper() {
         shuffle_questions: shuffleQuestions,
         shuffle_options: shuffleOptions,
         random_subset_size: randomSubsetSize ? Number(randomSubsetSize) : null,
-        max_warnings: Number(maxWarnings) || 3,
+        max_warnings: Number(maxWarnings) || 1,
         allow_retakes: allowRetakes,
         show_result_immediately: showResultImmediately,
         starts_at: startsAt ? new Date(startsAt).toISOString() : null,
@@ -2419,12 +2419,12 @@ export function FacultyGeneratePaper() {
               <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50/50">
                 <label className="block text-sm font-bold text-slate-900">Max Proctoring Warnings Threshold</label>
                 <p className="text-xs text-slate-500 mt-0.5 mb-2.5">
-                  Allowed proctoring infractions (fullscreen exit, tab switch). Exceeding this limit immediately terminates and auto-submits.
+                  Allowed proctoring infractions before auto-submit (default is 1 warning, next violation submits automatically).
                 </p>
                 <div className="relative">
                   <input
                     type="number"
-                    min="1"
+                    min="0"
                     max="10"
                     value={maxWarnings}
                     onChange={(e) => setMaxWarnings(e.target.value)}

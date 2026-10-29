@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from unittest.mock import patch
 import uuid
 
 from django.contrib.auth import get_user_model
@@ -10,9 +11,11 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from admins.models import AdminDepartment, AdminInstitution, AdminProfile
+from api.constants import MAX_WARNINGS
 from api.models import AttemptEvent, Exam, Question, StudentAnswer, StudentAttempt
-from students.models import StudentProfile
+from api.utils.schedule import finalize_overdue_attempts
 from faculty.models import FacultyProfile
+from students.models import StudentProfile
 
 User = get_user_model()
 
@@ -64,6 +67,7 @@ class AutoSubmitViolationsTests(TestCase):
             department="Computer Science",
             designation="Professor",
         )
+        self.faculty_token = jwt_token(self.faculty_user, "faculty", self.institution)
 
         # Student
         self.student = User.objects.create_user(
@@ -82,7 +86,7 @@ class AutoSubmitViolationsTests(TestCase):
         self.student_token = jwt_token(self.student, "student", self.institution)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.student_token}")
 
-        # Exam with max_warnings=3
+        # Exam with default MAX_WARNINGS (1 warning allowed, 2nd auto-submits)
         self.exam = Exam.objects.create(
             institution=self.institution,
             title="Operating Systems Midterm",
@@ -91,7 +95,7 @@ class AutoSubmitViolationsTests(TestCase):
             duration_minutes=60,
             total_marks=20,
             status=Exam.Status.PUBLISHED,
-            max_warnings=3,
+            max_warnings=MAX_WARNINGS,
             allow_retakes=False,
             starts_at=timezone.now() - timedelta(hours=1),
             ends_at=timezone.now() + timedelta(hours=5),
@@ -120,8 +124,8 @@ class AutoSubmitViolationsTests(TestCase):
             marks=10.0,
         )
 
-    def test_violations_1_to_3_warn_and_4th_auto_submits(self):
-        """Violations 1, 2, 3 issue warnings; 4th violation auto-submits exam."""
+    def test_violation_1_returns_final_warning_and_violation_2_auto_submits(self):
+        """Violation 1 issues the final warning; Violation 2 immediately auto-submits."""
         # 1. Start the exam
         start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
         self.assertEqual(start_res.status_code, status.HTTP_200_OK)
@@ -131,7 +135,7 @@ class AutoSubmitViolationsTests(TestCase):
         self.assertEqual(attempt.status, StudentAttempt.Status.IN_PROGRESS)
         self.assertEqual(attempt.violation_count, 0)
 
-        # 2. Violation 1: Tab hidden
+        # 2. Violation 1: Tab hidden -> returns final warning (warnings_left: 0)
         v1_res = self.client.post(
             f"/api/student/attempts/{attempt_id}/violation/",
             data={
@@ -144,53 +148,23 @@ class AutoSubmitViolationsTests(TestCase):
         self.assertEqual(v1_res.status_code, status.HTTP_200_OK)
         v1_data = v1_res.json()
         self.assertEqual(v1_data["violation_count"], 1)
-        self.assertEqual(v1_data["warnings_left"], 2)
+        self.assertEqual(v1_data["warnings_left"], 0)
         self.assertFalse(v1_data["auto_submitted"])
+        self.assertIn("Final warning", v1_data["message"])
+
         attempt.refresh_from_db()
         self.assertEqual(attempt.status, StudentAttempt.Status.IN_PROGRESS)
         self.assertEqual(attempt.violation_count, 1)
 
-        # 3. Violation 2: Fullscreen exit
+        # Sleep past the 1-second debounce window to represent a distinct 2nd incident
+        import time
+        time.sleep(1.05)
+
+        # 3. Violation 2: Fullscreen exit -> 2nd violation exceeds max_warnings (1) -> AUTO-SUBMITS
         v2_res = self.client.post(
             f"/api/student/attempts/{attempt_id}/violation/",
             data={
                 "event_type": AttemptEvent.EventType.FULLSCREEN_EXIT,
-                "event_id": str(uuid.uuid4()),
-            },
-            format="json",
-        )
-        self.assertEqual(v2_res.status_code, status.HTTP_200_OK)
-        v2_data = v2_res.json()
-        self.assertEqual(v2_data["violation_count"], 2)
-        self.assertEqual(v2_data["warnings_left"], 1)
-        self.assertFalse(v2_data["auto_submitted"])
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.violation_count, 2)
-        self.assertEqual(attempt.status, StudentAttempt.Status.IN_PROGRESS)
-
-        # 4. Violation 3: Window blur (Final warning)
-        v3_res = self.client.post(
-            f"/api/student/attempts/{attempt_id}/violation/",
-            data={
-                "event_type": AttemptEvent.EventType.WINDOW_BLUR,
-                "event_id": str(uuid.uuid4()),
-            },
-            format="json",
-        )
-        self.assertEqual(v3_res.status_code, status.HTTP_200_OK)
-        v3_data = v3_res.json()
-        self.assertEqual(v3_data["violation_count"], 3)
-        self.assertEqual(v3_data["warnings_left"], 0)
-        self.assertFalse(v3_data["auto_submitted"])
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.violation_count, 3)
-        self.assertEqual(attempt.status, StudentAttempt.Status.IN_PROGRESS)
-
-        # 5. Violation 4: 4th violation exceeds max_warnings -> MUST AUTO-SUBMIT
-        v4_res = self.client.post(
-            f"/api/student/attempts/{attempt_id}/violation/",
-            data={
-                "event_type": AttemptEvent.EventType.TAB_HIDDEN,
                 "event_id": str(uuid.uuid4()),
                 "answers": [
                     {
@@ -201,13 +175,14 @@ class AutoSubmitViolationsTests(TestCase):
             },
             format="json",
         )
-        self.assertEqual(v4_res.status_code, status.HTTP_200_OK)
-        v4_data = v4_res.json()
-        self.assertEqual(v4_data["violation_count"], 4)
-        self.assertTrue(v4_data["auto_submitted"])
-        self.assertEqual(v4_data["warnings_left"], 0)
-        self.assertEqual(v4_data["status"], StudentAttempt.Status.AUTO_SUBMITTED)
-        self.assertEqual(v4_data["redirect_url"], f"/student/results/{attempt_id}")
+        self.assertEqual(v2_res.status_code, status.HTTP_200_OK)
+        v2_data = v2_res.json()
+        self.assertEqual(v2_data["violation_count"], 2)
+        self.assertTrue(v2_data["auto_submitted"])
+        self.assertEqual(v2_data["warnings_left"], 0)
+        self.assertEqual(v2_data["status"], StudentAttempt.Status.AUTO_SUBMITTED)
+        self.assertEqual(v2_data["submit_reason"], "violations")
+        self.assertEqual(v2_data["redirect_url"], f"/student/results/{attempt_id}")
 
         # Check DB state
         attempt.refresh_from_db()
@@ -235,6 +210,7 @@ class AutoSubmitViolationsTests(TestCase):
         )
         self.assertEqual(res1.status_code, status.HTTP_200_OK)
         self.assertEqual(res1.json()["violation_count"], 1)
+        self.assertFalse(res1.json()["auto_submitted"])
 
         # Immediate network retry with SAME event_id
         res2 = self.client.post(
@@ -244,21 +220,131 @@ class AutoSubmitViolationsTests(TestCase):
         )
         self.assertEqual(res2.status_code, status.HTTP_200_OK)
         self.assertEqual(res2.json()["violation_count"], 1)
-        self.assertEqual(res2.json()["warnings_left"], 2)
+        self.assertTrue(res2.json()["already_recorded"])
+        self.assertFalse(res2.json()["auto_submitted"])
 
         attempt = StudentAttempt.objects.get(id=attempt_id)
         self.assertEqual(attempt.violation_count, 1)
+
+    def test_one_combined_fullscreen_exit_and_blur_counts_once(self):
+        """Fullscreen exit and window blur firing within 1 second for one user action count as 1 violation."""
+        start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
+        attempt_id = start_res.json()["attempt_id"]
+
+        # Action: student exits fullscreen
+        res_fs = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+        self.assertEqual(res_fs.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_fs.json()["violation_count"], 1)
+        self.assertFalse(res_fs.json()["auto_submitted"])
+
+        # Immediately (same action), window blur fires
+        res_blur = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.WINDOW_BLUR, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+        self.assertEqual(res_blur.status_code, status.HTTP_200_OK)
+        blur_data = res_blur.json()
+        self.assertTrue(blur_data.get("debounced"))
+        self.assertEqual(blur_data["violation_count"], 1)
+        self.assertFalse(blur_data["auto_submitted"])
+
+        attempt = StudentAttempt.objects.get(id=attempt_id)
+        self.assertEqual(attempt.violation_count, 1)
+        self.assertEqual(attempt.status, StudentAttempt.Status.IN_PROGRESS)
+
+    def test_two_violations_finalize_once(self):
+        """Attempt transitions to AUTO_SUBMITTED on violation 2 and subsequent calls are idempotent."""
+        start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
+        attempt_id = start_res.json()["attempt_id"]
+
+        # Violation 1
+        self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+
+        # Violation 2: Finalizes attempt
+        res2 = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        self.assertTrue(res2.json()["auto_submitted"])
+
+        # Third call: Already submitted
+        res3 = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+        self.assertEqual(res3.status_code, status.HTTP_200_OK)
+        self.assertTrue(res3.json()["already_submitted"])
+        self.assertTrue(res3.json()["auto_submitted"])
+
+        attempt = StudentAttempt.objects.get(id=attempt_id)
+        self.assertEqual(attempt.status, StudentAttempt.Status.AUTO_SUBMITTED)
+        self.assertEqual(attempt.submit_reason, "violations")
+
+    def test_finalize_error_leaves_needs_finalize_and_scheduler_fixes_it(self):
+        """If scoring fails during finalize, needs_finalize is flagged and background scheduler completes it."""
+        start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
+        attempt_id = start_res.json()["attempt_id"]
+
+        # Violation 1
+        self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+
+        # Mock calculate_and_save_attempt_score raising an exception on violation 2
+        with patch("api.student_exam.calculate_and_save_attempt_score", side_effect=RuntimeError("Grading engine timeout")):
+            v2_res = self.client.post(
+                f"/api/student/attempts/{attempt_id}/violation/",
+                data={
+                    "event_type": AttemptEvent.EventType.FULLSCREEN_EXIT,
+                    "event_id": str(uuid.uuid4()),
+                    "answers": [{"question_id": self.q_mcq.id, "answer_text": "A program in execution"}],
+                },
+                format="json",
+            )
+            self.assertEqual(v2_res.status_code, status.HTTP_200_OK)
+            self.assertTrue(v2_res.json()["auto_submitted"])
+
+        # Attempt is transitioned to AUTO_SUBMITTED (never left in progress) but needs_finalize is True
+        attempt = StudentAttempt.objects.get(id=attempt_id)
+        self.assertEqual(attempt.status, StudentAttempt.Status.AUTO_SUBMITTED)
+        self.assertEqual(attempt.submit_reason, "violations")
+        self.assertTrue(attempt.needs_finalize)
+
+        # Now background scheduler runs
+        finalized_count = finalize_overdue_attempts()
+        self.assertEqual(finalized_count, 1)
+
+        # Verify attempt has been scored and needs_finalize is cleared
+        attempt.refresh_from_db()
+        self.assertFalse(attempt.needs_finalize)
+        self.assertEqual(attempt.status, StudentAttempt.Status.AUTO_SUBMITTED)
+        saved_ans = StudentAnswer.objects.get(attempt=attempt, question=self.q_mcq)
+        self.assertEqual(saved_ans.score_awarded, 10.0)
 
     def test_post_submission_behavior_on_all_endpoints(self):
         """After auto-submit, violation, save-answer, heartbeat, and start endpoints handle cleanly."""
         start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
         attempt_id = start_res.json()["attempt_id"]
 
-        # 4 violations to auto-submit the exam
-        for _ in range(4):
+        # 2 violations to auto-submit the exam
+        for _ in range(2):
             self.client.post(
                 f"/api/student/attempts/{attempt_id}/violation/",
-                data={"event_type": AttemptEvent.EventType.TAB_HIDDEN, "event_id": str(uuid.uuid4())},
+                data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
                 format="json",
             )
 
@@ -306,13 +392,67 @@ class AutoSubmitViolationsTests(TestCase):
         self.assertTrue(st_data.get("already_submitted"))
         self.assertEqual(st_data.get("redirect_url"), f"/student/results/{attempt_id}")
 
+    def test_refresh_page_maintains_violation_count(self):
+        """Reloading or resuming the exam attempt does not reset the violation count."""
+        start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
+        attempt_id = start_res.json()["attempt_id"]
+
+        # 1 violation occurs
+        v1 = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+        self.assertEqual(v1.json()["violation_count"], 1)
+
+        attempt = StudentAttempt.objects.get(id=attempt_id)
+        self.assertEqual(attempt.violation_count, 1)
+
+        # Student refreshes browser (hits start/resume endpoint)
+        resume_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
+        self.assertEqual(resume_res.status_code, status.HTTP_200_OK)
+        resume_data = resume_res.json()
+        self.assertEqual(resume_data["attempt_id"], attempt_id)
+        self.assertEqual(resume_data["violation_count"], 1)
+
+        # 2nd violation -> triggers auto submit
+        v2 = self.client.post(
+            f"/api/student/attempts/{attempt_id}/violation/",
+            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+            format="json",
+        )
+        self.assertEqual(v2.json()["violation_count"], 2)
+        self.assertTrue(v2.json()["auto_submitted"])
+
+    def test_faculty_can_open_submitted_attempt(self):
+        """Faculty can open and review the attempt auto-submitted due to violations."""
+        start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
+        attempt_id = start_res.json()["attempt_id"]
+
+        # Violations 1 and 2
+        for _ in range(2):
+            self.client.post(
+                f"/api/student/attempts/{attempt_id}/violation/",
+                data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
+                format="json",
+            )
+
+        # Switch credentials to Faculty
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.faculty_token}")
+        review_res = self.client.get(f"/api/faculty/attempts/{attempt_id}/")
+        self.assertEqual(review_res.status_code, status.HTTP_200_OK)
+        review_data = review_res.json()
+        self.assertEqual(review_data["attempt_id"], attempt_id)
+        self.assertEqual(review_data["status"], StudentAttempt.Status.AUTO_SUBMITTED)
+        self.assertEqual(review_data["submit_reason"], "violations")
+
     def test_backstop_auto_submits_if_violation_count_exceeded_on_heartbeat_or_save(self):
         """If an attempt somehow has violation_count > max_warnings while IN_PROGRESS, backstop finalizes it."""
         start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
         attempt_id = start_res.json()["attempt_id"]
 
         # Simulate out-of-band violation count update
-        StudentAttempt.objects.filter(id=attempt_id).update(violation_count=4)
+        StudentAttempt.objects.filter(id=attempt_id).update(violation_count=2)
 
         # Heartbeat hits backstop
         hb_res = self.client.post(f"/api/student/attempts/{attempt_id}/heartbeat/")
@@ -324,45 +464,3 @@ class AutoSubmitViolationsTests(TestCase):
         attempt = StudentAttempt.objects.get(id=attempt_id)
         self.assertEqual(attempt.status, StudentAttempt.Status.AUTO_SUBMITTED)
         self.assertEqual(attempt.submit_reason, "violations")
-
-    def test_refresh_page_maintains_violation_count(self):
-        """Reloading or resuming the exam attempt does not reset the violation count."""
-        start_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
-        attempt_id = start_res.json()["attempt_id"]
-
-        # 2 violations occur
-        for _ in range(2):
-            self.client.post(
-                f"/api/student/attempts/{attempt_id}/violation/",
-                data={"event_type": AttemptEvent.EventType.TAB_HIDDEN, "event_id": str(uuid.uuid4())},
-                format="json",
-            )
-
-        attempt = StudentAttempt.objects.get(id=attempt_id)
-        self.assertEqual(attempt.violation_count, 2)
-
-        # Student refreshes browser (hits start/resume endpoint)
-        resume_res = self.client.post(f"/api/student/exams/{self.exam.id}/start/")
-        self.assertEqual(resume_res.status_code, status.HTTP_200_OK)
-        resume_data = resume_res.json()
-        self.assertEqual(resume_data["attempt_id"], attempt_id)
-        self.assertEqual(resume_data["violation_count"], 2)
-
-        # 3rd violation
-        v3 = self.client.post(
-            f"/api/student/attempts/{attempt_id}/violation/",
-            data={"event_type": AttemptEvent.EventType.WINDOW_BLUR, "event_id": str(uuid.uuid4())},
-            format="json",
-        )
-        self.assertEqual(v3.json()["violation_count"], 3)
-        self.assertFalse(v3.json()["auto_submitted"])
-
-        # 4th violation -> triggers auto submit
-        v4 = self.client.post(
-            f"/api/student/attempts/{attempt_id}/violation/",
-            data={"event_type": AttemptEvent.EventType.FULLSCREEN_EXIT, "event_id": str(uuid.uuid4())},
-            format="json",
-        )
-        self.assertEqual(v4.json()["violation_count"], 4)
-        self.assertTrue(v4.json()["auto_submitted"])
-

@@ -13,6 +13,7 @@ import {
   BarChart2,
   Users,
   CheckCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { type FacultyOngoingExamItem } from "../../services/api";
 
@@ -161,6 +162,14 @@ export function ExamDetailsModal({ exam, isOpen, onClose }: ExamDetailsModalProp
               <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/20 border border-border/30">
                 <Shuffle className="w-4 h-4 text-primary shrink-0" />
                 <span>Questions & Options randomized per student</span>
+              </div>
+              <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/20 border border-border/30 sm:col-span-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  {exam.max_warnings === 1
+                    ? "1 warning allowed, automatic submission on next violation"
+                    : `${exam.max_warnings ?? 1} warnings allowed before auto-submit`}
+                </span>
               </div>
             </div>
           </div>

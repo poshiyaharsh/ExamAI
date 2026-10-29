@@ -12,7 +12,7 @@ import zoneinfo
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -253,12 +253,24 @@ def finalize_overdue_attempts(batch_size: int = 100, now: Optional[datetime] = N
     grace_delta = timedelta(seconds=SUBMIT_NETWORK_GRACE_SECONDS)
     effective_cutoff = current_time - grace_delta
 
-    # Find attempts where personal deadline OR exam window has passed
+    # Find attempts where personal deadline OR exam window has passed,
+    # OR violation limit has been exceeded, OR attempt is flagged needs_finalize
     overdue_qs = StudentAttempt.objects.filter(
-        status=StudentAttempt.Status.IN_PROGRESS
-    ).filter(
-        Q(expires_at__isnull=False, expires_at__lte=effective_cutoff) |
-        Q(exam__ends_at__isnull=False, exam__ends_at__lte=effective_cutoff)
+        Q(
+            status=StudentAttempt.Status.IN_PROGRESS,
+            expires_at__isnull=False,
+            expires_at__lte=effective_cutoff,
+        )
+        | Q(
+            status=StudentAttempt.Status.IN_PROGRESS,
+            exam__ends_at__isnull=False,
+            exam__ends_at__lte=effective_cutoff,
+        )
+        | Q(
+            status=StudentAttempt.Status.IN_PROGRESS,
+            violation_count__gt=F('exam__max_warnings'),
+        )
+        | Q(needs_finalize=True)
     ).values_list('id', flat=True)[:batch_size]
 
     candidate_ids = list(overdue_qs)
@@ -272,9 +284,7 @@ def finalize_overdue_attempts(batch_size: int = 100, now: Optional[datetime] = N
     for attempt_id in candidate_ids:
         try:
             with transaction.atomic():
-                attempt_qs = StudentAttempt.objects.filter(
-                    id=attempt_id, status=StudentAttempt.Status.IN_PROGRESS
-                ).select_related('exam')
+                attempt_qs = StudentAttempt.objects.filter(id=attempt_id).select_related('exam')
 
                 if getattr(connection.features, 'has_select_for_update', False):
                     if getattr(connection.features, 'has_select_for_update_skip_locked', False):
@@ -286,11 +296,23 @@ def finalize_overdue_attempts(batch_size: int = 100, now: Optional[datetime] = N
                 if not attempt:
                     continue
 
+                # If already submitted but flagged needs_finalize, complete grading
+                if attempt.status != StudentAttempt.Status.IN_PROGRESS:
+                    if attempt.needs_finalize:
+                        calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+                        attempt.needs_finalize = False
+                        attempt.save(update_fields=['needs_finalize'])
+                        finalized_count += 1
+                    continue
+
                 exam_ends = attempt.exam.ends_at
                 personal_expires = attempt.expires_at or (attempt.started_at + timedelta(minutes=attempt.exam.duration_minutes))
 
-                # Determine submit reason
-                if exam_ends and current_time >= exam_ends:
+                # Determine submit reason: violations take precedence over timeout
+                if attempt.violation_count > attempt.exam.max_warnings:
+                    reason = 'violations'
+                    official_submit_time = current_time
+                elif exam_ends and current_time >= exam_ends:
                     reason = 'window_closed'
                     official_submit_time = min(current_time, exam_ends)
                 else:
@@ -303,6 +325,9 @@ def finalize_overdue_attempts(batch_size: int = 100, now: Optional[datetime] = N
                 attempt.save(update_fields=['status', 'submitted_at', 'submit_reason'])
 
                 calculate_and_save_attempt_score(attempt, is_auto_submit=True)
+                if attempt.needs_finalize:
+                    attempt.needs_finalize = False
+                    attempt.save(update_fields=['needs_finalize'])
                 finalized_count += 1
                 logger.info(
                     "Auto-finalized overdue attempt id=%s student_id=%s reason=%s submit_time=%s",
