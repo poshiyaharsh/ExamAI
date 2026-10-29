@@ -25,7 +25,9 @@ from api.permissions import IsFacultyUser
 from api.tenant import get_user_institution
 from api.utils.departments import get_faculty_department, normalize_department
 from api.utils.question_bank_parser import parse_and_validate_question_bank_file
+from api.utils.options import clean_options_list
 from api.utils.question_bank_templates import get_template
+from api.utils.validate_paper import canonicalize_type, canonicalize_difficulty
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +135,7 @@ class FacultyQuestionBankUploadView(APIView):
                     status=Question.Status.ACTIVE,
                     source='faculty_upload',
                     is_shared=is_shared,
-                    options=row.get('options') or [],
+                    options=clean_options_list(row.get('options')) if row.get('options') else [],
                     correct_answer=row.get('correct_answer'),
                     model_answer=row.get('model_answer') or '',
                     rubric=row.get('rubric') or [],
@@ -423,7 +425,7 @@ class AssemblePaperFromBankView(APIView):
                     status=Question.Status.ACTIVE,
                     source='question_bank',
                     is_shared=True,
-                    options=bq.options,
+                    options=clean_options_list(bq.options) if bq.options else [],
                     correct_answer=bq.correct_answer,
                     model_answer=bq.model_answer,
                     rubric=bq.rubric,
@@ -431,16 +433,31 @@ class AssemblePaperFromBankView(APIView):
                     order=start_order + idx,
                 )
                 # Clone option items
-                for opt in bq.option_items.all():
-                    Option.objects.create(
-                        question=new_q,
-                        text=opt.text,
-                        is_correct=opt.is_correct,
-                        order=opt.order,
-                    )
+                if bq.option_items.exists():
+                    for opt in bq.option_items.all():
+                        Option.objects.create(
+                            question=new_q,
+                            text=opt.text,
+                            is_correct=opt.is_correct,
+                            order=opt.order,
+                        )
+                elif new_q.options and isinstance(new_q.options, list):
+                    for o_idx, opt_str in enumerate(new_q.options):
+                        is_corr = False
+                        if bq.correct_answer:
+                            if str(bq.correct_answer).strip().lower() == str(opt_str).strip().lower():
+                                is_corr = True
+                            elif str(bq.correct_answer).strip().upper() == chr(65 + o_idx):
+                                is_corr = True
+                        Option.objects.create(
+                            question=new_q,
+                            text=str(opt_str),
+                            is_correct=is_corr,
+                            order=o_idx + 1,
+                        )
                 cloned_questions.append(new_q)
 
-            # Update exam totals
+            # Update exam totals and metadata
             active_exam_questions = list(exam.questions.filter(is_deleted=False))
             actual_total = int(round(sum(float(q.marks) for q in active_exam_questions)))
             target_marks = int(exam.target_total_marks or actual_total)
@@ -448,8 +465,21 @@ class AssemblePaperFromBankView(APIView):
             shortfall = max(0, target_marks - actual_total)
             exam.total_marks = actual_total
             exam.marks_shortfall = shortfall
+
+            types_set = sorted(list({canonicalize_type(q.question_type) for q in active_exam_questions if q.question_type}))
+            topics_set = sorted(list({q.topic_text for q in active_exam_questions if q.topic_text}))
+            diff_counts = {}
+            for q in active_exam_questions:
+                d = canonicalize_difficulty(q.difficulty)
+                diff_counts[d] = diff_counts.get(d, 0) + 1
+            total_q = len(active_exam_questions) or 1
+            diff_dist = {d: round((count / total_q) * 100) for d, count in diff_counts.items()}
+
+            exam.question_types = types_set
+            exam.topics = topics_set
+            exam.difficulty_distribution = diff_dist
             exam.status = Exam.Status.DRAFT
-            exam.save(update_fields=['total_marks', 'marks_shortfall', 'status', 'updated_at'])
+            exam.save(update_fields=['total_marks', 'marks_shortfall', 'status', 'question_types', 'topics', 'difficulty_distribution', 'updated_at'])
 
         from api.paper_engine.cache import PaperCacheService
         PaperCacheService.invalidate_exam(exam.institution_id, exam.id)
@@ -483,33 +513,79 @@ class AssemblePaperFromBankView(APIView):
                 seen.add(k)
                 unique_candidates.append(c)
 
-        # DP Subset Sum to find exact sum = target_marks
-        # dp[m] = list of indices reaching sum m
+        # Handle blueprint type counts if provided
+        chosen_by_blueprint: List[Question] = []
+        remaining_candidates = unique_candidates
+
+        if blueprint and isinstance(blueprint, dict):
+            # Parse requested counts per type
+            desired_counts: Dict[str, int] = {}
+            for raw_type, spec in blueprint.items():
+                c_type = canonicalize_type(raw_type)
+                cnt = 0
+                if isinstance(spec, int):
+                    cnt = spec
+                elif isinstance(spec, dict):
+                    cnt = int(spec.get('count') or 0)
+                elif isinstance(spec, str) and spec.isdigit():
+                    cnt = int(spec)
+                if cnt > 0:
+                    desired_counts[c_type] = cnt
+
+            if desired_counts:
+                # Group candidates by canonical type
+                by_type: Dict[str, List[Question]] = {}
+                for c in unique_candidates:
+                    ct = canonicalize_type(c.question_type)
+                    by_type.setdefault(ct, []).append(c)
+
+                blueprint_chosen_ids = set()
+                for c_type, count in desired_counts.items():
+                    type_pool = by_type.get(c_type, [])
+                    picked = type_pool[:count]
+                    for p in picked:
+                        chosen_by_blueprint.append(p)
+                        blueprint_chosen_ids.add(p.id)
+
+                remaining_candidates = [c for c in unique_candidates if c.id not in blueprint_chosen_ids]
+
+        blueprint_sum = int(round(sum(float(q.marks) for q in chosen_by_blueprint)))
+
+        # If blueprint alone was requested and reached or exceeded target_marks, or target_marks was reached:
+        if chosen_by_blueprint and (blueprint_sum >= target_marks or target_marks <= 0):
+            return chosen_by_blueprint
+
+        # Otherwise, need to fill shortfall with knapsack on remaining candidates
+        remaining_target = max(0, target_marks - blueprint_sum)
+        if remaining_target == 0:
+            return chosen_by_blueprint
+
+        # DP Subset Sum to find exact sum = remaining_target
         dp: Dict[int, List[int]] = {0: []}
+        remaining_candidates.sort(key=lambda q: (float(q.marks), q.question_type))
 
-        # Sort candidates to balance type and difficulty
-        unique_candidates.sort(key=lambda q: (float(q.marks), q.question_type))
-
-        for idx, q in enumerate(unique_candidates):
+        for idx, q in enumerate(remaining_candidates):
             q_marks = int(round(float(q.marks)))
-            if q_marks <= 0 or q_marks > target_marks:
+            if q_marks <= 0 or q_marks > remaining_target:
                 continue
 
-            # Update DP table downwards
             current_sums = sorted(dp.keys(), reverse=True)
             for s in current_sums:
                 new_s = s + q_marks
-                if new_s <= target_marks and new_s not in dp:
+                if new_s <= remaining_target and new_s not in dp:
                     dp[new_s] = dp[s] + [idx]
 
-            if target_marks in dp:
+            if remaining_target in dp:
                 break
 
-        if target_marks in dp:
-            chosen_indices = dp[target_marks]
-            return [unique_candidates[i] for i in chosen_indices]
+        if remaining_target in dp:
+            chosen_indices = dp[remaining_target]
+            return chosen_by_blueprint + [remaining_candidates[i] for i in chosen_indices]
 
-        # If exact sum not possible, pick largest sum <= target_marks
-        best_sum = max(dp.keys())
-        chosen_indices = dp[best_sum]
-        return [unique_candidates[i] for i in chosen_indices]
+        # If exact sum not possible, pick largest sum <= remaining_target
+        if dp:
+            best_sum = max(dp.keys())
+            chosen_indices = dp[best_sum]
+            return chosen_by_blueprint + [remaining_candidates[i] for i in chosen_indices]
+
+        return chosen_by_blueprint

@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Any, List, Optional, Tuple
 
@@ -19,8 +20,21 @@ def clean_option_text(text: Any) -> str:
 def clean_options_list(options: Optional[List[Any]]) -> List[str]:
     """
     Cleans a list of option items, ensuring all elements are cleaned strings.
+    Handles None, lists of strings, lists of dicts (with 'text' keys),
+    and JSON string representations.
     """
-    if not options or not isinstance(options, (list, tuple)):
+    if options is None:
+        return []
+    if isinstance(options, str):
+        trimmed = options.strip()
+        if trimmed.startswith('[') and trimmed.endswith(']'):
+            try:
+                options = json.loads(trimmed)
+            except Exception:
+                return []
+        else:
+            return []
+    if not isinstance(options, (list, tuple)):
         return []
     result = []
     for opt in options:

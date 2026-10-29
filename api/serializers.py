@@ -3,6 +3,7 @@ from rest_framework import serializers
 from admins.models import AdminDepartment, AdminInstitution
 from api.constants import MAX_WARNINGS, MIN_ALLOWED_WARNINGS, MAX_ALLOWED_WARNINGS
 from .models import Exam, Question, StudentAnswer, StudentAttempt
+from .utils.options import clean_options_list
 from .utils.validate_paper import canonicalize_type, canonicalize_difficulty
 
 
@@ -102,6 +103,8 @@ class QuestionSerializer(serializers.ModelSerializer):
         ret = super().to_representation(instance)
         ret['question_type'] = canonicalize_type(instance.question_type)
         ret['difficulty'] = canonicalize_difficulty(instance.difficulty)
+        if ret.get('options') is not None:
+            ret['options'] = clean_options_list(ret['options'])
         return ret
 
 
@@ -124,6 +127,8 @@ class FacultyQuestionSerializer(serializers.ModelSerializer):
         ret = super().to_representation(instance)
         ret['question_type'] = canonicalize_type(instance.question_type)
         ret['difficulty'] = canonicalize_difficulty(instance.difficulty)
+        if ret.get('options') is not None:
+            ret['options'] = clean_options_list(ret['options'])
         return ret
 
 
