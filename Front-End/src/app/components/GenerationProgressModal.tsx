@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
@@ -39,6 +39,7 @@ export const GenerationProgressModal: React.FC<GenerationProgressModalProps> = (
   const [job, setJob] = useState<PaperGenerationJob | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const notifiedJobsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!isOpen || !jobId) return;
@@ -61,13 +62,19 @@ export const GenerationProgressModal: React.FC<GenerationProgressModalProps> = (
         }
 
         if (data.status === "completed" || data.status === "completed_with_warnings") {
-          toast.success("Paper generated successfully!");
-          onSuccess?.(data);
+          if (!notifiedJobsRef.current.has(jobId)) {
+            notifiedJobsRef.current.add(jobId);
+            toast.success("Paper generated successfully!");
+            onSuccess?.(data);
+          }
           return; // stop polling
         }
 
         if (data.status === "failed") {
-          toast.error(data.error_message || "Generation failed.");
+          if (!notifiedJobsRef.current.has(jobId)) {
+            notifiedJobsRef.current.add(jobId);
+            toast.error(data.error_message || "Generation failed.");
+          }
           return; // stop polling
         }
 

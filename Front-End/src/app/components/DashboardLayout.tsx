@@ -108,15 +108,21 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
       if (unread > prevCount && prevCount > 0) {
         const newest = list[0];
         if (newest && !newest.is_read) {
-          if (newest.type === "success") {
-            toast.success(newest.title, {
-              description: newest.message,
-              action: newest.link ? { label: "View", onClick: () => navigate(newest.link!) } : undefined,
-            });
-          } else if (newest.type === "error") {
-            toast.error(newest.title, { description: newest.message });
-          } else {
-            toast.info(newest.title, { description: newest.message });
+          const currentPath = window.location.pathname;
+          const isCurrentTarget = Boolean(newest.link && currentPath.includes(newest.link));
+          const isGenerationPage = currentPath.includes('/faculty/generate') && (newest.title?.includes('Paper') || newest.link?.includes('/faculty/exams/'));
+
+          if (!isCurrentTarget && !isGenerationPage) {
+            if (newest.type === "success") {
+              toast.success(newest.title, {
+                description: newest.message,
+                action: newest.link ? { label: "View", onClick: () => navigate(newest.link!) } : undefined,
+              });
+            } else if (newest.type === "error") {
+              toast.error(newest.title, { description: newest.message });
+            } else {
+              toast.info(newest.title, { description: newest.message });
+            }
           }
         }
       }

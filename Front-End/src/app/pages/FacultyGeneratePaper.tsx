@@ -645,7 +645,7 @@ export function FacultyGeneratePaper() {
       },
     });
     if (notes.length > 0) {
-      notes.forEach((n) => toast.info(n));
+      toast.info(notes.join(" • "));
     }
   };
 
@@ -882,7 +882,7 @@ export function FacultyGeneratePaper() {
       setBlueprint(autoBp);
       setLastConfirmedTargetMarks(currentTarget);
       if (notes.length > 0) {
-        notes.forEach((n) => toast.info(n));
+        toast.info(notes.join(" • "));
       }
     } else if (lastConfirmedTargetMarks !== currentTarget && bpTotal !== currentTarget) {
       setRebalancePrompt({ open: true, oldTarget: lastConfirmedTargetMarks, newTarget: currentTarget });
@@ -998,7 +998,7 @@ export function FacultyGeneratePaper() {
     }
   };
 
-  const handleGenerationSuccess = async (job: PaperGenerationJob) => {
+  const handleGenerationSuccess = useCallback(async (job: PaperGenerationJob) => {
     if (!job.exam_id) return;
     try {
       setExamId(job.exam_id);
@@ -1009,7 +1009,7 @@ export function FacultyGeneratePaper() {
     } catch (err) {
       console.error("Failed to load completed exam:", err);
     }
-  };
+  }, []);
 
   // Load Question Bank items
   const fetchBankQuestions = useCallback(async () => {
@@ -1721,7 +1721,7 @@ export function FacultyGeneratePaper() {
                           },
                         },
                       });
-                      if (notes.length > 0) notes.forEach((n) => toast.info(n));
+                      if (notes.length > 0) toast.info(notes.join(" • "));
                     }}
                     className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-2xs"
                   >

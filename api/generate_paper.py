@@ -884,20 +884,40 @@ def _save_generated_exam_questions(
 
     try:
         exam_title = exam.title if exam else f"Exam #{exam_id}"
-        Notification.objects.create(
-            user=job.faculty,
-            institution=job.institution,
-            title='Paper Ready' if not has_shortfall else 'Paper Ready with Warnings',
-            message=(
-                f"Exam '{exam_title}' paper generated ({len(generated_questions)} questions)."
-                if not has_shortfall
-                else f"Exam '{exam_title}' generated with a {marks_shortfall}-mark shortfall ({actual_total_marks}/{target_marks} marks). Review the paper and choose how to proceed."
-            ),
-            type=Notification.NotificationType.SUCCESS if not has_shortfall else Notification.NotificationType.WARNING,
-            link=f"/faculty/exams/{exam_id}/edit",
+        notif_link = f"/faculty/exams/{exam_id}/edit"
+        notif_title = 'Paper Ready' if not has_shortfall else 'Paper Ready with Warnings'
+        notif_msg = (
+            f"Exam '{exam_title}' paper generated ({len(generated_questions)} questions)."
+            if not has_shortfall
+            else f"Exam '{exam_title}' generated with a {marks_shortfall}-mark shortfall ({actual_total_marks}/{target_marks} marks). Review the paper and choose how to proceed."
         )
-    except Exception:
-        pass
+        notif_type = Notification.NotificationType.SUCCESS if not has_shortfall else Notification.NotificationType.WARNING
+
+        # Coalesce / deduplicate notification for this exam and faculty user
+        existing_notif = Notification.objects.filter(
+            user=job.faculty,
+            link=notif_link,
+        ).first()
+
+        if existing_notif:
+            existing_notif.title = notif_title
+            existing_notif.message = notif_msg
+            existing_notif.type = notif_type
+            existing_notif.is_read = False
+            existing_notif.institution = job.institution
+            existing_notif.created_at = timezone.now()
+            existing_notif.save(update_fields=['title', 'message', 'type', 'is_read', 'institution', 'created_at'])
+        else:
+            Notification.objects.create(
+                user=job.faculty,
+                institution=job.institution,
+                title=notif_title,
+                message=notif_msg,
+                type=notif_type,
+                link=notif_link,
+            )
+    except Exception as notif_err:
+        logger.warning("Failed to dispatch or coalesce paper generation notification: %s", notif_err)
 
     return len(generated_questions)
 
@@ -1509,16 +1529,31 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
         job.save(update_fields=['status', 'progress', 'current_step', 'error_message', 'completed_at'])
 
         try:
-            Notification.objects.create(
+            fail_link = '/faculty/generate'
+            fail_title = 'Paper Generation Failed'
+            fail_msg = f"Failed to generate paper: {friendly_err}"
+            # Deduplicate failure notifications within the last 5 minutes for this user
+            recent_fail = Notification.objects.filter(
                 user=job.faculty,
-                institution=job.institution,
-                title='Paper Generation Failed',
-                message=f"Failed to generate paper: {friendly_err}",
-                type=Notification.NotificationType.ERROR,
-                link='/faculty/generate',
-            )
-        except Exception:
-            pass
+                title=fail_title,
+                created_at__gte=timezone.now() - timedelta(minutes=5),
+            ).first()
+            if recent_fail:
+                recent_fail.message = fail_msg
+                recent_fail.is_read = False
+                recent_fail.created_at = timezone.now()
+                recent_fail.save(update_fields=['message', 'is_read', 'created_at'])
+            else:
+                Notification.objects.create(
+                    user=job.faculty,
+                    institution=job.institution,
+                    title=fail_title,
+                    message=fail_msg,
+                    type=Notification.NotificationType.ERROR,
+                    link=fail_link,
+                )
+        except Exception as notif_err:
+            logger.warning("Failed to record generation failure notification: %s", notif_err)
 
 
 class GeneratePaperView(APIView):
