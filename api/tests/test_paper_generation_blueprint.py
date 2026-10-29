@@ -302,3 +302,63 @@ class PaperGenerationApiRegressionTestCase(TestCase):
         }
         response = self.client.post('/api/faculty/exams/generate/', payload, format='json')
         self.assertEqual(response.status_code, 403)
+    @patch('api.generate_paper.threading.Thread')
+    def test_free_text_subject_accepted_and_saved_without_existing_subject_record(self, mock_thread):
+        """Free-text subject names (e.g. 'Artificial Intelligence & Robotics') entered
+        without an existing Subject database record must be accepted and saved to Exam.subject.
+        """
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.faculty_token}')
+        bp_50, _ = allocate_blueprint_to_target(50)
+        custom_subject = "Artificial Intelligence & Robotics"
+
+        # Verify no Subject database record with this name exists
+        self.assertFalse(Subject.objects.filter(name__iexact=custom_subject).exists())
+
+        payload = {
+            'title': 'AI & Robotics Mid-Term',
+            'subject': custom_subject,
+            'department': 'Computer Science',
+            'total_marks': 50,
+            'duration_minutes': 60,
+            'topics': ['Neural Networks'],
+            'question_types': ['MCQ_SINGLE'],
+            'difficulty_distribution': {'easy': 50, 'medium': 50, 'hard': 0},
+            'blueprint': bp_50,
+            'ai_model': 'qwen2.5-3b',
+        }
+
+        response = self.client.post('/api/faculty/exams/generate/', payload, format='json')
+        self.assertIn(response.status_code, [200, 201, 202])
+
+        exam = Exam.objects.filter(title='AI & Robotics Mid-Term').first()
+        self.assertIsNotNone(exam)
+        self.assertEqual(exam.subject, custom_subject[:80])
+
+    @patch('api.generate_paper.threading.Thread')
+    def test_existing_subject_name_text_is_accepted_and_saved(self, mock_thread):
+        """Entering the name of an existing subject as text (e.g. 'Data Structures')
+        is accepted and saved correctly.
+        """
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.faculty_token}')
+        bp_50, _ = allocate_blueprint_to_target(50)
+
+        payload = {
+            'title': 'Data Structures Term Exam',
+            'subject': 'Data Structures',
+            'department': 'Computer Science',
+            'total_marks': 50,
+            'duration_minutes': 60,
+            'topics': ['Binary Trees'],
+            'question_types': ['MCQ_SINGLE'],
+            'difficulty_distribution': {'easy': 50, 'medium': 50, 'hard': 0},
+            'blueprint': bp_50,
+            'ai_model': 'qwen2.5-3b',
+        }
+
+        response = self.client.post('/api/faculty/exams/generate/', payload, format='json')
+        self.assertIn(response.status_code, [200, 201, 202])
+
+        exam = Exam.objects.filter(title='Data Structures Term Exam').first()
+        self.assertIsNotNone(exam)
+        self.assertEqual(exam.subject, 'Data Structures')
+

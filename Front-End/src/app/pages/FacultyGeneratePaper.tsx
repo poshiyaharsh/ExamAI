@@ -173,7 +173,6 @@ export function FacultyGeneratePaper() {
   const [facultySubjects, setFacultySubjects] = useState<FacultySubject[]>([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
-  const [isCustomSubject, setIsCustomSubject] = useState(false);
 
   // Subject-specific Study Materials (Phase 3)
   const [subjectMaterials, setSubjectMaterials] = useState<FacultyStudyMaterial[]>([]);
@@ -362,30 +361,18 @@ export function FacultyGeneratePaper() {
     }
   }, []);
 
-  const handleSubjectSelect = (val: string) => {
-    if (val === "new") {
-      setIsCustomSubject(true);
-      setSelectedSubjectId(null);
-      setSubjectName("");
-      setSubjectMaterials([]);
-      setSelectedMaterialIds([]);
-      return;
-    }
-    setIsCustomSubject(false);
-    const id = Number(val);
-    if (isNaN(id) || !id) {
-      setSelectedSubjectId(null);
-      setSubjectName("");
-      setSubjectMaterials([]);
-      setSelectedMaterialIds([]);
-      return;
-    }
-    const found = facultySubjects.find((s) => s.id === id);
+  const handleSubjectNameChange = (val: string) => {
+    setSubjectName(val);
+    setIsDirty(true);
+    const trimmed = val.trim().toLowerCase();
+    const found = facultySubjects.find((s) => s.name.trim().toLowerCase() === trimmed);
     if (found) {
       setSelectedSubjectId(found.id);
-      setSubjectName(found.name);
       loadSubjectMaterials(found.id);
-      setIsDirty(true);
+    } else {
+      setSelectedSubjectId(null);
+      setSubjectMaterials([]);
+      setSelectedMaterialIds([]);
     }
   };
 
@@ -842,6 +829,7 @@ export function FacultyGeneratePaper() {
   // Step 1 Validation
   const validateStep1 = () => {
     if (!examTitle.trim()) return "Exam Title is required.";
+    if (!subjectName.trim()) return "Subject / Course is required.";
     const dur = Number(duration);
     if (isNaN(dur) || dur <= 0) return "Duration must be greater than 0.";
     const tm = Number(totalMarks);
@@ -880,6 +868,10 @@ export function FacultyGeneratePaper() {
   const handleAiGenerate = async (overrideCapacity = false) => {
     if (!examTitle.trim()) {
       toast.error("Please enter an exam title in Step 1.");
+      return;
+    }
+    if (!subjectName.trim()) {
+      toast.error("Please enter a subject / course name in Step 1.");
       return;
     }
 
@@ -1498,65 +1490,21 @@ export function FacultyGeneratePaper() {
                 </p>
               </div>
 
-              {/* Subject Selection (Scoped by Department & Institution) */}
+              {/* Subject / Course Input */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-700">Subject / Course *</label>
-                  {!isCustomSubject && (
-                    <button
-                      type="button"
-                      onClick={() => handleSubjectSelect("new")}
-                      className="text-[11px] font-semibold text-blue-600 hover:underline"
-                    >
-                      + Create New Subject
-                    </button>
-                  )}
-                  {isCustomSubject && facultySubjects.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCustomSubject(false);
-                        if (facultySubjects[0]) handleSubjectSelect(String(facultySubjects[0].id));
-                      }}
-                      className="text-[11px] font-semibold text-slate-500 hover:underline"
-                    >
-                      Choose from Existing
-                    </button>
-                  )}
-                </div>
-
-                {!isCustomSubject && facultySubjects.length > 0 ? (
-                  <select
-                    value={selectedSubjectId ? String(selectedSubjectId) : ""}
-                    onChange={(e) => handleSubjectSelect(e.target.value)}
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Subject / Course *
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    value={subjectName}
+                    onChange={(e) => handleSubjectNameChange(e.target.value)}
+                    placeholder="Enter subject or course name"
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all font-medium text-slate-800"
-                  >
-                    <option value="" disabled>-- Select a Department Subject --</option>
-                    {facultySubjects.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} {s.code ? `(${s.code})` : ""} - {s.material_count || 0} material(s)
-                      </option>
-                    ))}
-                    <option value="new">+ Enter New Subject Name...</option>
-                  </select>
-                ) : (
-                  <div className="space-y-1.5">
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      value={subjectName}
-                      onChange={(e) => {
-                        setSubjectName(e.target.value);
-                        setIsDirty(true);
-                      }}
-                      placeholder="e.g., CS-402 Database Management Systems"
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
-                    />
-                    <p className="text-[11px] text-slate-500">
-                      Enter course name. Uploaded materials for this course will be strictly bound to it.
-                    </p>
-                  </div>
-                )}
+                  />
+                </div>
               </div>
 
               {/* Duration */}

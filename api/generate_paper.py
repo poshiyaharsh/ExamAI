@@ -1720,17 +1720,9 @@ class GeneratePaperView(APIView):
                 if assigned_dept:
                     sub_qs = sub_qs.filter(department__iexact=assigned_dept)
                 matches = list(sub_qs.filter(Q(code__iexact=s_str) | Q(name__iexact=s_str))[:2])
-                if len(matches) == 1:
+                if matches:
                     resolved_subject_id = matches[0].id
                     resolved_subject_name = matches[0].name
-                elif len(matches) > 1:
-                    return Response(
-                        {
-                            'detail': f"Multiple subjects matched '{s_str}'. Please specify the exact subject ID.",
-                            'code': 'SUBJECT_AMBIGUOUS',
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
                 else:
                     # Free-text course/subject entered by faculty without a corresponding Subject in the Question Bank
                     resolved_subject_id = None
