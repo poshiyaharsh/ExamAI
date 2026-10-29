@@ -528,8 +528,38 @@ class AdminStudentDetailAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        completed_filter = Q(user__exam_attempts__status__in=[
+            StudentAttempt.Status.SUBMITTED,
+            StudentAttempt.Status.AUTO_SUBMITTED,
+            StudentAttempt.Status.EVALUATED,
+        ])
         student = (
             StudentProfile.objects.select_related('user', 'institution')
+            .annotate(
+                attempt_count=Count('user__exam_attempts', filter=completed_filter, distinct=True),
+                last_exam_date=Max('user__exam_attempts__submitted_at', filter=completed_filter),
+                avg_percentage=Avg(
+                    ExpressionWrapper(
+                        F('user__exam_attempts__total_score') * 100.0 / F('user__exam_attempts__exam__total_marks'),
+                        output_field=FloatField()
+                    ),
+                    filter=completed_filter
+                ),
+                max_percentage=Max(
+                    ExpressionWrapper(
+                        F('user__exam_attempts__total_score') * 100.0 / F('user__exam_attempts__exam__total_marks'),
+                        output_field=FloatField()
+                    ),
+                    filter=completed_filter
+                ),
+                min_percentage=Min(
+                    ExpressionWrapper(
+                        F('user__exam_attempts__total_score') * 100.0 / F('user__exam_attempts__exam__total_marks'),
+                        output_field=FloatField()
+                    ),
+                    filter=completed_filter
+                ),
+            )
             .filter(id=student_id, institution=institution)
             .first()
         )

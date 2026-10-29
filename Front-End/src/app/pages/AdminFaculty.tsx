@@ -20,6 +20,15 @@ import {
   UserX,
   Copy,
   Check,
+  User,
+  BookOpen,
+  FileText,
+  Database,
+  Award,
+  Clock,
+  AlertCircle,
+  RefreshCw,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Combobox } from "../components/ui/combobox";
@@ -28,6 +37,12 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "../components/ui/tooltip";
+import {
+  Sheet,
+  SheetContent,
+  SheetClose,
+} from "../components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -161,6 +176,7 @@ export function AdminFaculty() {
   const [selectedFaculty, setSelectedFaculty] = useState<AdminFacultyRow | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [isViewOpen, setIsViewOpen] = useState(false);
+  const [copiedFacultyField, setCopiedFacultyField] = useState<string | null>(null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [creatingFaculty, setCreatingFaculty] = useState(false);
@@ -509,6 +525,21 @@ export function AdminFaculty() {
     } finally {
       setViewLoading(false);
     }
+  };
+
+  const handleCopyFacultyText = (text: string, fieldName: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedFacultyField(fieldName);
+    toast.success(`Copied ${fieldName} to clipboard!`);
+    setTimeout(() => setCopiedFacultyField(null), 2000);
+  };
+
+  const getFacultyInitials = (name: string): string => {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase() || "FA";
   };
 
   const handleEditFaculty = async (facultyId: number) => {
@@ -1325,60 +1356,296 @@ export function AdminFaculty() {
           )}
         </div>
 
-        {/* View Details Modal */}
-        {isViewOpen && (
-          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-white rounded-xl shadow-xl border border-border">
-              <div className="flex items-center justify-between p-6 border-b border-border">
-                <h3 className="text-xl font-semibold">Faculty Details</h3>
-                <button
-                  className="px-3 py-1.5 rounded border border-border hover:bg-muted"
-                  onClick={() => setIsViewOpen(false)}
-                >
-                  Close
-                </button>
+        {/* ================= FACULTY DETAILS DRAWER ================= */}
+        <Sheet open={isViewOpen} onOpenChange={setIsViewOpen}>
+          <SheetContent
+            side="right"
+            className="w-full sm:max-w-lg md:max-w-xl lg:max-w-2xl p-0 flex flex-col h-full bg-card border-l border-border shadow-2xl overflow-hidden focus:outline-none"
+          >
+            {viewLoading ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
+                <RefreshCw className="w-8 h-8 animate-spin text-primary mb-3" />
+                <p className="text-sm font-medium">Loading faculty profile & teaching summary...</p>
               </div>
-              <div className="p-6">
-                {viewLoading ? (
-                  <p className="text-muted-foreground">Loading faculty details...</p>
-                ) : selectedFaculty ? (
-                  <div className="grid sm:grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-muted-foreground">Full Name</p>
-                      <p className="font-medium text-foreground">{selectedFaculty.full_name}</p>
+            ) : selectedFaculty ? (
+              <div className="flex flex-col h-full overflow-hidden">
+                {/* Sticky Drawer Header */}
+                <div className="p-5 sm:p-6 bg-gradient-to-br from-indigo-500/10 via-background to-primary/10 border-b border-border shrink-0">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4 min-w-0">
+                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-600 to-primary text-white font-extrabold text-xl flex items-center justify-center shadow-md shrink-0">
+                        {getFacultyInitials(selectedFaculty.full_name)}
+                      </div>
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-lg sm:text-xl font-bold text-foreground truncate">
+                            {selectedFaculty.full_name}
+                          </h3>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                              selectedFaculty.is_active !== false
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-rose-50 text-rose-700 border border-rose-200"
+                            }`}
+                          >
+                            {getFacultyDisplayStatus(selectedFaculty)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                          <span className="font-mono bg-muted/60 px-2 py-0.5 rounded text-[11px] font-semibold text-foreground">
+                            {selectedFaculty.employee_id || "No Employee ID"}
+                          </span>
+                          <span>•</span>
+                          <span className="font-medium text-foreground">{selectedFaculty.department || "Unassigned"}</span>
+                          {selectedFaculty.designation && (
+                            <>
+                              <span>•</span>
+                              <span className="font-medium">{selectedFaculty.designation}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-muted-foreground">Email</p>
-                      <p className="font-medium text-foreground">{selectedFaculty.email}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Employee ID</p>
-                      <p className="font-medium text-foreground">{selectedFaculty.employee_id || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Department</p>
-                      <p className="font-medium text-foreground">{selectedFaculty.department || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Designation</p>
-                      <p className="font-medium text-foreground">{selectedFaculty.designation || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Status</p>
-                      <p className="font-medium text-foreground">{getFacultyDisplayStatus(selectedFaculty)}</p>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <p className="text-muted-foreground">Institution</p>
-                      <p className="font-medium text-foreground">
-                        {selectedFaculty.institution?.institution_name || "-"}
-                      </p>
-                    </div>
+                    <SheetClose className="p-1.5 rounded-lg border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                      <X className="w-4 h-4" />
+                      <span className="sr-only">Close</span>
+                    </SheetClose>
                   </div>
-                ) : null}
+                </div>
+
+                {/* Drawer Body with Tabs */}
+                <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6 overflow-x-hidden">
+                  <Tabs defaultValue="overview" className="w-full space-y-5">
+                    <TabsList className="grid grid-cols-2 w-full bg-muted/60 p-1 rounded-xl">
+                      <TabsTrigger value="overview" className="text-xs font-bold py-2 rounded-lg data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs">
+                        Profile & Summary
+                      </TabsTrigger>
+                      <TabsTrigger value="exams" className="text-xs font-bold py-2 rounded-lg data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs">
+                        Created Exams ({selectedFaculty.recent_exams ? selectedFaculty.recent_exams.length : selectedFaculty.exams_count || 0})
+                      </TabsTrigger>
+                    </TabsList>
+
+                    {/* TAB 1: PROFILE & SUMMARY */}
+                    <TabsContent value="overview" className="space-y-6 focus:outline-none">
+                      {/* 3-Grid Key Activity Stat Cards */}
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="bg-card rounded-xl p-3.5 border border-border shadow-xs text-center sm:text-left">
+                          <div className="text-[11px] font-medium text-muted-foreground flex items-center justify-center sm:justify-start gap-1 mb-1">
+                            <BookOpen className="w-3.5 h-3.5 text-primary" />
+                            Exams Created
+                          </div>
+                          <div className="text-xl sm:text-2xl font-bold text-foreground">
+                            {selectedFaculty.exams_count ?? 0}
+                          </div>
+                        </div>
+
+                        <div className="bg-card rounded-xl p-3.5 border border-border shadow-xs text-center sm:text-left">
+                          <div className="text-[11px] font-medium text-muted-foreground flex items-center justify-center sm:justify-start gap-1 mb-1">
+                            <Award className="w-3.5 h-3.5 text-emerald-600" />
+                            Active Exams
+                          </div>
+                          <div className="text-xl sm:text-2xl font-bold text-emerald-600">
+                            {selectedFaculty.active_exams_count ?? 0}
+                          </div>
+                        </div>
+
+                        <div className="bg-card rounded-xl p-3.5 border border-border shadow-xs text-center sm:text-left">
+                          <div className="text-[11px] font-medium text-muted-foreground flex items-center justify-center sm:justify-start gap-1 mb-1">
+                            <Database className="w-3.5 h-3.5 text-indigo-600" />
+                            Bank Items
+                          </div>
+                          <div className="text-xl sm:text-2xl font-bold text-indigo-600">
+                            {selectedFaculty.questions_count ?? 0}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Faculty Details Card */}
+                      <div className="bg-card rounded-2xl border border-border p-4 sm:p-5 shadow-xs space-y-3.5">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5" />
+                          Faculty Details & Contact
+                        </h4>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                          <div className="p-3 bg-muted/30 rounded-xl border border-border/60">
+                            <span className="text-muted-foreground block text-[11px] mb-0.5">Email Address</span>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-foreground truncate">{selectedFaculty.email}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyFacultyText(selectedFaculty.email, "email")}
+                                className="text-muted-foreground hover:text-foreground p-1 rounded"
+                                title="Copy email"
+                              >
+                                {copiedFacultyField === "email" ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="p-3 bg-muted/30 rounded-xl border border-border/60">
+                            <span className="text-muted-foreground block text-[11px] mb-0.5">Employee ID</span>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-mono font-bold text-foreground">
+                                {selectedFaculty.employee_id || "N/A"}
+                              </span>
+                              {selectedFaculty.employee_id && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyFacultyText(selectedFaculty.employee_id!, "Employee ID")}
+                                  className="text-muted-foreground hover:text-foreground p-1 rounded"
+                                  title="Copy Employee ID"
+                                >
+                                  {copiedFacultyField === "Employee ID" ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="p-3 bg-muted/30 rounded-xl border border-border/60">
+                            <span className="text-muted-foreground block text-[11px] mb-0.5">Department</span>
+                            <span className="font-semibold text-foreground block">
+                              {selectedFaculty.department || "Unassigned"}
+                            </span>
+                          </div>
+
+                          <div className="p-3 bg-muted/30 rounded-xl border border-border/60">
+                            <span className="text-muted-foreground block text-[11px] mb-0.5">Designation</span>
+                            <span className="font-semibold text-foreground block">
+                              {selectedFaculty.designation || "Faculty Member"}
+                            </span>
+                          </div>
+
+                          <div className="p-3 bg-muted/30 rounded-xl border border-border/60 sm:col-span-2">
+                            <span className="text-muted-foreground block text-[11px] mb-0.5">Institution</span>
+                            <span className="font-semibold text-foreground block">
+                              {selectedFaculty.institution?.institution_name || "Apex University"} (
+                              {selectedFaculty.institution?.institution_code || "APEX"})
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Admin Actions */}
+                      <div className="space-y-2.5">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          Administrative Quick Actions
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsViewOpen(false);
+                              handleOpenChangeDept(selectedFaculty);
+                            }}
+                            className="px-3.5 py-2.5 rounded-xl border border-border bg-card hover:bg-muted text-xs font-semibold text-foreground flex items-center justify-center gap-2 transition-colors shadow-2xs"
+                          >
+                            <Building2 className="w-3.5 h-3.5 text-primary" />
+                            Transfer Dept
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsViewOpen(false);
+                              handleOpenResetPassword(selectedFaculty);
+                            }}
+                            className="px-3.5 py-2.5 rounded-xl border border-border bg-card hover:bg-muted text-xs font-semibold text-foreground flex items-center justify-center gap-2 transition-colors shadow-2xs"
+                          >
+                            <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                            Reset Password
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsViewOpen(false);
+                              handleEditFaculty(selectedFaculty.id);
+                            }}
+                            className="px-3.5 py-2.5 rounded-xl border border-border bg-card hover:bg-muted text-xs font-semibold text-foreground flex items-center justify-center gap-2 transition-colors shadow-2xs"
+                          >
+                            <Edit className="w-3.5 h-3.5 text-slate-600" />
+                            Edit Faculty
+                          </button>
+                        </div>
+                      </div>
+                    </TabsContent>
+
+                    {/* TAB 2: CREATED EXAMS & PAPERS */}
+                    <TabsContent value="exams" className="space-y-4 focus:outline-none">
+                      {!selectedFaculty.recent_exams || selectedFaculty.recent_exams.length === 0 ? (
+                        <div className="p-10 text-center bg-muted/20 border border-border rounded-2xl">
+                          <BookOpen className="w-10 h-10 mx-auto mb-2 text-muted-foreground/40" />
+                          <p className="font-semibold text-foreground text-sm">No Exams Created Yet</p>
+                          <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1">
+                            This faculty member has not generated or published any exams in this institution.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {selectedFaculty.recent_exams.map((ex: any) => (
+                            <div
+                              key={ex.id}
+                              className="p-3.5 rounded-xl border border-border bg-card hover:bg-muted/30 transition-all flex items-center justify-between gap-3 text-xs"
+                            >
+                              <div className="space-y-1 min-w-0 flex-1">
+                                <h5 className="font-bold text-foreground truncate">{ex.title}</h5>
+                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                                  {ex.subject && <span>{ex.subject}</span>}
+                                  {ex.duration_minutes && (
+                                    <>
+                                      <span>•</span>
+                                      <span>{ex.duration_minutes} mins</span>
+                                    </>
+                                  )}
+                                  {ex.created_at && (
+                                    <>
+                                      <span>•</span>
+                                      <span>{new Date(ex.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0 space-y-1">
+                                <div className="font-bold text-foreground">{ex.total_marks || 0} Marks</div>
+                                <span
+                                  className={`inline-block px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                                    ex.status === "published"
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                      : ex.status === "draft"
+                                      ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                      : "bg-slate-100 text-slate-600 border border-slate-200"
+                                  }`}
+                                >
+                                  {ex.status}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+                </div>
+
+                {/* Drawer Footer */}
+                <div className="p-4 bg-muted/20 border-t border-border flex items-center justify-end shrink-0">
+                  <SheetClose className="px-4 py-2 rounded-lg border border-border bg-background hover:bg-muted text-xs font-semibold text-foreground transition-colors">
+                    Close
+                  </SheetClose>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            ) : null}
+          </SheetContent>
+        </Sheet>
 
         {/* Edit Faculty Modal */}
         {isEditOpen && (

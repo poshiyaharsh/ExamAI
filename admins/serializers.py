@@ -696,6 +696,10 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
     institution = serializers.SerializerMethodField()
     institution_id = serializers.IntegerField(read_only=True)
     institute_id = serializers.IntegerField(source='institution_id', read_only=True)
+    exams_count = serializers.SerializerMethodField()
+    active_exams_count = serializers.SerializerMethodField()
+    questions_count = serializers.SerializerMethodField()
+    recent_exams = serializers.SerializerMethodField()
 
     class Meta:
         model = FacultyProfile
@@ -714,6 +718,10 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
             'institution',
             'institution_id',
             'institute_id',
+            'exams_count',
+            'active_exams_count',
+            'questions_count',
+            'recent_exams',
         )
 
     def get_full_name(self, obj):
@@ -731,6 +739,45 @@ class AdminFacultyDetailSerializer(serializers.ModelSerializer):
 
     def get_status(self, obj):
         return 'Active' if obj.user.is_active else 'Inactive'
+
+    def get_exams_count(self, obj):
+        from api.models import Exam
+        return Exam.objects.filter(created_by=obj.user, institution=obj.institution).count()
+
+    def get_active_exams_count(self, obj):
+        from api.models import Exam
+        return Exam.objects.filter(
+            created_by=obj.user,
+            institution=obj.institution,
+            status=Exam.Status.PUBLISHED,
+        ).count()
+
+    def get_questions_count(self, obj):
+        from api.models import Question
+        return Question.objects.filter(
+            created_by=obj.user,
+            institution=obj.institution,
+            is_deleted=False,
+        ).count()
+
+    def get_recent_exams(self, obj):
+        from api.models import Exam
+        exams = (
+            Exam.objects.filter(created_by=obj.user, institution=obj.institution)
+            .order_by('-created_at')[:5]
+        )
+        return [
+            {
+                'id': e.id,
+                'title': e.title,
+                'subject': e.subject,
+                'duration_minutes': e.duration_minutes,
+                'total_marks': e.total_marks,
+                'status': e.status,
+                'created_at': e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in exams
+        ]
 
 
 class AdminFacultyUpdateSerializer(serializers.Serializer):

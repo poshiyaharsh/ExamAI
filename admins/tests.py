@@ -148,4 +148,53 @@ class AdminActionsTestCase(TestCase):
             new_department="Information Technology",
         ).first()
         self.assertIsNotNone(audit)
+    def test_student_detail_api_enriched_metrics(self):
+        self.client.force_authenticate(user=self.admin)
+        url = f"/api/admins/students/{self.student_profile.id}/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data.get('data', {})
+        self.assertEqual(data.get('id'), self.student_profile.id)
+        self.assertEqual(data.get('email'), self.student_user.email)
+        self.assertIn('number_of_exams', data)
+        self.assertIn('average_score', data)
+        self.assertIn('highest_score', data)
+        self.assertIn('performance_status', data)
+
+    def test_faculty_detail_api_enriched_metrics(self):
+        from api.models import Exam, Question
+        exam = Exam.objects.create(
+            title="CS101 Midterm Exam",
+            subject="Computer Science",
+            institution=self.inst1,
+            created_by=self.faculty_user,
+            duration_minutes=60,
+            total_marks=50,
+            status=Exam.Status.PUBLISHED,
+        )
+        Question.objects.create(
+            institution=self.inst1,
+            created_by=self.faculty_user,
+            question_type="mcq",
+            text="Detail Test Question",
+            marks=5,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        url = f"/api/admins/faculty/{self.faculty_profile.id}/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data.get('data', {})
+        self.assertEqual(data.get('id'), self.faculty_profile.id)
+        self.assertEqual(data.get('exams_count'), 1)
+        self.assertEqual(data.get('active_exams_count'), 1)
+        self.assertEqual(data.get('questions_count'), 1)
+        self.assertEqual(len(data.get('recent_exams', [])), 1)
+        self.assertEqual(data['recent_exams'][0]['title'], "CS101 Midterm Exam")
+
+    def test_cross_institute_detail_access_blocked(self):
+        self.client.force_authenticate(user=self.admin)
+        # Other faculty
+        resp_f = self.client.get(f"/api/admins/faculty/{self.other_faculty.id}/")
+        self.assertEqual(resp_f.status_code, status.HTTP_404_NOT_FOUND)
 

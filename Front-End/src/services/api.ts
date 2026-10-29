@@ -1075,6 +1075,7 @@ export type AdminStudentResultsResponse = {
 
 export type AdminStudentDetails = {
   id: number;
+  user_id?: number;
   full_name: string;
   first_name: string;
   last_name: string;
@@ -1084,6 +1085,10 @@ export type AdminStudentDetails = {
   year: string;
   number_of_exams: number;
   average_score: number | null;
+  highest_score?: number | null;
+  lowest_score?: number | null;
+  last_exam_date?: string | null;
+  performance_status?: string | null;
   institution: InstitutionOption | null;
 };
 
@@ -1496,6 +1501,8 @@ export type AdminFacultyRow = {
   id: number;
   user_id?: number;
   full_name: string;
+  first_name?: string;
+  last_name?: string;
   email: string;
   employee_id?: string;
   department?: string;
@@ -1505,6 +1512,18 @@ export type AdminFacultyRow = {
   institution?: InstitutionOption | null;
   institution_id?: number | null;
   institute_id?: number | null;
+  exams_count?: number;
+  active_exams_count?: number;
+  questions_count?: number;
+  recent_exams?: Array<{
+    id: number;
+    title: string;
+    subject?: string;
+    duration_minutes?: number;
+    total_marks?: number;
+    status: string;
+    created_at?: string | null;
+  }>;
 };
 
 export const facultyPaperApi = {
