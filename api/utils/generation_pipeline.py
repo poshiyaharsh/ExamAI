@@ -207,15 +207,17 @@ class QuestionBankService:
     @staticmethod
     def get_reusable_questions(
         institution_id: int,
-        subject_id: Optional[int],
-        question_type: str,
-        difficulty: str,
-        needed_count: int,
+        subject_id: Optional[int] = None,
+        question_type: str = 'mcq',
+        difficulty: str = 'medium',
+        needed_count: int = 1,
         exclude_exam_ids: Optional[List[int]] = None,
         expected_marks: Optional[float] = None,
+        subject_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         from api.models import Question
         from api.utils.validate_paper import canonicalize_type, canonicalize_difficulty
+        from django.db.models import Q
         if needed_count <= 0:
             return []
 
@@ -236,6 +238,15 @@ class QuestionBankService:
                 qs = qs.filter(subject_id=int(subject_id))
             except (ValueError, TypeError):
                 pass
+        elif subject_name and str(subject_name).strip():
+            clean_sname = str(subject_name).strip()
+            qs = qs.filter(
+                Q(subject__name__iexact=clean_sname) |
+                Q(exam__subject__iexact=clean_sname)
+            )
+        else:
+            logger.warning("get_reusable_questions called without subject_id or subject_name; returning empty to avoid cross-subject contamination.")
+            return []
         if difficulty and difficulty != 'any':
             canon_diff = canonicalize_difficulty(difficulty)
             diff_candidates = [canon_diff]
@@ -270,7 +281,11 @@ class QuestionBankService:
                 'model_answer': q.model_answer or '',
                 'marks': float(expected_marks if expected_marks is not None else q.marks),
                 'topic': q.topic_text or (q.topic.name if q.topic else 'General'),
-                'source': 'bank',
+                'source': 'bank_import',
+                'source_document_hash': getattr(q, 'source_document_hash', ''),
+                'source_chunk_id': getattr(q, 'source_chunk_id', ''),
+                'source_evidence': getattr(q, 'source_evidence', ''),
+                'source_location': getattr(q, 'source_location', ''),
                 'rubric': q.rubric or [],
                 'key_points': q.rubric or [],
                 'word_limit': q.word_limit,
@@ -336,7 +351,9 @@ class ExtractiveGenerator:
                 'correct_answer': primary_term,
                 'accepted_answers': [[primary_term]],
                 'marks': marks_per_q,
-                'source': 'extractive',
+                'source': 'ai_material',
+                'source_evidence': c['sentence'],
+                'source_location': c['topic'],
             })
         return results
 
@@ -371,7 +388,9 @@ class ExtractiveGenerator:
                 'options': ['True', 'False'],
                 'correct_answer': correct,
                 'marks': marks_per_q,
-                'source': 'extractive',
+                'source': 'ai_material',
+                'source_evidence': c['sentence'],
+                'source_location': c['topic'],
             })
         return results
 

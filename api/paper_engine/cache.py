@@ -50,6 +50,29 @@ def compute_request_hash(payload: Dict[str, Any]) -> str:
         except (ValueError, TypeError):
             parsed_sub_id = None
 
+    raw_bp = payload.get("blueprint") or {}
+    norm_bp = {}
+    if isinstance(raw_bp, dict):
+        for k, v in sorted(raw_bp.items()):
+            if isinstance(v, dict):
+                norm_bp[str(k).strip().lower()] = {
+                    "count": int(v.get("count", 0)),
+                    "marks": float(v.get("marks", 0.0)),
+                }
+            else:
+                norm_bp[str(k).strip().lower()] = v
+
+    doc_hash = str(payload.get("source_document_hash") or payload.get("file_hash") or "").strip().lower()
+    if not doc_hash:
+        source_docs = payload.get("source_documents") or []
+        if isinstance(source_docs, list) and source_docs:
+            doc_hashes = [d.get("file_hash", "") for d in source_docs if isinstance(d, dict)]
+            doc_hash = ":".join(sorted(filter(None, doc_hashes)))
+        elif payload.get("syllabus_text"):
+            doc_hash = hashlib.sha256(str(payload.get("syllabus_text")).encode("utf-8")).hexdigest()
+
+    model_val = str(payload.get("model") or payload.get("ai_model") or payload.get("ai_model_used") or "").strip().lower()
+
     norm_dict = {
         "title": str(payload.get("title", "")).strip().lower(),
         "total_marks": int(payload.get("total_marks", 0)),
@@ -61,6 +84,11 @@ def compute_request_hash(payload: Dict[str, Any]) -> str:
         "subject_id": parsed_sub_id,
         "subject": str(payload.get("subject_name") or payload.get("subject") or "").strip().lower(),
         "avoid_repeats": bool(payload.get("avoid_repeats", True)),
+        "blueprint": norm_bp,
+        "source_document_hash": doc_hash,
+        "model": model_val,
+        "generator_version": GLOBAL_CACHE_VERSION,
+        "use_question_bank": bool(payload.get("use_question_bank", False)),
     }
 
     raw_json = json.dumps(norm_dict, sort_keys=True)

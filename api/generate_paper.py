@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 import difflib
 import hashlib
@@ -489,8 +490,27 @@ def _call_type_batch(
                     len(questions) - len(strictly_validated),
                     canon_requested,
                 )
-            logger.info('Generated %s of %s %s questions', len(strictly_validated), count, question_type)
-            return strictly_validated[:count]
+            # Grounding verification against syllabus_chunk
+            grounded_batch = []
+            for q in strictly_validated:
+                q['source'] = 'ai_material'
+                q['source_location'] = batch_topics[0] if batch_topics else ''
+                if syllabus_chunk:
+                    ev = q.get('source_evidence') or ''
+                    is_g = verify_grounding_evidence(ev, syllabus_chunk)
+                    if not is_g:
+                        q_words = [w for w in normalize_grounding_text(q.get('text', '')).split() if len(w) > 3]
+                        if q_words:
+                            c_words = set(normalize_grounding_text(syllabus_chunk).split())
+                            is_g = (sum(1 for w in q_words if w in c_words) / len(q_words)) >= 0.35
+                    if is_g:
+                        grounded_batch.append(q)
+                    else:
+                        logger.warning("Rejected ungrounded %s question outside syllabus material: '%s'", question_type, q.get('text', '')[:40])
+                else:
+                    grounded_batch.append(q)
+            logger.info('Generated %s of %s %s questions (%d grounded)', len(grounded_batch), count, question_type, len(grounded_batch))
+            return grounded_batch[:count]
         except OllamaModelNotFoundError:
             logger.warning('Ollama model %s not found. Fast failover to fallback model...', model_tag)
             fallback_tag = None
@@ -708,6 +728,24 @@ def _save_generated_exam_questions(
     from api.models import Option
     from api.utils.options import clean_options_list, clean_option_text
 
+    if syllabus_text:
+        verified_candidates = []
+        for q in generated_questions:
+            ev = q.get('source_evidence') or ''
+            is_g = verify_grounding_evidence(ev, syllabus_text)
+            if not is_g:
+                q_words = [w for w in normalize_grounding_text(q.get('text', '')).split() if len(w) > 3]
+                if q_words:
+                    s_words = set(normalize_grounding_text(syllabus_text).split())
+                    is_g = (sum(1 for w in q_words if w in s_words) / len(q_words)) >= 0.35
+            if is_g or not ev:
+                q['source'] = 'ai_material'
+                verified_candidates.append(q)
+            else:
+                logger.warning("Scope audit dropped ungrounded question from final paper: %s", q.get('text', '')[:50])
+        if verified_candidates:
+            generated_questions = verified_candidates
+
     actual_total_marks = sum(to_decimal(q.get('marks', 1)) for q in generated_questions)
     target_marks_dec = to_decimal(target_marks)
     marks_shortfall = max(to_decimal(0), target_marks_dec - actual_total_marks)
@@ -746,6 +784,9 @@ def _save_generated_exam_questions(
                             f"{rubric_str}"
                         )
 
+                    doc_hash_val = generated_question.get('source_document_hash') or (
+                        hashlib.sha256(syllabus_text.encode('utf-8')).hexdigest() if syllabus_text else ''
+                    )
                     q_obj = Question.objects.create(
                         exam=exam,
                         institution=exam.institution,
@@ -762,7 +803,11 @@ def _save_generated_exam_questions(
                         accepted_answers=generated_question.get('accepted_answers') or [],
                         rubric=rubric_data,
                         word_limit=generated_question.get('word_limit'),
-                        source=generated_question.get('source', 'ai_generated'),
+                        source=generated_question.get('source', 'ai_material'),
+                        source_document_hash=doc_hash_val,
+                        source_chunk_id=generated_question.get('source_chunk_id', ''),
+                        source_evidence=generated_question.get('source_evidence', ''),
+                        source_location=generated_question.get('source_location') or generated_question.get('topic') or '',
                         marks=q_marks,
                         topic_text=generated_question.get('topic') or '',
                     )
@@ -793,7 +838,16 @@ def _save_generated_exam_questions(
                 exam.target_total_marks = target_marks_dec
                 exam.marks_shortfall = marks_shortfall
 
-                accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
+                if syllabus_text:
+                    accepted_topics = sorted(list({
+                        q.topic_text for q in exam.questions.filter(is_deleted=False)
+                        if q.topic_text and (
+                            re.sub(r'\s+', ' ', q.topic_text).lower() in re.sub(r'\s+', ' ', syllabus_text).lower() or
+                            any(w in syllabus_text.lower() for w in q.topic_text.lower().split() if len(w) > 4)
+                        )
+                    }))
+                else:
+                    accepted_topics = sorted(list({q.topic_text for q in exam.questions.filter(is_deleted=False) if q.topic_text}))
                 if accepted_topics:
                     exam.topics = accepted_topics
 
@@ -950,31 +1004,36 @@ def _run_generation(job_id, exam_id, model_name, topics, question_types, total_m
                 pass
 
         # --- TIER 0: QUESTION BANK REUSE (INSTANT, ZERO LLM CALLS) ---
-        for question_type, target_c in target_counts.items():
-            curr_c = get_accepted_counts().get(question_type, 0)
-            needed_c = target_c - curr_c
-            if needed_c <= 0:
-                continue
-            m_val = target_marks_per_type[question_type]
-            bank_candidates = QuestionBankService.get_reusable_questions(
-                institution_id=job.institution_id,
-                subject_id=job.exam.subject_id if hasattr(job.exam, 'subject_id') else None,
-                question_type=question_type,
-                difficulty='medium',
-                needed_count=needed_c,
-                exclude_exam_ids=recent_exam_ids,
-                expected_marks=m_val,
-            )
-            for bq in bank_candidates:
-                if get_accepted_counts().get(question_type, 0) >= target_c:
-                    break
-                is_dup, _ = dup_detector.is_duplicate(bq)
-                if not is_dup:
-                    dup_detector.add(bq)
-                    bq['type'] = question_type
-                    bq['marks'] = m_val
-                    generated_questions.append(bq)
-                    logger.info("Tier 0 Bank supplied question: %s", bq.get('text', '')[:40])
+        if syllabus_text and str(syllabus_text).strip():
+            logger.info("Exam has uploaded syllabus/material; bypassing Tier 0 Question Bank reuse to ensure paper is 100%% grounded in uploaded material.")
+        else:
+            resolved_subj_name = getattr(job.exam, 'subject', '') or ''
+            for question_type, target_c in target_counts.items():
+                curr_c = get_accepted_counts().get(question_type, 0)
+                needed_c = target_c - curr_c
+                if needed_c <= 0:
+                    continue
+                m_val = target_marks_per_type[question_type]
+                bank_candidates = QuestionBankService.get_reusable_questions(
+                    institution_id=job.institution_id,
+                    subject_id=job.exam.subject_id if hasattr(job.exam, 'subject_id') else None,
+                    subject_name=resolved_subj_name,
+                    question_type=question_type,
+                    difficulty='medium',
+                    needed_count=needed_c,
+                    exclude_exam_ids=recent_exam_ids,
+                    expected_marks=m_val,
+                )
+                for bq in bank_candidates:
+                    if get_accepted_counts().get(question_type, 0) >= target_c:
+                        break
+                    is_dup, _ = dup_detector.is_duplicate(bq)
+                    if not is_dup:
+                        dup_detector.add(bq)
+                        bq['type'] = question_type
+                        bq['marks'] = m_val
+                        generated_questions.append(bq)
+                        logger.info("Tier 0 Bank supplied question: %s", bq.get('text', '')[:40])
 
         # --- TIER 1: EXTRACTIVE GENERATOR (DETERMINISTIC, INSTANT, ZERO LLM CALLS) ---
         if syllabus_text:
@@ -1754,56 +1813,59 @@ class GeneratePaperView(APIView):
         from api.paper_engine.generator import generate_exam_paper
         from api.paper_engine.pool import PoolExhaustedError
 
-        # Fast path: in-memory / cached generation from Question Bank
-        try:
-            exam_data, from_cache = generate_exam_paper(
-                payload=engine_payload,
-                user=request.user,
-                tenant=tenant_inst,
-                force_regenerate=force_regenerate,
-                idempotency_key=idempotency_key,
-            )
-            return Response(
-                {
-                    'exam_id': exam_data['id'],
-                    'status': 'draft',
-                    'question_count': len(exam_data.get('questions', [])),
-                    'requested_total_marks': total_marks,
-                    'actual_total_marks': exam_data.get('total_marks', total_marks),
-                    'loaded_from_cache': from_cache,
-                    'validation_report': exam_data.get('validation_report'),
-                    'exam': exam_data,
-                },
-                status=status.HTTP_200_OK if from_cache else status.HTTP_201_CREATED,
-            )
-        except PoolExhaustedError as pool_err:
-            logger.info("Candidate pool exhausted for fast generation: %s. Checking AI fallback.", pool_err)
-            # If no AI model or syllabus provided, return clear 422 error immediately
-            if not model_name:
+        has_syllabus = bool(syllabus_file or (syllabus_text and syllabus_text.strip()))
+        if not has_syllabus:
+            # Fast path: in-memory / cached generation from Question Bank (ONLY when no syllabus uploaded)
+            try:
+                exam_data, from_cache = generate_exam_paper(
+                    payload=engine_payload,
+                    user=request.user,
+                    tenant=tenant_inst,
+                    force_regenerate=force_regenerate,
+                    idempotency_key=idempotency_key,
+                )
                 return Response(
                     {
-                        'detail': pool_err.message,
-                        'details': pool_err.details,
+                        'exam_id': exam_data['id'],
+                        'status': 'draft',
+                        'question_count': len(exam_data.get('questions', [])),
+                        'requested_total_marks': total_marks,
+                        'actual_total_marks': exam_data.get('total_marks', total_marks),
+                        'loaded_from_cache': from_cache,
+                        'validation_report': exam_data.get('validation_report'),
+                        'exam': exam_data,
                     },
-                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status=status.HTTP_200_OK if from_cache else status.HTTP_201_CREATED,
                 )
-        except ValueError as val_err:
-            logger.warning("Paper generation parameter validation error: %s", val_err)
-            return Response(
-                {'detail': str(val_err), 'code': 'INVALID_GENERATION_PARAMETERS'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception as exc:
-            req_id = uuid.uuid4().hex[:12]
-            logger.exception("Unexpected error generating exam paper [req_id=%s]: %s", req_id, exc)
-            return Response(
-                {
-                    'detail': f"An error occurred while generating the exam paper. Reference ID: {req_id}",
-                    'code': 'GENERATION_FAILED',
-                    'request_id': req_id,
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            except PoolExhaustedError as pool_err:
+                logger.info("Candidate pool exhausted for fast generation: %s. Checking AI fallback.", pool_err)
+                if not model_name:
+                    return Response(
+                        {
+                            'detail': pool_err.message,
+                            'details': pool_err.details,
+                        },
+                        status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    )
+            except ValueError as val_err:
+                logger.warning("Paper generation parameter validation error: %s", val_err)
+                return Response(
+                    {'detail': str(val_err), 'code': 'INVALID_GENERATION_PARAMETERS'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except Exception as exc:
+                req_id = uuid.uuid4().hex[:12]
+                logger.exception("Unexpected error generating exam paper [req_id=%s]: %s", req_id, exc)
+                return Response(
+                    {
+                        'detail': f"An error occurred while generating the exam paper. Reference ID: {req_id}",
+                        'code': 'GENERATION_FAILED',
+                        'request_id': req_id,
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+        else:
+            logger.info("Syllabus uploaded (%d chars); routing directly to grounded AI generation pipeline.", len(syllabus_text or ''))
 
         # Fallback to AI generation
         raw_subj = resolved_subject_name
@@ -2237,6 +2299,10 @@ class ScopeCheckView(APIView):
                 'marks': float(q.marks),
                 'topic': q.topic_text,
                 'text': q.text,
+                'source': q.source,
+                'source_evidence': q.source_evidence,
+                'source_document_hash': q.source_document_hash,
+                'source_location': q.source_location,
                 'in_scope': in_scope,
                 'is_off_scope': not in_scope,
                 'scope_status': 'in_scope' if in_scope else 'off_scope',

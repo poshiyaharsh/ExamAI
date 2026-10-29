@@ -243,7 +243,10 @@ def validate_and_fix_paper(data, expected_total_marks=None, default_marks=1):
             'word_limit': word_limit,
             'source_evidence': source_evidence,
             'needs_review': needs_review,
-            'source': 'ai_generated',
+            'source': raw_question.get('source') or 'ai_material',
+            'source_document_hash': raw_question.get('source_document_hash', ''),
+            'source_chunk_id': raw_question.get('source_chunk_id', ''),
+            'source_location': raw_question.get('source_location', ''),
         }
         valid_questions.append(question)
 
@@ -462,7 +465,7 @@ def audit_question_scope(question_obj, syllabus_text: str, selected_topics: list
         'grounding_verified': bool,
     }
     """
-    if getattr(question_obj, 'source', '') in ('manual', 'question_bank', 'faculty_upload'):
+    if getattr(question_obj, 'source', '') in ('manual', 'faculty_upload') or (getattr(question_obj, 'source', '') in ('question_bank', 'bank_import', 'bank') and not syllabus_text):
         return {
             'in_scope': True,
             'reason': 'Manually authored question (excluded from scope check)',
@@ -481,11 +484,12 @@ def audit_question_scope(question_obj, syllabus_text: str, selected_topics: list
         }
 
     text = getattr(question_obj, 'text', '') or ''
-    ev = ""
-    if "Source evidence:" in text:
-        ev = text.split("Source evidence:")[1].split("(")[0].strip("' \"")
-    elif "source evidence" in text.lower():
-        ev = text.lower().split("source evidence")[1].strip(": '\"")
+    ev = getattr(question_obj, 'source_evidence', '') or ''
+    if not ev:
+        if "Source evidence:" in text:
+            ev = text.split("Source evidence:")[1].split("(")[0].strip("' \"")
+        elif "source evidence" in text.lower():
+            ev = text.lower().split("source evidence")[1].strip(": '\"")
 
     grounded = verify_grounding_evidence(ev, syllabus_text) if ev else False
 

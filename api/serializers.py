@@ -93,6 +93,7 @@ class QuestionSerializer(serializers.ModelSerializer):
             'id', 'order', 'question_type', 'difficulty', 'text', 'options',
             'correct_answer', 'model_answer', 'accepted_answers', 'rubric',
             'word_limit', 'source', 'marks', 'topic',
+            'source_document_hash', 'source_chunk_id', 'source_evidence', 'source_location',
         )
         read_only_fields = ('id', 'order')
 
@@ -117,6 +118,7 @@ class FacultyQuestionSerializer(serializers.ModelSerializer):
             'id', 'order', 'question_type', 'difficulty', 'text', 'options',
             'correct_answer', 'model_answer', 'accepted_answers', 'rubric',
             'word_limit', 'source', 'marks', 'topic',
+            'source_document_hash', 'source_chunk_id', 'source_evidence', 'source_location',
         )
         read_only_fields = ('id', 'order')
 
@@ -221,6 +223,7 @@ class QuestionUpdateSerializer(serializers.ModelSerializer):
             'question_type', 'difficulty', 'text', 'options',
             'correct_answer', 'model_answer', 'accepted_answers', 'rubric',
             'word_limit', 'source', 'marks', 'topic',
+            'source_document_hash', 'source_chunk_id', 'source_evidence', 'source_location',
         )
 
     def update(self, instance, validated_data):
