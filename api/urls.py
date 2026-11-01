@@ -1,3 +1,10 @@
+from .generate_paper import (
+    GenerateMissingQuestionsView,
+    GeneratePaperView,
+    ParseSyllabusView,
+    RegenerateQuestionView,
+    ScopeCheckView,
+)
 from django.conf import settings
 from django.urls import include, path
 
@@ -107,6 +114,8 @@ urlpatterns = [
     path('admin/exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='api-admin-exam-live-roster'),
     path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
+    path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
+    path('faculty/exams/<int:exam_id>/generate-missing/', GenerateMissingQuestionsView.as_view(), name='faculty-exam-generate-missing'),
     path('notifications/popups/', NotificationPopupListView.as_view(), name='notification-popups'),
     path('notifications/dismiss-all-popups/', NotificationDismissAllPopupsView.as_view(), name='notification-dismiss-all-popups'),
     path('notifications/<int:notification_id>/dismiss-popup/', NotificationDismissPopupView.as_view(), name='notification-dismiss-popup'),
@@ -116,10 +125,12 @@ urlpatterns = [
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
     path('faculty/exams/<int:exam_id>/confirm-review/', ConfirmExamReviewView.as_view(), name='faculty-exam-confirm-review'),
+    path('faculty/exams/<int:exam_id>/scope-check/', ScopeCheckView.as_view(), name='faculty-exam-scope-check'),
     path('faculty/exams/<int:exam_id>/shuffle/', ShuffleExamView.as_view(), name='faculty-exam-shuffle'),
     path('faculty/exams/<int:exam_id>/questions/', ExamQuestionCreateView.as_view(), name='faculty-exam-question-create'),
     path('faculty/exams/<int:exam_id>/questions/reorder/', ReorderQuestionsView.as_view(), name='faculty-exam-questions-reorder'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/swap/', SwapQuestionView.as_view(), name='faculty-exam-question-swap'),
+    path('faculty/exams/<int:exam_id>/questions/<int:question_id>/regenerate/', RegenerateQuestionView.as_view(), name='faculty-question-regenerate'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
     path('faculty/exams/<int:exam_id>/adjust-marks/', AdjustMarksView.as_view(), name='faculty-exam-adjust-marks'),

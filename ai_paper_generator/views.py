@@ -532,8 +532,11 @@ class FacultySyllabusParseAPIView(APIView):
 
 
         if syllabus_file:
-
             suffix = os.path.splitext(fn)[1].lower()
+            if suffix not in ('.pdf', '.docx', '.doc', '.txt', '.pptx', '.ppt'):
+                return Response({'error': f"Unsupported syllabus file type '{suffix}'. Allowed: .pdf, .docx, .txt, .pptx", 'detail': 'Unsupported file type.'}, status=status.HTTP_400_BAD_REQUEST)
+            if getattr(syllabus_file, 'size', 0) > 50 * 1024 * 1024:
+                return Response({'error': f"Syllabus file '{fn}' exceeds the maximum allowed size of 50 MB.", 'detail': 'File exceeds size limit.'}, status=status.HTTP_400_BAD_REQUEST)
 
             tmp_path = None
 
@@ -681,7 +684,7 @@ class ActiveJobView(AIPaperGeneratorBaseAPIView):
 
         stale_filter = {
 
-            'created_at__lt': cutoff,
+            'updated_at__lt': cutoff,
 
             'status__in': ['pending', 'running', 'in_progress', 'generating']
 
@@ -900,10 +903,12 @@ class UploadMaterialsView(AIPaperGeneratorBaseAPIView):
 
 
         for f in uploaded_files:
-
-            # Save temporarily to extract text
-
             suffix = os.path.splitext(f.name)[1].lower()
+            if suffix not in ('.pdf', '.docx', '.doc', '.txt', '.pptx', '.ppt'):
+                return Response({'error': f"Unsupported file type '{suffix}'. Allowed: .pdf, .docx, .txt, .pptx"}, status=status.HTTP_400_BAD_REQUEST)
+            if getattr(f, 'size', 0) > 50 * 1024 * 1024:
+                return Response({'error': f"File '{f.name}' exceeds the maximum allowed size of 50 MB."}, status=status.HTTP_400_BAD_REQUEST)
+            # Save temporarily to extract text
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
 
@@ -1791,13 +1796,20 @@ class GenerationLogsView(AIPaperGeneratorBaseAPIView):
 
 
 
-        # Faculty isolation
-
+        # Faculty isolation / Permissions
         faculty = getattr(user, 'faculty_profile', None)
-
+        is_admin = (
+            user.is_staff
+            or user.is_superuser
+            or hasattr(user, 'admin_profile')
+            or hasattr(user, 'super_admin_profile')
+        )
         if faculty:
-
             qs = qs.filter(faculty=faculty)
+        elif is_admin:
+            pass
+        else:
+            return Response({'detail': 'Access denied. Faculty or Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
 
 
 

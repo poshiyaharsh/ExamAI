@@ -317,15 +317,16 @@ def _do_run_grouped_generation_job(job_id: int):
 
         # 3. Assemble validated questions or trigger repair
         validated_questions: List[Dict[str, Any]] = []
+        final_deduplicator = QuestionDeduplicator()
         for slot in blueprint:
             idx = slot['slot_index']
             q = rule_passed_items.get(idx)
             ai_ok = ai_verdicts.get(idx, True)
 
             if q and ai_ok:
-                is_dup, _ = deduplicator.is_duplicate(q)
+                is_dup, _ = final_deduplicator.is_duplicate(q)
                 if not is_dup:
-                    deduplicator.add(q)
+                    final_deduplicator.add(q)
                     validated_questions.append(q)
                     items_first_pass += 1
                     continue
