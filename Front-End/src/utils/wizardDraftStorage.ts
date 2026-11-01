@@ -1,6 +1,14 @@
 /**
  * Utilities for scoping, validating, and persisting Faculty Paper Generator wizard drafts.
+ * Supports localStorage per faculty user ID + remote server draft sync.
  */
+
+export interface UploadedFileItem {
+  name: string;
+  size: number;
+  type?: string;
+  uploadedAt?: string;
+}
 
 export interface WizardDraftData {
   version: number;
@@ -11,6 +19,8 @@ export interface WizardDraftData {
   currentStep: 1 | 2 | 3 | 4;
   examTitle: string;
   subjectName: string;
+  classSemester?: string;
+  examType?: string;
   duration: string;
   totalMarks: string;
   startsAt: string;
@@ -20,13 +30,21 @@ export interface WizardDraftData {
   blueprint?: any;
   difficultyMode?: "mixed" | "easy" | "medium" | "hard";
   difficultyMix?: { easy: number; medium: number; hard: number };
+  aiModel?: string;
+  selectedModels?: { generator?: string; validator?: string; fallback?: string };
+  selectedMaterialIds?: number[];
+  uploadedFilesList?: UploadedFileItem[];
+  parsedSyllabus?: any;
+  questions?: any[];
+  language?: string;
+  includeAnswerKey?: boolean;
 }
 
-const WIZARD_DRAFT_VERSION = 3;
+const WIZARD_DRAFT_VERSION = 4;
 const LEGACY_STORAGE_KEYS = [
   "examai_faculty_wizard_draft",
 ];
-const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours TTL
+const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days TTL
 
 export function formatLocalDateTime(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -64,7 +82,7 @@ export function getScopedDraftKey(userId?: number | string | null, draftId?: str
 }
 
 /**
- * Cleanup legacy unscoped or expired draft keys to prevent cross-exam pollution.
+ * Cleanup legacy unscoped draft keys to prevent cross-exam pollution.
  */
 export function cleanupLegacyDrafts(): void {
   try {
@@ -82,7 +100,7 @@ export function cleanupLegacyDrafts(): void {
 
 /**
  * Validates and loads a saved draft for the given user.
- * Discards expired, corrupted, schema-invalid, or mismatched document drafts.
+ * Tolerantly handles corrupted or outdated schema drafts without crashing.
  */
 export function loadScopedWizardDraft(
   userId?: number | string | null,
@@ -98,20 +116,19 @@ export function loadScopedWizardDraft(
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      parsed.version !== WIZARD_DRAFT_VERSION ||
-      String(parsed.ownerId) !== String(userId)
-    ) {
-      // Version mismatch or invalid owner: discard
+    if (!parsed || typeof parsed !== "object") {
       localStorage.removeItem(key);
       return null;
     }
 
-    // Check expiration TTL
+    // Owner check: if present and mismatched, discard to avoid account leakage
+    if (parsed.ownerId && String(parsed.ownerId) !== String(userId)) {
+      return null;
+    }
+
+    // Check expiration TTL (7 days)
     const updatedTime = new Date(parsed.updatedAt || 0).getTime();
-    if (isNaN(updatedTime) || Date.now() - updatedTime > DRAFT_MAX_AGE_MS) {
+    if (!isNaN(updatedTime) && Date.now() - updatedTime > DRAFT_MAX_AGE_MS) {
       localStorage.removeItem(key);
       return null;
     }
@@ -122,8 +139,37 @@ export function loadScopedWizardDraft(
       return null;
     }
 
-    return parsed as WizardDraftData;
-  } catch {
+    return {
+      version: WIZARD_DRAFT_VERSION,
+      ownerId: userId,
+      draftId: draftId || parsed.draftId,
+      documentHash: parsed.documentHash,
+      updatedAt: parsed.updatedAt || new Date().toISOString(),
+      currentStep: (parsed.currentStep >= 1 && parsed.currentStep <= 4) ? parsed.currentStep : 1,
+      examTitle: typeof parsed.examTitle === "string" ? parsed.examTitle : "",
+      subjectName: typeof parsed.subjectName === "string" ? parsed.subjectName : "",
+      classSemester: typeof parsed.classSemester === "string" ? parsed.classSemester : "",
+      examType: typeof parsed.examType === "string" ? parsed.examType : "Final Examination",
+      duration: typeof parsed.duration === "string" ? parsed.duration : "60",
+      totalMarks: typeof parsed.totalMarks === "string" ? parsed.totalMarks : "50",
+      startsAt: typeof parsed.startsAt === "string" ? parsed.startsAt : "",
+      endsAt: typeof parsed.endsAt === "string" ? parsed.endsAt : "",
+      topics: Array.isArray(parsed.topics) ? parsed.topics : [],
+      examId: parsed.examId || null,
+      blueprint: parsed.blueprint || undefined,
+      difficultyMode: parsed.difficultyMode || "mixed",
+      difficultyMix: parsed.difficultyMix || { easy: 30, medium: 50, hard: 20 },
+      aiModel: parsed.aiModel,
+      selectedModels: parsed.selectedModels,
+      selectedMaterialIds: Array.isArray(parsed.selectedMaterialIds) ? parsed.selectedMaterialIds : [],
+      uploadedFilesList: Array.isArray(parsed.uploadedFilesList) ? parsed.uploadedFilesList : [],
+      parsedSyllabus: parsed.parsedSyllabus || null,
+      questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+      language: parsed.language || "English",
+      includeAnswerKey: parsed.includeAnswerKey ?? true,
+    };
+  } catch (err) {
+    console.warn("Failed to parse stored wizard draft:", err);
     return null;
   }
 }
@@ -161,7 +207,6 @@ export function clearScopedWizardDraft(userId?: number | string | null, draftId?
   try {
     const key = getScopedDraftKey(userId, draftId);
     localStorage.removeItem(key);
-    // Also remove default un-suffixed key if draftId provided
     if (draftId) {
       localStorage.removeItem(getScopedDraftKey(userId));
     }

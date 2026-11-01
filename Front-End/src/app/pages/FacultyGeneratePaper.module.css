@@ -1,0 +1,212 @@
+/**
+ * Scoped Design Tokens & Styles for Faculty Paper Generation (AI)
+ * All classes prefixed with `aipg-` to prevent leakage into other modules.
+ */
+
+:root {
+  --aipg-primary: #4f46e5;
+  --aipg-primary-hover: #4338ca;
+  --aipg-primary-subtle: #eef2ff;
+  --aipg-surface: #ffffff;
+  --aipg-surface-alt: #f8fafc;
+  --aipg-surface-card: #ffffff;
+  --aipg-border: #e2e8f0;
+  --aipg-border-hover: #cbd5e1;
+  --aipg-text: #0f172a;
+  --aipg-text-secondary: #334155;
+  --aipg-muted: #64748b;
+  --aipg-success: #10b981;
+  --aipg-success-subtle: #ecfdf5;
+  --aipg-warning: #f59e0b;
+  --aipg-warning-subtle: #fffbeb;
+  --aipg-danger: #ef4444;
+  --aipg-danger-subtle: #fef2f2;
+  
+  /* Spacing Scale */
+  --aipg-space-1: 4px;
+  --aipg-space-2: 8px;
+  --aipg-space-3: 12px;
+  --aipg-space-4: 16px;
+  --aipg-space-6: 24px;
+  --aipg-space-8: 32px;
+
+  /* Radius Scale */
+  --aipg-radius-sm: 8px;
+  --aipg-radius-md: 12px;
+  --aipg-radius-lg: 16px;
+  --aipg-radius-full: 9999px;
+
+  /* Shadows */
+  --aipg-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --aipg-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --aipg-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Transitions */
+  --aipg-transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-Index Scale */
+  --aipg-z-normal: 1;
+  --aipg-z-sticky: 30;
+  --aipg-z-backdrop: 40;
+  --aipg-z-modal: 50;
+  --aipg-z-toast: 60;
+}
+
+/* Dark mode overrides */
+.dark :root, :global(.dark) {
+  --aipg-surface: #1e293b;
+  --aipg-surface-alt: #0f172a;
+  --aipg-surface-card: #1e293b;
+  --aipg-border: #334155;
+  --aipg-border-hover: #475569;
+  --aipg-text: #f8fafc;
+  --aipg-text-secondary: #cbd5e1;
+  --aipg-muted: #94a3b8;
+  --aipg-primary-subtle: rgba(79, 70, 229, 0.15);
+  --aipg-success-subtle: rgba(16, 185, 129, 0.15);
+  --aipg-warning-subtle: rgba(245, 158, 11, 0.15);
+  --aipg-danger-subtle: rgba(239, 68, 68, 0.15);
+}
+
+/* Base Wrapper */
+.aipg-wrapper {
+  color: var(--aipg-text);
+  transition: var(--aipg-transition);
+}
+
+/* Card Surface */
+.aipg-card {
+  background-color: var(--aipg-surface-card);
+  border: 1px solid var(--aipg-border);
+  border-radius: var(--aipg-radius-lg);
+  box-shadow: var(--aipg-shadow-sm);
+  transition: var(--aipg-transition);
+}
+
+.aipg-card:hover {
+  border-color: var(--aipg-border-hover);
+}
+
+/* Stepper Component */
+.aipg-stepper-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aipg-space-2);
+}
+
+.aipg-step-item {
+  display: flex;
+  align-items: center;
+  gap: var(--aipg-space-3);
+  padding: var(--aipg-space-3) var(--aipg-space-4);
+  border-radius: var(--aipg-radius-md);
+  transition: var(--aipg-transition);
+}
+
+/* Drag and Drop Zone */
+.aipg-dropzone {
+  border: 2px dashed var(--aipg-border);
+  border-radius: var(--aipg-radius-lg);
+  padding: var(--aipg-space-8) var(--aipg-space-4);
+  text-align: center;
+  background-color: var(--aipg-surface-alt);
+  transition: var(--aipg-transition);
+  cursor: pointer;
+}
+
+.aipg-dropzone:hover, .aipg-dropzone:focus-within {
+  border-color: var(--aipg-primary);
+  background-color: var(--aipg-primary-subtle);
+}
+
+/* Blueprint Row Card */
+.aipg-blueprint-row {
+  border: 1px solid var(--aipg-border);
+  border-radius: var(--aipg-radius-md);
+  padding: var(--aipg-space-4);
+  background-color: var(--aipg-surface);
+  transition: var(--aipg-transition);
+}
+
+.aipg-blueprint-row:hover {
+  box-shadow: var(--aipg-shadow-sm);
+  border-color: var(--aipg-border-hover);
+}
+
+.aipg-blueprint-row-active {
+  border-color: var(--aipg-border-hover);
+  background-color: var(--aipg-surface-alt);
+}
+
+/* Sticky Summary Panel (Desktop Right Column & Mobile Sticky Bar) */
+.aipg-summary-panel {
+  background-color: var(--aipg-surface-card);
+  border: 1px solid var(--aipg-border);
+  border-radius: var(--aipg-radius-lg);
+  padding: var(--aipg-space-6);
+  box-shadow: var(--aipg-shadow-md);
+  transition: var(--aipg-transition);
+}
+
+/* Progress Ring / Bar */
+.aipg-progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  background-color: var(--aipg-border);
+  border-radius: var(--aipg-radius-full);
+  overflow: hidden;
+}
+
+.aipg-progress-bar-fill {
+  height: 100%;
+  border-radius: var(--aipg-radius-full);
+  transition: width 300ms ease-out, background-color 200ms ease;
+}
+
+/* Question Review Card */
+.aipg-question-card {
+  border: 1px solid var(--aipg-border);
+  border-radius: var(--aipg-radius-md);
+  padding: var(--aipg-space-4);
+  background-color: var(--aipg-surface);
+  transition: var(--aipg-transition);
+}
+
+.aipg-question-card:hover {
+  box-shadow: var(--aipg-shadow-sm);
+  border-color: var(--aipg-border-hover);
+}
+
+/* Option Highlights */
+.aipg-option-correct {
+  background-color: var(--aipg-success-subtle);
+  border: 1.5px solid var(--aipg-success);
+  color: #065f46;
+}
+
+.aipg-option-neutral {
+  background-color: var(--aipg-surface-alt);
+  border: 1px solid var(--aipg-border);
+  color: var(--aipg-text-secondary);
+}
+
+/* Accessibility: Focus rings */
+.aipg-focus-ring:focus-visible {
+  outline: 2px solid var(--aipg-primary);
+  outline-offset: 2px;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .aipg-wrapper,
+  .aipg-card,
+  .aipg-dropzone,
+  .aipg-blueprint-row,
+  .aipg-summary-panel,
+  .aipg-progress-bar-fill,
+  .aipg-question-card {
+    transition: none !important;
+    animation: none !important;
+  }
+}

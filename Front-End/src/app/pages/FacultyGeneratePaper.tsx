@@ -2,6 +2,7 @@ import axios from "axios";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "../components/DashboardLayout";
+import styles from "./FacultyGeneratePaper.module.css";
 import {
   AlertCircle,
   AlertTriangle,
@@ -49,6 +50,12 @@ import {
 import { toast } from "sonner";
 import { GenerationProgressModal } from "../components/GenerationProgressModal";
 import {
+  AI_QUESTION_TYPE_LABELS,
+  aiQuestionTypeLabels,
+  getQuestionTypeBackendName,
+  FRESH_START,
+} from "../../constants/aiGenerator";
+import {
   facultyExamApi,
   facultyPaperApi,
   facultyProfileApi,
@@ -63,6 +70,7 @@ import {
   type SyllabusUploadData,
   facultySubjectApi,
   facultyStudyMaterialApi,
+  paperDraftApi,
   type FacultySubject,
   type FacultyStudyMaterial,
 } from "../../services/api";
@@ -82,11 +90,19 @@ const menuItems = [
   { icon: Settings, label: "Settings", path: "/faculty/settings" },
 ];
 
-const aiModels: string[] = ["qwen2.5:3b-instruct", "llama3.2:3b", "phi3:mini"];
+const aiModels: string[] = [
+  "qwen3:4b",
+  "granite3.3:2b",
+  "llama3.2:3b",
+  "phi3:mini",
+  "gemma3:4b",
+];
 const aiModelLabels: Record<string, string> = {
-  "qwen2.5:3b-instruct": "Qwen 2.5 3B (Primary - Local)",
-  "llama3.2:3b": "Llama 3.2 3B (Local)",
-  "phi3:mini": "Phi-3 Mini (Local)",
+  "qwen3:4b": "Qwen 3 4B (Primary / MCQ Generator)",
+  "granite3.3:2b": "Granite 3.3 2B (Fast Generator - T/F & Fill)",
+  "llama3.2:3b": "Llama 3.2 3B (Answer Writer - Short/Long)",
+  "phi3:mini": "Phi-3 Mini (Academic Validator)",
+  "gemma3:4b": "Gemma 3 4B (Fallback Engine)",
 };
 
 import {
@@ -150,8 +166,14 @@ function extractApiErrorMessage(error: unknown, fallback: string) {
   if (data && typeof data === "object" && "message" in data && typeof data.message === "string") {
     return data.message;
   }
+  if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+    return data.error;
+  }
   return fallback;
 }
+
+const AI_MODELS_CACHE_KEY = "examai_faculty_ai_models_cache";
+const AI_MODELS_CACHE_TTL_MS = 30000; // 30 seconds cache
 
 export function FacultyGeneratePaper() {
   const navigate = useNavigate();
@@ -178,7 +200,11 @@ export function FacultyGeneratePaper() {
   const [subjectMaterials, setSubjectMaterials] = useState<FacultyStudyMaterial[]>([]);
   const [loadingMaterials, setLoadingMaterials] = useState(false);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
+  const [uploadedFilesList, setUploadedFilesList] = useState<Array<{ name: string; size: number; uploadedAt?: string }>>([]);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
+  const [uploadPurpose, setUploadPurpose] = useState<"syllabus" | "material">("syllabus");
+  const [isDraggingUpload, setIsDraggingUpload] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Step 1: Details (Always start clean)
   const [examTitle, setExamTitle] = useState("");
@@ -240,7 +266,20 @@ export function FacultyGeneratePaper() {
   >([]);
   const [isOllamaDown, setIsOllamaDown] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-  const [aiModel, setAiModel] = useState<string>("qwen2.5:3b-instruct");
+  const [formFieldErrors, setFormFieldErrors] = useState<Record<string, string>>({});
+  const [aiModel, setAiModel] = useState<string>("qwen3:4b");
+  const [lastCompletedJobId, setLastCompletedJobId] = useState<number | null>(null);
+  const [modelRoles, setModelRoles] = useState<Record<string, string>>({
+    mcq_generator: "qwen3:4b",
+    fast_generator: "granite3.3:2b",
+    answer_writer: "llama3.2:3b",
+    validator: "phi3:mini",
+    fallback: "gemma3:4b",
+  });
+  const [showAdvancedModelSettings, setShowAdvancedModelSettings] = useState(true);
+  const [isRegeneratingSlot, setIsRegeneratingSlot] = useState<number | null>(null);
+  const [isCompactView, setIsCompactView] = useState(false);
+  const [previewShuffledOptions, setPreviewShuffledOptions] = useState(false);
   const [syllabusFile, setSyllabusFile] = useState<File | null>(null);
   const [parsedSyllabus, setParsedSyllabus] = useState<{
     filename: string;
@@ -438,8 +477,45 @@ export function FacultyGeneratePaper() {
       .catch(() => {});
   }, []);
 
-  const fetchInstalledAiModels = async () => {
+  const isFetchingModelsRef = useRef(false);
+  const lastFetchTimestampRef = useRef<number>(0);
+
+  const fetchInstalledAiModels = async (forceRefresh = false) => {
+    // 1. In-flight guard: prevent duplicate concurrent calls
+    if (isFetchingModelsRef.current) return;
+
+    const now = Date.now();
+    // 2. Minimum interval guard: at least 5s between network calls unless forceRefresh
+    if (!forceRefresh && (now - lastFetchTimestampRef.current < 5000)) {
+      return;
+    }
+
+    // 3. Cache check: use 30s session cache if available
+    if (!forceRefresh) {
+      try {
+        const cachedRaw = sessionStorage.getItem(AI_MODELS_CACHE_KEY);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && (now - cached.timestamp < AI_MODELS_CACHE_TTL_MS) && cached.data) {
+            const res = cached.data;
+            if (res.models && res.models.length > 0) {
+              setModelMetadata(res.models);
+              const tags = res.models.map((m: any) => m.name);
+              setAvailableModels(tags);
+              setIsOllamaDown(!res.ollama_online);
+              return;
+            }
+          }
+        }
+      } catch {
+        // Ignore cache read error
+      }
+    }
+
+    isFetchingModelsRef.current = true;
+    lastFetchTimestampRef.current = now;
     setIsFetchingModels(true);
+
     try {
       const res = await facultyPaperApi.getAiModels();
       if (res.models && res.models.length > 0) {
@@ -453,17 +529,30 @@ export function FacultyGeneratePaper() {
         } else if (!tags.includes(aiModel)) {
           setAiModel(tags[0]);
         }
+        try {
+          sessionStorage.setItem(
+            AI_MODELS_CACHE_KEY,
+            JSON.stringify({ data: res, timestamp: Date.now() })
+          );
+        } catch {}
       } else {
         setAvailableModels([]);
         setModelMetadata([]);
         setIsOllamaDown(true);
+        if (forceRefresh) {
+          toast.warning("Ollama is offline or no models found.");
+        }
       }
-    } catch {
+    } catch (err: any) {
       setAvailableModels([]);
       setModelMetadata([]);
       setIsOllamaDown(true);
+      if (forceRefresh) {
+        toast.error(extractApiErrorMessage(err, "Failed to connect to Ollama."));
+      }
     } finally {
       setIsFetchingModels(false);
+      isFetchingModelsRef.current = false;
     }
   };
 
@@ -472,41 +561,102 @@ export function FacultyGeneratePaper() {
     fetchInstalledAiModels();
   }, []);
 
-  // Check for saved scoped draft on mount
-  useEffect(() => {
-    if (!currentUser?.id) return;
-    const draft = loadScopedWizardDraft(currentUser.id);
-    if (
-      draft &&
-      (draft.examTitle?.trim() ||
-        draft.subjectName?.trim() ||
-        (draft.topics && draft.topics.some((t) => t.trim())) ||
-        draft.examId)
-    ) {
-      setDetectedDraft(draft);
-      setShowDraftBanner(true);
+  // Tolerant and immediate draft restoration on mount
+  const applyDraft = useCallback((draft: any) => {
+    if (!draft) return;
+    if (draft.examTitle) setExamTitle(draft.examTitle);
+    if (draft.subjectName) setSubjectName(draft.subjectName);
+    if (draft.duration) setDuration(draft.duration);
+    if (draft.totalMarks) setTotalMarks(draft.totalMarks);
+    if (Array.isArray(draft.topics) && draft.topics.length > 0) setTopics(draft.topics);
+    if (draft.examId) setExamId(draft.examId);
+    if (draft.blueprint) {
+      setBlueprint(draft.blueprint);
+      try { localStorage.setItem("examai_faculty_blueprint_customized", "true"); } catch {}
     }
-  }, [currentUser?.id]);
+    if (draft.difficultyMode) setDifficultyMode(draft.difficultyMode);
+    if (draft.difficultyMix) setDifficultyMix(draft.difficultyMix);
+    if (draft.aiModel) setAiModel(draft.aiModel);
+    if (Array.isArray(draft.selectedMaterialIds)) setSelectedMaterialIds(draft.selectedMaterialIds);
+    if (Array.isArray(draft.uploadedFilesList)) setUploadedFilesList(draft.uploadedFilesList);
+    if (draft.parsedSyllabus) setParsedSyllabus(draft.parsedSyllabus);
+    if (draft.currentStep && draft.currentStep >= 1 && draft.currentStep <= 4) {
+      setCurrentStep(draft.currentStep);
+    }
+    if (draft.startsAt) {
+      const s = new Date(draft.startsAt).getTime();
+      if (!isNaN(s) && s >= Date.now()) {
+        setStartsAt(draft.startsAt);
+        setEndsAt(draft.endsAt || "");
+      }
+    }
+    setDetectedDraft(draft);
+    setShowDraftBanner(true);
+  }, []);
 
-  // Autosave wizard inputs scoped to authenticated user only when user has actively edited
+  // Check and immediately restore saved scoped draft on mount (Guarded by FRESH_START)
   useEffect(() => {
-    if (!isDirty || !currentUser?.id) return;
-    saveScopedWizardDraft(currentUser.id, {
-      currentStep,
-      examTitle,
-      subjectName,
-      duration,
-      totalMarks,
-      startsAt,
-      endsAt,
-      topics,
-      examId,
-      blueprint,
-      difficultyMode,
-      difficultyMix,
-    });
+    if (!FRESH_START.restoreDraft) {
+      // Execute fresh-start cleanup on mount: clear local draft and blueprint keys, and call clearDraft
+      try {
+        clearScopedWizardDraft(currentUser?.id);
+        paperDraftApi.clearDraft().catch(() => {});
+        localStorage.removeItem("examai_faculty_blueprint");
+        localStorage.removeItem("examai_faculty_blueprint_customized");
+        sessionStorage.removeItem("examai_faculty_blueprint");
+      } catch {}
+      return;
+    }
+    if (!currentUser?.id) return;
+    const localDraft = loadScopedWizardDraft(currentUser.id);
+    if (localDraft) {
+      applyDraft(localDraft);
+    } else {
+      paperDraftApi
+        .getDraft()
+        .then((res) => {
+          if (res?.draft) {
+            applyDraft(res.draft);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentUser?.id, applyDraft]);
+
+  // Debounced autosave (500ms) to localStorage + remote server (Guarded by FRESH_START)
+  useEffect(() => {
+    if (!FRESH_START.autosaveDraft) return;
+    if (!currentUser?.id) return;
+    // Don't overwrite an existing draft with a completely blank initial mount
+    if (!examTitle.trim() && !subjectName.trim() && topics.length === 0 && !examId && uploadedFilesList.length === 0) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const payload = {
+        currentStep,
+        examTitle,
+        subjectName,
+        duration,
+        totalMarks,
+        startsAt,
+        endsAt,
+        topics,
+        examId,
+        blueprint,
+        difficultyMode,
+        difficultyMix,
+        aiModel,
+        selectedMaterialIds,
+        uploadedFilesList,
+        parsedSyllabus,
+      };
+      saveScopedWizardDraft(currentUser.id, payload);
+      paperDraftApi.saveDraft(payload).catch(() => {});
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, [
-    isDirty,
     currentUser?.id,
     currentStep,
     examTitle,
@@ -520,6 +670,10 @@ export function FacultyGeneratePaper() {
     blueprint,
     difficultyMode,
     difficultyMix,
+    aiModel,
+    selectedMaterialIds,
+    uploadedFilesList,
+    parsedSyllabus,
   ]);
 
   // Fetch Faculty Profile to Lock Department
@@ -692,9 +846,47 @@ export function FacultyGeneratePaper() {
     return tokens.some((w) => pLower.includes(w));
   };
 
+  const handleFileDispatch = async (files: FileList | File[] | null, forcedPurpose?: "syllabus" | "material") => {
+    if (!files) return;
+    const targetPurpose = forcedPurpose || uploadPurpose;
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    const allowedExtensions = [".pdf", ".docx", ".doc", ".txt", ".pptx"];
+    const maxSizeBytes = 25 * 1024 * 1024; // 25 MB
+
+    try {
+      for (const file of fileArray) {
+        const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
+        if (!allowedExtensions.includes(ext)) {
+          toast.error(`"${file.name}" is not supported. Please upload PDF, DOCX, PPTX, or TXT.`);
+          continue;
+        }
+        if (file.size > maxSizeBytes) {
+          toast.error(`"${file.name}" exceeds the 25 MB file size limit.`);
+          continue;
+        }
+
+        if (targetPurpose === "syllabus") {
+          await handleSyllabusFileSelected(file);
+          break; // Syllabus accepts one file
+        } else {
+          await handleUploadSubjectMaterial(file);
+        }
+      }
+    } catch (err: any) {
+      toast.error(extractApiErrorMessage(err, "File upload encountered an issue."));
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
   const handleRemoveSyllabusFile = () => {
     setSyllabusFile(null);
     setParsedSyllabus(null);
+    setUploadedFilesList([]);
     setTopics([]);
     setIsDirty(true);
     toast.info("Syllabus document removed and scope topics cleared.");
@@ -702,6 +894,10 @@ export function FacultyGeneratePaper() {
 
   const handleSyllabusFileSelected = async (file: File) => {
     setSyllabusFile(file);
+    setUploadedFilesList(prev => {
+      const filtered = prev.filter(f => f.name !== file.name);
+      return [...filtered, { name: file.name, size: file.size, uploadedAt: new Date().toLocaleTimeString() }];
+    });
     setIsParsingSyllabus(true);
     try {
       const res = await facultyPaperApi.parseSyllabus(file);
@@ -822,11 +1018,28 @@ export function FacultyGeneratePaper() {
   };
 
   const handleDiscardDraft = () => {
-    if (window.confirm("Are you sure you want to discard this saved draft?")) {
+    if (window.confirm("Are you sure you want to discard this saved draft and reset all fields?")) {
       clearScopedWizardDraft(currentUser?.id);
+      paperDraftApi.clearDraft().catch(() => {});
       setDetectedDraft(null);
       setShowDraftBanner(false);
-      toast.success("Saved draft discarded.");
+      const nextSched = getNextRoundScheduleWindow();
+      setExamTitle("");
+      setSubjectName("");
+      setDuration("60");
+      setTotalMarks("50");
+      setStartsAt(nextSched.startsAt);
+      setEndsAt(nextSched.endsAt);
+      setTopics([]);
+      setSyllabusFile(null);
+      setParsedSyllabus(null);
+      setUploadedFilesList([]);
+      setSelectedMaterialIds([]);
+      setQuestions([]);
+      setExamId(null);
+      setCurrentStep(1);
+      setIsDirty(false);
+      toast.success("Draft discarded. Started fresh exam form.");
     }
   };
 
@@ -836,15 +1049,18 @@ export function FacultyGeneratePaper() {
       setExamTitle("");
       setSubjectName("");
       setDuration("60");
-      setTotalMarks("100");
+      setTotalMarks("50");
       setStartsAt(nextSched.startsAt);
       setEndsAt(nextSched.endsAt);
       setTopics([]);
       setSyllabusFile(null);
       setParsedSyllabus(null);
+      setUploadedFilesList([]);
+      setSelectedMaterialIds([]);
       setQuestions([]);
       setExamId(null);
       clearScopedWizardDraft(currentUser?.id);
+      paperDraftApi.clearDraft().catch(() => {});
       setDetectedDraft(null);
       setShowDraftBanner(false);
       setIsDirty(false);
@@ -890,6 +1106,64 @@ export function FacultyGeneratePaper() {
     setCurrentStep(2);
   };
 
+  // Central Generate Button State & Validation
+  const activeSectionsCount = useMemo(() => {
+    return (Object.keys(blueprint) as (keyof BlueprintState)[]).filter(
+      (k) => blueprint[k].enabled && Number(blueprint[k].count) > 0
+    ).length;
+  }, [blueprint]);
+
+  const generateButtonStatus = useMemo(() => {
+    const isSubjectSelected = Boolean(subjectName?.trim());
+    const hasSyllabusOrMaterial = Boolean(
+      syllabusFile ||
+      uploadedFilesList.length > 0 ||
+      (parsedSyllabus && parsedSyllabus.filename) ||
+      cleanTopics.length > 0 ||
+      selectedMaterialIds.length > 0
+    );
+    const hasSections = activeSectionsCount > 0;
+    const marksMatch = blueprintSummary.blueprintMarks === targetMarksNum && targetMarksNum > 0;
+    const notRunning = !isGenerating && !activeJobId;
+
+    const canClick = isSubjectSelected && hasSyllabusOrMaterial && hasSections && marksMatch && notRunning;
+
+    let hint = "";
+    if (!isSubjectSelected) {
+      hint = "Please enter or select a Subject / Course name in Step 1";
+    } else if (!hasSyllabusOrMaterial) {
+      hint = "Upload a syllabus or reference material";
+    } else if (!hasSections) {
+      hint = "Enable at least one question section in the blueprint";
+    } else if (!marksMatch) {
+      hint = `Allocated ${blueprintSummary.blueprintMarks} / ${targetMarksNum} marks (must match target exactly)`;
+    } else if (!notRunning) {
+      hint = "Generation is currently in progress...";
+    }
+
+    return {
+      canClick,
+      hint,
+      isSubjectSelected,
+      hasSyllabusOrMaterial,
+      hasSections,
+      marksMatch,
+      notRunning,
+    };
+  }, [
+    subjectName,
+    syllabusFile,
+    uploadedFilesList.length,
+    parsedSyllabus,
+    cleanTopics.length,
+    selectedMaterialIds.length,
+    activeSectionsCount,
+    blueprintSummary.blueprintMarks,
+    targetMarksNum,
+    isGenerating,
+    activeJobId,
+  ]);
+
   // AI Generation in Step 2
   const handleAiGenerate = async (overrideCapacity = false) => {
     if (!examTitle.trim()) {
@@ -922,8 +1196,15 @@ export function FacultyGeneratePaper() {
       }
     });
 
-    if (activeTypes.length === 0) {
-      toast.error("Please enable and configure at least one question type in the blueprint.");
+    const sectionsArray = Object.entries(activeBlueprint).map(([typeKey, cfg]) => ({
+      type: getQuestionTypeBackendName(typeKey),
+      count: cfg.count,
+      marks_per_question: cfg.marks,
+      section_name: AI_QUESTION_TYPE_LABELS[typeKey] || typeKey,
+    }));
+
+    if (sectionsArray.length === 0) {
+      toast.error("Please enable and configure at least one question section with count > 0 in the blueprint.");
       return;
     }
 
@@ -943,10 +1224,10 @@ export function FacultyGeneratePaper() {
 
     setIsGenerating(true);
     setGenerationProgress(25);
-    clearScopedWizardDraft(currentUser?.id);
 
     try {
       setGenerationProgress(50);
+      setFormFieldErrors({});
       const res = await facultyPaperApi.generateExam({
         title: examTitle.trim(),
         durationMinutes: Number(duration),
@@ -955,7 +1236,9 @@ export function FacultyGeneratePaper() {
         questionTypes: activeTypes,
         difficultyDistribution: diffDistribution,
         blueprint: activeBlueprint,
+        sections: sectionsArray,
         aiModel,
+        model_roles: modelRoles,
         syllabus: syllabusFile,
         avoidRepeats,
         subject: subjectName.trim() || undefined,
@@ -984,6 +1267,18 @@ export function FacultyGeneratePaper() {
         }
       }
     } catch (err: any) {
+      if (err?.response?.status === 400 && err?.response?.data?.fields) {
+        const rawFields = err.response.data.fields;
+        const normalizedFields: Record<string, string> = {};
+        for (const [k, v] of Object.entries(rawFields)) {
+          if (Array.isArray(v) && v.length > 0) {
+            normalizedFields[k] = String(v[0]);
+          } else if (typeof v === "string") {
+            normalizedFields[k] = v;
+          }
+        }
+        setFormFieldErrors(normalizedFields);
+      }
       if (err?.response?.status === 409 && err?.response?.data?.error_code === 'CONTENT_CAPACITY_EXCEEDED') {
         setCapacityAdvisory(err.response.data);
       } else if (err?.response?.status === 409 && err?.response?.data?.active_job_id) {
@@ -998,7 +1293,62 @@ export function FacultyGeneratePaper() {
     }
   };
 
+  const handleRegenerateQuestion = async (index: number) => {
+    const targetJobId = activeJobId || lastCompletedJobId;
+    if (!targetJobId) {
+      toast.info("Regeneration is available after AI generation starts.");
+      return;
+    }
+    const qNumber = index + 1;
+    setIsRegeneratingSlot(index);
+    try {
+      const res = await generationApi.regenerateQuestion(targetJobId, qNumber);
+      if (res && res.question) {
+        setQuestions((prev) => {
+          const updated = [...prev];
+          updated[index] = {
+            ...updated[index],
+            text: res.question.text,
+            options: res.question.options || updated[index].options,
+            correct_answer: res.question.correct_answer || updated[index].correct_answer,
+            model_answer: res.question.explanation || res.question.model_answer || (updated[index] as any).model_answer,
+            rubric: res.question.rubric || updated[index].rubric,
+          };
+          return updated;
+        });
+        toast.success(`Question #${qNumber} regenerated successfully!`);
+      }
+    } catch (err: any) {
+      toast.error(extractApiErrorMessage(err, "Failed to regenerate question."));
+    } finally {
+      setIsRegeneratingSlot(null);
+    }
+  };
+
+  const handleExportPdf = () => {
+    const jobId = activeJobId || lastCompletedJobId;
+    if (jobId) {
+      window.open(`/api/ai-generator/jobs/${jobId}/export/pdf/`, "_blank");
+    } else if (examId) {
+      window.open(`/api/faculty/exams/${examId}/export/pdf/`, "_blank");
+    } else {
+      toast.error("Please generate or save an exam first before exporting.");
+    }
+  };
+
+  const handleExportDocx = () => {
+    const jobId = activeJobId || lastCompletedJobId;
+    if (jobId) {
+      window.open(`/api/ai-generator/jobs/${jobId}/export/docx/`, "_blank");
+    } else if (examId) {
+      window.open(`/api/faculty/exams/${examId}/export/docx/`, "_blank");
+    } else {
+      toast.error("Please generate or save an exam first before exporting.");
+    }
+  };
+
   const handleGenerationSuccess = useCallback(async (job: PaperGenerationJob) => {
+    if (job.id) setLastCompletedJobId(job.id);
     if (!job.exam_id) return;
     try {
       setExamId(job.exam_id);
@@ -1333,6 +1683,7 @@ export function FacultyGeneratePaper() {
 
       const published = await facultyExamApi.publishExam(examId);
       clearScopedWizardDraft(currentUser?.id);
+      paperDraftApi.clearDraft().catch(() => {});
       setIsDirty(false);
       toast.success(published.visibility?.status_summary || "Exam published successfully!");
       navigate("/faculty/history");
@@ -1350,16 +1701,63 @@ export function FacultyGeneratePaper() {
 
   return (
     <DashboardLayout menuItems={menuItems} userRole="Faculty">
-      <div className="mx-auto max-w-6xl space-y-6 pb-20">
+      <div className={`aipg-wrapper ${styles["aipg-wrapper"] || ""} mx-auto max-w-7xl space-y-6 pb-36`}>
         {/* Title & Subtitle */}
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Faculty Paper Generation Wizard</h1>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Design, curate, proctor, and publish exams with intelligent assistance
-          </p>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Faculty Paper Generation Wizard</h1>
+            <p className="text-xs sm:text-sm text-slate-500">
+              Design, curate, proctor, and publish exams with intelligent assistance
+            </p>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleDiscardDraft}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-xs font-semibold text-slate-700 shadow-xs transition-colors"
+              title="Clear all inputs and start a fresh exam draft"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Clear Form / Start New
+            </button>
+            <button
+              type="button"
+              onClick={() => window.open("/api/ai-generator/logs/", "_blank")}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 shadow-xs transition-colors"
+            >
+              <FileText className="h-3.5 w-3.5 text-slate-500" />
+              Generation Logs
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700">
+              <span className={`w-2 h-2 rounded-full ${isOllamaDown ? "bg-rose-500" : "bg-emerald-500 animate-pulse"}`} />
+              <span>{isOllamaDown ? "Ollama Offline" : `Ollama Online (${modelMetadata.length || availableModels.length} Models)`}</span>
+            </div>
+          </div>
         </div>
 
 
+
+        {/* Continue to Review Card if questions exist and currentStep < 3 */}
+        {FRESH_START.showContinueReviewCard && questions.length > 0 && currentStep < 3 && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/90 p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-emerald-100 text-emerald-800">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-emerald-950">Draft Paper Waiting for Review</h4>
+                <p className="text-xs text-emerald-800">You have {questions.length} synthesized questions ready for inspection and refinement.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCurrentStep(3)}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-800 transition-all cursor-pointer"
+            >
+              Continue to Review <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         {/* 4-Step Progress Stepper Header */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
@@ -1411,8 +1809,39 @@ export function FacultyGeneratePaper() {
         {/* ================= STEP 1: DETAILS ================= */}
         {currentStep === 1 && (
           <div className="space-y-4">
+            {/* Ollama Offline Warning Banner */}
+            {isOllamaDown && (
+              <div
+                data-testid="ollama-offline-banner"
+                className="rounded-2xl border border-rose-200 bg-rose-50/80 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-rose-100 p-2 text-rose-600 shrink-0">
+                    <AlertCircle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-rose-900">
+                      Ollama is offline
+                    </h3>
+                    <p className="text-xs text-rose-700">
+                      Ollama is offline. Start Ollama to generate papers. You can continue configuring your exam details in the meantime.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fetchInstalledAiModels(true)}
+                  disabled={isFetchingModels}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-rose-700 disabled:opacity-50 transition-all shrink-0 cursor-pointer"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isFetchingModels ? "animate-spin" : ""}`} />
+                  {isFetchingModels ? "Checking..." : "Retry Connection"}
+                </button>
+              </div>
+            )}
+
             {/* Unfinished Draft Resume Banner */}
-            {detectedDraft && showDraftBanner && (
+            {FRESH_START.restoreDraft && detectedDraft && showDraftBanner && (
               <div
                 data-testid="draft-resume-banner"
                 className="rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50/90 to-indigo-50/90 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs"
@@ -1561,10 +1990,26 @@ export function FacultyGeneratePaper() {
                   value={totalMarks}
                   onChange={(e) => {
                     setTotalMarks(e.target.value);
+                    setFormFieldErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.total_marks;
+                      delete next.totalMarks;
+                      return next;
+                    });
                     setIsDirty(true);
                   }}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-sm focus:border-blue-500 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 transition-all"
+                  className={`w-full rounded-xl border px-4 py-2.5 text-sm transition-all focus:outline-hidden focus:ring-2 ${
+                    formFieldErrors.total_marks || formFieldErrors.totalMarks
+                      ? "border-rose-400 bg-rose-50/30 text-rose-900 focus:border-rose-500 focus:ring-rose-500/20"
+                      : "border-slate-200 bg-slate-50/50 focus:border-blue-500 focus:bg-white focus:ring-blue-500/20"
+                  }`}
                 />
+                {(formFieldErrors.total_marks || formFieldErrors.totalMarks) && (
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600 flex items-center gap-1">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>{formFieldErrors.total_marks || formFieldErrors.totalMarks}</span>
+                  </p>
+                )}
               </div>
 
               {/* Starts At */}
@@ -1855,73 +2300,211 @@ export function FacultyGeneratePaper() {
               </div>
             )}
 
-            {/* Top Bar for Questions */}
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">Step 2: Question Blueprint & Content Studio</h2>
-                <p className="text-xs text-slate-500">
-                  Configure question types, difficulty split, and upload syllabus source of truth
-                </p>
-              </div>
+            {/* 2-Column Responsive Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Main Column */}
+              <div className="lg:col-span-8 space-y-6 min-w-0">
+                {/* Top Bar for Questions */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900">Step 2: Question Blueprint & Content Studio</h2>
+                    <p className="text-xs text-slate-500">
+                      Set up question types, marks and difficulty, then add your study material
+                    </p>
+                  </div>
 
-              <div className="flex items-center gap-3 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setShowManualModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs sm:text-sm font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs"
-                >
-                  <Plus className="h-4 w-4" /> Add Manually
-                </button>
-                <div className="flex flex-col items-end gap-1">
-                  <button
-                    type="button"
-                    disabled={isGenerating || blueprintSummary.blueprintMarks !== targetMarksNum}
-                    onClick={() => void handleAiGenerate(false)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
-                  >
-                    <Sparkles className="h-4 w-4" /> {isGenerating ? "Generating Paper..." : "Generate with AI"}
-                  </button>
-                  {blueprintSummary.blueprintMarks !== targetMarksNum && (
-                    <span className="text-[11px] font-semibold text-amber-700 text-right">
-                      Disabled: Blueprint ({blueprintSummary.blueprintMarks}m) does not match target ({targetMarksNum}m)
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualModal(true)}
+                      className="h-[44px] px-4 rounded-[10px] border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer focus:ring-2 focus:ring-slate-300/40"
+                    >
+                      <Plus className="h-4 w-4 shrink-0" />
+                      <span>Add question manually</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!generateButtonStatus.canClick) {
+                          toast.error(generateButtonStatus.hint || "Please complete all required fields before generating.");
+                          if (!generateButtonStatus.isSubjectSelected || !generateButtonStatus.hasSyllabusOrMaterial) {
+                            setCurrentStep(1);
+                          }
+                          return;
+                        }
+                        void handleAiGenerate(false);
+                      }}
+                      className={`h-[44px] px-5 rounded-[10px] bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold inline-flex items-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer focus:ring-2 focus:ring-blue-500/30 ${
+                        !generateButtonStatus.canClick ? 'opacity-80' : ''
+                      }`}
+                    >
+                      {isGenerating ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                          <span>Generating Paper...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4 shrink-0" />
+                          <span>Generate with AI</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
+
+                {/* Neutral Helper Row Directly Under Header for Hint */}
+                {!generateButtonStatus.canClick && generateButtonStatus.hint && (
+                  <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-amber-200/80 bg-amber-50/60 text-xs text-slate-700 animate-in fade-in duration-200">
+                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span>{generateButtonStatus.hint}</span>
+                  </div>
+                )}
 
             {/* 1. Subject Study Materials & Syllabus Context */}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-5">
-              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
+              {/* Card Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2 flex-wrap">
                   <BookOpen className="h-4 w-4 text-blue-600" />
                   <h3 className="text-sm font-bold text-slate-900">
-                    Subject Study Materials & Syllabus
+                    Study Material and Syllabus
                   </h3>
-                  {subjectName && (
-                    <span className="ml-1 text-xs px-2.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                      {subjectName}
+                  {subjectName ? (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                      Subject: {subjectName}
                     </span>
-                  )}
+                  ) : null}
                 </div>
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full self-start sm:self-auto whitespace-nowrap">
                   <ShieldCheck className="h-3 w-3" /> Questions synthesized strictly from verified materials
                 </span>
               </div>
 
-              {/* Subject Materials Library List */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-800">
-                      Subject Materials ({selectedMaterialIds.length} of {subjectMaterials.length} selected)
-                    </h4>
-                    <p className="text-[11px] text-slate-500">
-                      Select which study materials to feed into generation. Unchecking excludes a file without deleting it.
-                    </p>
+              {/* Top: Segmented Purpose Selector */}
+              <div className="space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-700">This file is a:</span>
+                    <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200/80">
+                      <button
+                        type="button"
+                        onClick={() => setUploadPurpose("syllabus")}
+                        className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                          uploadPurpose === "syllabus"
+                            ? "bg-white text-indigo-700 font-bold shadow-2xs"
+                            : "text-slate-600 hover:text-slate-900 font-medium"
+                        }`}
+                      >
+                        Syllabus
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUploadPurpose("material")}
+                        className={`px-3 py-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                          uploadPurpose === "material"
+                            ? "bg-white text-blue-700 font-bold shadow-2xs"
+                            : "text-slate-600 hover:text-slate-900 font-medium"
+                        }`}
+                      >
+                        Study material
+                      </button>
+                    </div>
                   </div>
+
+                  <p className="text-[11px] text-slate-500 italic">
+                    {uploadPurpose === "syllabus"
+                      ? "We extract units and topics from it"
+                      : "Textbooks, notes and question banks the AI uses to write questions"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Middle: Unified Drop Zone */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDraggingUpload(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setIsDraggingUpload(false);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDraggingUpload(false);
+                  if (e.dataTransfer?.files) {
+                    void handleFileDispatch(e.dataTransfer.files);
+                  }
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className={`rounded-2xl border-2 border-dashed p-6 sm:p-8 text-center transition-all cursor-pointer flex flex-col items-center justify-center min-h-[170px] ${
+                  isDraggingUpload
+                    ? "border-blue-500 bg-blue-50/50 ring-2 ring-blue-500/20"
+                    : "border-slate-200 hover:border-blue-400 bg-slate-50/40 hover:bg-slate-50/80"
+                }`}
+              >
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 mb-2.5 shadow-2xs">
+                  {isParsingSyllabus || uploadingMaterial ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <FileUp className="h-6 w-6" />
+                  )}
+                </div>
+                <h4 className="text-sm font-semibold text-slate-800">
+                  {isParsingSyllabus
+                    ? "Extracting units and analyzing syllabus topics..."
+                    : uploadingMaterial
+                    ? "Uploading and indexing study material..."
+                    : "Drag and drop files here or Browse"}
+                </h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto leading-relaxed">
+                  PDF, DOCX, PPTX or TXT, up to 25 MB
+                </p>
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs cursor-pointer"
+                  >
+                    <Upload className="h-3.5 w-3.5" /> Browse Files
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple={uploadPurpose === "material"}
+                    accept=".pdf,.docx,.doc,.txt,.pptx"
+                    className="sr-only"
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        void handleFileDispatch(e.target.files);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Bottom: Combined Uploaded Files List */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/30 p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/60 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <FileCheck className="h-4 w-4 text-blue-600 shrink-0" />
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      Uploaded Files
+                    </h4>
+                    {subjectMaterials.length > 0 && (
+                      <span className="text-[10px] font-semibold text-slate-600 bg-slate-200/70 px-2 py-0.5 rounded-full">
+                        {selectedMaterialIds.length} of {subjectMaterials.length} selected
+                      </span>
+                    )}
+                  </div>
+
                   {subjectMaterials.length > 0 && (
-                    <div className="flex items-center gap-2 text-xs">
+                    <div className="flex items-center gap-2 text-xs shrink-0 self-end sm:self-auto">
                       <button
                         type="button"
                         onClick={() => setSelectedMaterialIds(subjectMaterials.map((m) => m.id))}
@@ -1941,104 +2524,128 @@ export function FacultyGeneratePaper() {
                   )}
                 </div>
 
-                {loadingMaterials ? (
-                  <div className="py-6 text-center text-xs text-slate-500 rounded-xl bg-slate-50 border border-slate-200/60">
-                    <Loader2 className="h-4 w-4 animate-spin inline mr-1.5 text-blue-600" />
-                    Loading study materials for {subjectName || "this subject"}...
-                  </div>
-                ) : subjectMaterials.length > 0 ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {subjectMaterials.map((m) => {
-                      const isChecked = selectedMaterialIds.includes(m.id);
-                      return (
-                        <div
-                          key={m.id}
-                          onClick={() => toggleMaterialSelection(m.id)}
-                          className={`flex items-start justify-between p-3 rounded-xl border transition-all cursor-pointer ${
-                            isChecked
-                              ? "border-blue-400 bg-blue-50/40 shadow-2xs ring-1 ring-blue-500/20"
-                              : "border-slate-200 bg-white hover:bg-slate-50 opacity-70"
-                          }`}
-                        >
-                          <div className="flex items-start gap-2.5 min-w-0">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleMaterialSelection(m.id)}
-                              onClick={(e) => e.stopPropagation()}
-                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <div className="min-w-0">
-                              <span className="text-xs font-bold text-slate-800 block truncate" title={m.original_filename}>
-                                {m.original_filename}
-                              </span>
-                              <span className="text-[10px] text-slate-500 block">
-                                {m.char_count?.toLocaleString()} characters
-                              </span>
-                              {m.detected_topics && m.detected_topics.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                  {m.detected_topics.slice(0, 3).map((t, tIdx) => (
-                                    <span
-                                      key={tIdx}
-                                      className="text-[9px] font-medium bg-white border border-slate-200 px-1.5 py-0.2 rounded text-slate-600"
-                                    >
-                                      {t}
-                                    </span>
-                                  ))}
-                                  {m.detected_topics.length > 3 && (
-                                    <span className="text-[9px] text-slate-400 font-medium">
-                                      +{m.detected_topics.length - 3} more
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                {/* Items Container */}
+                <div className="space-y-2">
+                  {/* Active Syllabus File Row */}
+                  {(parsedSyllabus || syllabusFile || uploadedFilesList.length > 0) && (
+                    <div className="flex items-center justify-between p-3 rounded-xl border border-indigo-200 bg-indigo-50/40 text-xs">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <FileText className="h-4 w-4 text-indigo-600 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 truncate">
+                              {parsedSyllabus?.filename || syllabusFile?.name || uploadedFilesList[0]?.name || "Syllabus Document"}
+                            </span>
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 shrink-0">
+                              Syllabus
+                            </span>
                           </div>
-
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteSubjectMaterial(m.id, e)}
-                            className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0 ml-2"
-                            title="Delete this material"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <span className="text-[10px] text-slate-500 block">
+                            {parsedSyllabus?.char_count
+                              ? `${parsedSyllabus.char_count.toLocaleString()} characters extracted • ${parsedSyllabus.detected_topics_count} units`
+                              : isParsingSyllabus
+                              ? "Analyzing units & topics..."
+                              : "Parsed"}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="py-4 px-3 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
-                    No study materials uploaded yet for this subject. Upload your textbook chapters or syllabus document below.
-                  </div>
-                )}
+                      </div>
 
-                {/* Upload Button for Subject Material */}
-                <div className="pt-1">
-                  <label className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/70 px-3.5 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100/80 transition-colors cursor-pointer shadow-2xs">
-                    {uploadingMaterial ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    {uploadingMaterial ? "Uploading & Analyzing..." : `+ Upload Study Material for ${subjectName || "Subject"}`}
-                    <input
-                      type="file"
-                      disabled={uploadingMaterial}
-                      accept=".pdf,.docx,.doc,.txt"
-                      className="sr-only"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          handleUploadSubjectMaterial(file);
-                          e.target.value = "";
-                        }
-                      }}
-                    />
-                  </label>
-                  <span className="text-[11px] text-slate-500 ml-2.5">
-                    Supports PDF, DOCX, TXT up to 25MB. Text and topics are extracted automatically.
-                  </span>
+                      <button
+                        type="button"
+                        onClick={handleRemoveSyllabusFile}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors ml-2 shrink-0"
+                        title="Remove syllabus document"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Study Materials Rows */}
+                  {loadingMaterials ? (
+                    <div className="py-4 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                      <span>Loading subject materials...</span>
+                    </div>
+                  ) : subjectMaterials.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-1 max-h-[300px] overflow-y-auto pr-1">
+                      {subjectMaterials.map((m) => {
+                        const isChecked = selectedMaterialIds.includes(m.id);
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => toggleMaterialSelection(m.id)}
+                            className={`flex items-start justify-between p-3 rounded-xl border transition-all cursor-pointer ${
+                              isChecked
+                                ? "border-blue-400 bg-blue-50/50 shadow-2xs ring-1 ring-blue-500/20"
+                                : "border-slate-200 bg-white hover:bg-slate-50 opacity-70"
+                            }`}
+                          >
+                            <div className="flex items-start gap-2.5 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleMaterialSelection(m.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-800 block truncate" title={m.original_filename}>
+                                    {m.original_filename}
+                                  </span>
+                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200 shrink-0">
+                                    Study material
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-slate-500 block">
+                                  {m.char_count?.toLocaleString()} characters
+                                </span>
+                                {m.detected_topics && m.detected_topics.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {m.detected_topics.slice(0, 3).map((t, tIdx) => (
+                                      <span
+                                        key={tIdx}
+                                        className="text-[9px] font-medium bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[140px]"
+                                      >
+                                        {t}
+                                      </span>
+                                    ))}
+                                    {m.detected_topics.length > 3 && (
+                                      <span className="text-[9px] text-slate-400 font-medium self-center">
+                                        +{m.detected_topics.length - 3} more
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteSubjectMaterial(m.id, e)}
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors ml-2 shrink-0"
+                              title="Delete this material"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  {/* Empty state if nothing uploaded */}
+                  {!parsedSyllabus && !syllabusFile && uploadedFilesList.length === 0 && subjectMaterials.length === 0 && !loadingMaterials && (
+                    <div className="py-6 px-4 rounded-xl bg-white border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                      No files uploaded yet. Select Syllabus or Study Material above to add documents.
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {parsedSyllabus ? (
+              {/* Parsed Syllabus Scope & Units (Intact with all topics, domains, and capacity) */}
+              {parsedSyllabus && (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
@@ -2204,32 +2811,8 @@ export function FacultyGeneratePaper() {
                     </div>
                   )}
                 </div>
-              ) : (
-                <div className="rounded-xl border-2 border-dashed border-slate-200 p-6 text-center hover:border-blue-400 transition-colors">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 mb-2">
-                    {isParsingSyllabus ? <RefreshCw className="h-5 w-5 animate-spin" /> : <FileUp className="h-5 w-5" />}
-                  </div>
-                  <h4 className="text-sm font-semibold text-slate-800">
-                    {isParsingSyllabus ? "Extracting and analyzing syllabus topics..." : "Upload Syllabus Document"}
-                  </h4>
-                  <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                    Drag and drop your syllabus PDF, DOCX, or text file. The AI model extracts core units and guarantees questions strictly align with the syllabus.
-                  </p>
-                  <label className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer shadow-2xs">
-                    <Upload className="h-3.5 w-3.5" /> Browse File
-                    <input
-                      type="file"
-                      accept=".pdf,.docx,.doc,.txt"
-                      className="sr-only"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleSyllabusFileSelected(file);
-                      }}
-                    />
-                  </label>
-                </div>
               )}
-            </div>
+            
 
             {/* 2. Question Types Blueprint Studio */}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-5">
@@ -2276,9 +2859,9 @@ export function FacultyGeneratePaper() {
                   return (
                     <div
                       key={typeKey}
-                      className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border p-4 transition-all ${
+                      className={`aipg-blueprint-row ${styles["aipg-blueprint-row"] || ""} flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border p-4 transition-all ${
                         cfg.enabled
-                          ? "border-slate-300 bg-slate-50/50 shadow-2xs"
+                          ? "border-slate-300 bg-slate-50/60 shadow-xs"
                           : "border-slate-200 bg-white opacity-60"
                       }`}
                     >
@@ -2538,50 +3121,59 @@ export function FacultyGeneratePaper() {
 
             {/* 4. Target Marks Alignment & Model Panel */}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs space-y-4">
-              <div className="grid gap-4 sm:grid-cols-4 items-center">
-                {/* Total Questions */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-[11px] text-slate-500 font-medium block">Total Questions</span>
-                  <strong className="text-base text-slate-900 font-bold">{blueprintSummary.totalQuestions} Questions</strong>
+              {/* 3-Column Responsive Stats Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
+                {/* 1. Total Questions */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 flex flex-col justify-between">
+                  <span className="text-xs text-slate-500 font-medium">Total Questions Planned</span>
+                  <div className="my-1">
+                    <strong className="text-lg text-slate-900 font-bold">{blueprintSummary.totalQuestions} Questions</strong>
+                  </div>
+                  <span className="text-[11px] text-slate-400">{activeSectionsCount} active question types</span>
                 </div>
 
-                {/* Target Marks vs Blueprint Marks */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+                {/* 2. Target Marks vs Blueprint Marks */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 flex flex-col justify-between">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-slate-500 font-medium">Marks Status</span>
+                    <span className="text-xs text-slate-500 font-medium">Marks Status</span>
                     {blueprintSummary.blueprintMarks === targetMarksNum ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Perfect Match
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
                         <AlertCircle className="h-3.5 w-3.5" /> Mismatch
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline gap-2 mt-0.5">
-                    <strong className={`text-base font-bold ${blueprintSummary.blueprintMarks === targetMarksNum ? "text-emerald-700" : "text-amber-700"}`}>
+                  <div className="flex items-baseline gap-2 my-1">
+                    <strong className={`text-lg font-bold ${blueprintSummary.blueprintMarks === targetMarksNum ? "text-emerald-700" : "text-amber-700"}`}>
                       {blueprintSummary.blueprintMarks}
                     </strong>
                     <span className="text-xs text-slate-500">/ {targetMarksNum} Target Marks</span>
                   </div>
+                  <span className="text-[11px] text-slate-400">
+                    {blueprintSummary.blueprintMarks === targetMarksNum
+                      ? "Exact allocation match"
+                      : `Difference: ${blueprintSummary.blueprintMarks - targetMarksNum >= 0 ? "+" : ""}${blueprintSummary.blueprintMarks - targetMarksNum} marks`}
+                  </span>
                 </div>
 
-                {/* Local AI Model Dropdown / Status */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                {/* 3. Local AI Model Dropdown / Status */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 flex flex-col justify-between md:col-span-2 lg:col-span-1">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-slate-500 font-medium">Local AI Model</span>
-                    {isFetchingModels && <RefreshCw className="h-3 w-3 animate-spin text-blue-600" />}
+                    <span className="text-xs text-slate-500 font-medium">Local AI Model</span>
+                    {isFetchingModels && <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-600" />}
                   </div>
                   {isOllamaDown ? (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 my-1">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2">
                         <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
                         <span>Ollama Offline</span>
                       </div>
                       <button
                         type="button"
-                        onClick={fetchInstalledAiModels}
+                        onClick={() => fetchInstalledAiModels(true)}
                         className="w-full text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-md py-1 transition-all"
                       >
                         Retry Connection
@@ -2591,7 +3183,7 @@ export function FacultyGeneratePaper() {
                     <select
                       value={aiModel}
                       onChange={(e) => setAiModel(e.target.value)}
-                      className="w-full text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-hidden"
+                      className="w-full min-w-0 text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-hidden my-1"
                     >
                       {modelMetadata.length > 0 ? (
                         modelMetadata.map((m) => (
@@ -2608,10 +3200,130 @@ export function FacultyGeneratePaper() {
                       )}
                     </select>
                   )}
+                  <span className="text-[11px] text-slate-400">Primary generator for questions</span>
                 </div>
               </div>
 
-              {/* Plan Preview Table */}
+              {/* Advanced Multi-Model Architecture Panel (Separate Full-Width Block) */}
+              <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedModelSettings((prev) => !prev)}
+                  className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-4 py-3 bg-slate-50 hover:bg-slate-100/80 text-xs font-bold text-slate-700 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <Sliders className="h-5 w-5 text-blue-600 shrink-0" />
+                    <span className="text-sm font-bold text-slate-900">Advanced Multi-Model Pipeline Roles</span>
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full whitespace-nowrap">
+                      Low-VRAM & GPU Optimized (4GB+)
+                    </span>
+                  </div>
+                  <span className="text-xs text-blue-600 font-semibold self-start sm:self-auto shrink-0">
+                    {showAdvancedModelSettings ? "Hide Pipeline Roles ▲" : "Configure Pipeline Roles ▼"}
+                  </span>
+                </button>
+
+                {showAdvancedModelSettings && (
+                  <div className="p-4 sm:p-5 space-y-4 border-t border-slate-100 bg-white">
+                    <p className="text-xs text-slate-500 leading-relaxed max-w-4xl">
+                      Grouped sequential execution prevents GPU VRAM thrashing on 4 GB cards. Disables internal model thinking tokens for sub-10 minute generation.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
+                      {/* Role 1: MCQ Generator */}
+                      <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50 flex flex-col justify-between min-w-0">
+                        <div className="mb-2">
+                          <span className="text-xs font-bold text-slate-800 block">MCQ Generator</span>
+                          <span className="text-[11px] text-slate-400 block mt-0.5">Batch of 10</span>
+                        </div>
+                        <select
+                          value={modelRoles.mcq_generator}
+                          onChange={(e) => setModelRoles({ ...modelRoles, mcq_generator: e.target.value })}
+                          className="w-full min-w-0 text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 truncate"
+                        >
+                          <option value="qwen3:4b">qwen3:4b (Recommended Primary)</option>
+                          <option value="granite3.3:2b">granite3.3:2b</option>
+                          <option value="llama3.2:3b">llama3.2:3b</option>
+                          <option value="gemma3:4b">gemma3:4b</option>
+                        </select>
+                      </div>
+
+                      {/* Role 2: Fast Generator */}
+                      <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50 flex flex-col justify-between min-w-0">
+                        <div className="mb-2">
+                          <span className="text-xs font-bold text-slate-800 block">Fast Generator</span>
+                          <span className="text-[11px] text-slate-400 block mt-0.5">True/False & Fill</span>
+                        </div>
+                        <select
+                          value={modelRoles.fast_generator}
+                          onChange={(e) => setModelRoles({ ...modelRoles, fast_generator: e.target.value })}
+                          className="w-full min-w-0 text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 truncate"
+                        >
+                          <option value="granite3.3:2b">granite3.3:2b (Recommended Fast)</option>
+                          <option value="qwen3:4b">qwen3:4b</option>
+                          <option value="llama3.2:3b">llama3.2:3b</option>
+                          <option value="gemma3:4b">gemma3:4b</option>
+                        </select>
+                      </div>
+
+                      {/* Role 3: Answer Writer */}
+                      <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50 flex flex-col justify-between min-w-0">
+                        <div className="mb-2">
+                          <span className="text-xs font-bold text-slate-800 block">Answer Writer</span>
+                          <span className="text-[11px] text-slate-400 block mt-0.5">Short & Long Questions</span>
+                        </div>
+                        <select
+                          value={modelRoles.answer_writer}
+                          onChange={(e) => setModelRoles({ ...modelRoles, answer_writer: e.target.value })}
+                          className="w-full min-w-0 text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 truncate"
+                        >
+                          <option value="llama3.2:3b">llama3.2:3b (Recommended Writer)</option>
+                          <option value="qwen3:4b">qwen3:4b</option>
+                          <option value="gemma3:4b">gemma3:4b</option>
+                          <option value="phi3:mini">phi3:mini</option>
+                        </select>
+                      </div>
+
+                      {/* Role 4: Academic Validator */}
+                      <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50 flex flex-col justify-between min-w-0">
+                        <div className="mb-2">
+                          <span className="text-xs font-bold text-slate-800 block">Academic Validator</span>
+                          <span className="text-[11px] text-slate-400 block mt-0.5">Audit & Quality Guard</span>
+                        </div>
+                        <select
+                          value={modelRoles.validator}
+                          onChange={(e) => setModelRoles({ ...modelRoles, validator: e.target.value })}
+                          className="w-full min-w-0 text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 truncate"
+                        >
+                          <option value="phi3:mini">phi3:mini (Recommended Validator)</option>
+                          <option value="llama3.2:3b">llama3.2:3b</option>
+                          <option value="qwen3:4b">qwen3:4b</option>
+                          <option value="gemma3:4b">gemma3:4b</option>
+                        </select>
+                      </div>
+
+                      {/* Role 5: Fallback Engine */}
+                      <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/50 flex flex-col justify-between min-w-0 sm:col-span-2 lg:col-span-1 xl:col-span-1">
+                        <div className="mb-2">
+                          <span className="text-xs font-bold text-slate-800 block">Fallback Engine</span>
+                          <span className="text-[11px] text-slate-400 block mt-0.5">Zero-Downtime Failover</span>
+                        </div>
+                        <select
+                          value={modelRoles.fallback}
+                          onChange={(e) => setModelRoles({ ...modelRoles, fallback: e.target.value })}
+                          className="w-full min-w-0 text-xs font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 truncate"
+                        >
+                          <option value="gemma3:4b">gemma3:4b (Recommended Fallback)</option>
+                          <option value="llama3.2:3b">llama3.2:3b</option>
+                          <option value="qwen3:4b">qwen3:4b</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Plan Preview Table */}
               <div className="space-y-2 pt-1">
                 <div className="flex items-center justify-between text-xs font-bold text-slate-800">
                   <span>Generation Blueprint & Question Plan</span>
@@ -2699,11 +3411,40 @@ export function FacultyGeneratePaper() {
             {/* 5. Generated Questions List (if any exist) */}
             {questions.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-bold text-slate-900">
-                    Active Questions ({questions.length}) · Total Marks: {currentTotalMarks}
-                  </h3>
-                  <span className="text-xs text-slate-500">Review, reorder or modify generated questions below</span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-2">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Active Questions ({questions.length}) · Total Marks: {currentTotalMarks}
+                    </h3>
+                    <p className="text-xs text-slate-500">Review, reorder or modify generated questions below</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsCompactView((prev) => !prev)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        isCompactView
+                          ? "bg-blue-50 border-blue-200 text-blue-700 shadow-2xs"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      {isCompactView ? "Expanded View" : "Compact View"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewShuffledOptions((prev) => !prev)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        previewShuffledOptions
+                          ? "bg-indigo-50 border-indigo-200 text-indigo-700 shadow-2xs"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                      title="Preview how MCQ options appear when randomized"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      {previewShuffledOptions ? "Standard Order" : "Shuffle Preview"}
+                    </button>
+                  </div>
                 </div>
 
                 {questions.map((q, idx) => (
@@ -2727,22 +3468,60 @@ export function FacultyGeneratePaper() {
                             {q.difficulty}
                           </span>
                         </div>
-                        <p className="text-sm font-medium text-slate-800 leading-snug">{q.text}</p>
-                        {q.options && q.options.length > 0 && (
-                          <div className="grid grid-cols-2 gap-1.5 pt-1 text-xs text-slate-600">
-                            {q.options.map((opt, oIdx) => (
-                              <div key={oIdx} className="truncate">
-                                <span className="font-semibold text-slate-400 mr-1.5">{String.fromCharCode(65 + oIdx)}.</span>
-                                {opt}
-                              </div>
-                            ))}
+                        <p className={`text-sm font-medium text-slate-800 leading-snug ${isCompactView ? "truncate" : ""}`}>{q.text || (q as any).question}</p>
+                        {!isCompactView && q.options && q.options.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-xs">
+                            {(previewShuffledOptions ? [...q.options].reverse() : q.options).map((opt, oIdx) => {
+                              const isCorrect = (q.correct_answer != null && String(q.correct_answer).trim().toLowerCase() === String(opt).trim().toLowerCase()) ||
+                                                ((q as any).answer != null && String((q as any).answer).trim().toLowerCase() === String(opt).trim().toLowerCase());
+                              return (
+                                <div
+                                  key={oIdx}
+                                  className={`flex items-center gap-2 rounded-xl px-3 py-2 border transition-all ${
+                                    isCorrect
+                                      ? "bg-emerald-50/90 border-emerald-300 text-emerald-900 font-semibold shadow-2xs"
+                                      : "bg-slate-50/80 border-slate-200/70 text-slate-700"
+                                  }`}
+                                >
+                                  <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold ${
+                                    isCorrect ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-600"
+                                  }`}>
+                                    {isCorrect ? <Check className="h-3 w-3" /> : String.fromCharCode(65 + oIdx)}
+                                  </span>
+                                  <span className="truncate flex-1">{opt}</span>
+                                  {isCorrect && (
+                                    <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider shrink-0 bg-emerald-100/80 px-1.5 py-0.5 rounded-sm">
+                                      Correct
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {!isCompactView && (q.model_answer || (q as any).answer) && q.question_type?.toLowerCase() !== "mcq" && (
+                          <div className="mt-2.5 rounded-xl border border-slate-200/90 bg-slate-50/80 p-3 text-xs space-y-1">
+                            <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                              <span>Model Answer / Key Points:</span>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{q.model_answer || (q as any).answer}</p>
                           </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Actions: Move Up, Move Down, Delete */}
+                    {/* Actions: Regenerate, Move Up, Move Down, Delete */}
                     <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isRegeneratingSlot === idx}
+                        onClick={() => handleRegenerateQuestion(idx)}
+                        className="rounded-lg p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 disabled:opacity-50 transition-colors"
+                        title="Regenerate this question with AI"
+                      >
+                        <Sparkles className={`h-4 w-4 ${isRegeneratingSlot === idx ? "animate-spin text-blue-600" : ""}`} />
+                      </button>
                       <button
                         type="button"
                         disabled={idx === 0}
@@ -2791,6 +3570,188 @@ export function FacultyGeneratePaper() {
               >
                 Configure Settings <ArrowRight className="h-4 w-4" />
               </button>
+            </div>
+              </div>
+              {/* Right Column: Sticky Blueprint Summary Panel (Desktop Only) */}
+              <div className="hidden lg:block lg:col-span-4 sticky top-6 space-y-4">
+                <div className={`aipg-summary-panel ${styles["aipg-summary-panel"] || ""} rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm space-y-5`}>
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Blueprint Summary</h3>
+                      <p className="text-[11px] text-slate-500 truncate max-w-[180px]">{subjectName || "Subject Not Selected"}</p>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      generateButtonStatus.marksMatch
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-amber-50 text-amber-700 border border-amber-200"
+                    }`}>
+                      {generateButtonStatus.marksMatch ? "Balanced" : `${Math.abs(blueprintSummary.blueprintMarks - targetMarksNum)}M Difference`}
+                    </span>
+                  </div>
+
+                  {/* Marks Allocation Bar */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-600">Marks Allocation</span>
+                      <span className="font-bold text-slate-900">{blueprintSummary.blueprintMarks} / {targetMarksNum}M</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-300 rounded-full ${
+                          generateButtonStatus.marksMatch ? "bg-emerald-500" : blueprintSummary.blueprintMarks > targetMarksNum ? "bg-amber-500" : "bg-blue-500"
+                        }`}
+                        style={{ width: `${Math.min(100, Math.round((blueprintSummary.blueprintMarks / (targetMarksNum || 1)) * 100))}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      {blueprintSummary.blueprintMarks === targetMarksNum
+                        ? "Blueprint marks exactly match target."
+                        : blueprintSummary.blueprintMarks > targetMarksNum
+                        ? `${blueprintSummary.blueprintMarks - targetMarksNum} marks over target`
+                        : `${targetMarksNum - blueprintSummary.blueprintMarks} marks needed`}
+                    </p>
+                  </div>
+
+                  {/* Question Count by Type */}
+                  <div className="space-y-2 border-t border-slate-100 pt-3">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                      <span>Planned Questions</span>
+                      <span className="text-blue-600 font-bold">{blueprintSummary.totalQuestions} Qs</span>
+                    </div>
+                    <div className="space-y-1.5 text-[11px]">
+                      {(Object.keys(blueprint) as (keyof BlueprintState)[])
+                        .filter((k) => blueprint[k].enabled && blueprint[k].count > 0)
+                        .map((k) => (
+                          <div key={k} className="flex items-center justify-between text-slate-600">
+                            <span>{questionTypeDetails[k]?.label || k}</span>
+                            <span className="font-semibold">{blueprint[k].count} × {blueprint[k].marks}M ({blueprint[k].count * blueprint[k].marks}M)</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Selected Model & Pipeline Status */}
+                  <div className="space-y-2 border-t border-slate-100 pt-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-600">Pipeline Engine</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${isOllamaDown ? "bg-rose-500" : "bg-emerald-500 animate-pulse"}`} />
+                        <span className="text-[11px] font-medium text-slate-700">{isOllamaDown ? "Offline" : "Ready"}</span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600 space-y-1">
+                      <div className="flex justify-between">
+                        <span>MCQ Model:</span>
+                        <span className="font-mono font-semibold">{modelRoles.mcq_generator}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Fast Model:</span>
+                        <span className="font-mono font-semibold">{modelRoles.fast_generator}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Estimated Duration */}
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 bg-blue-50/60 rounded-lg px-2.5 py-1.5 border border-blue-100">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3 text-blue-600" /> Est. Generation:
+                    </span>
+                    <span className="font-bold text-blue-900">
+                      ~{Math.max(1, Math.round(blueprintSummary.totalQuestions * 0.35))} - {Math.max(2, Math.round(blueprintSummary.totalQuestions * 0.65))} mins
+                    </span>
+                  </div>
+
+                  {/* Desktop Unblockable Generate Button */}
+                  <div className="space-y-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!generateButtonStatus.canClick) {
+                          toast.error(generateButtonStatus.hint || "Please complete all required fields before generating.");
+                          if (!generateButtonStatus.isSubjectSelected || !generateButtonStatus.hasSyllabusOrMaterial) {
+                            setCurrentStep(1);
+                          }
+                          return;
+                        }
+                        void handleAiGenerate(false);
+                      }}
+                      className={`w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 cursor-pointer transition-all duration-200 active:scale-98 ${
+                        !generateButtonStatus.canClick ? "opacity-85" : ""
+                      }`}
+                    >
+                      {isGenerating ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Generating Paper...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" /> Generate with AI
+                        </>
+                      )}
+                    </button>
+                    {!generateButtonStatus.canClick && generateButtonStatus.hint && (
+                      <p className="text-[11px] font-medium text-amber-700 text-center leading-tight">
+                        {generateButtonStatus.hint}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sticky Bottom Summary Bar in Step 2 */}
+            <div className="lg:hidden sticky bottom-0 z-30 -mx-4 sm:-mx-6 -mb-6 mt-8 bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-2xl px-5 py-3.5 sm:px-6 transition-all duration-200 rounded-2xl">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-500">Allocation:</span>
+                    <span
+                      className={`text-xs sm:text-sm font-bold px-2.5 py-0.5 rounded-full ${
+                        generateButtonStatus.marksMatch
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : "bg-amber-50 text-amber-700 border border-amber-200"
+                      }`}
+                    >
+                      {blueprintSummary.blueprintMarks} / {targetMarksNum} Marks
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-500 hidden sm:inline">
+                    <strong className="text-slate-800">{blueprintSummary.totalQuestions}</strong> questions planned
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                  {!generateButtonStatus.canClick && generateButtonStatus.hint && (
+                    <span className="text-xs font-medium text-amber-700 truncate max-w-xs text-right hidden md:inline">
+                      {generateButtonStatus.hint}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!generateButtonStatus.canClick) {
+                        toast.error(generateButtonStatus.hint || "Please complete all required fields before generating.");
+                        if (!generateButtonStatus.isSubjectSelected || !generateButtonStatus.hasSyllabusOrMaterial) {
+                          setCurrentStep(1);
+                        }
+                        return;
+                      }
+                      void handleAiGenerate(false);
+                    }}
+                    className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-xs sm:text-sm font-bold text-white shadow-md hover:from-blue-700 hover:to-indigo-700 cursor-pointer transition-all duration-200 active:scale-98 ${!generateButtonStatus.canClick ? 'opacity-80' : ''}`}
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" /> Generate with AI
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -3030,15 +3991,44 @@ export function FacultyGeneratePaper() {
                       <span className="font-bold text-slate-900">Question {idx + 1}</span>
                       <span className="font-semibold text-slate-600">[{q.marks} Marks]</span>
                     </div>
-                    <p className="text-sm text-slate-800">{q.text}</p>
+                    <p className="text-sm text-slate-800">{q.text || (q as any).question}</p>
                     {q.options && q.options.length > 0 && (
-                      <div className="grid grid-cols-2 gap-2 pt-2 text-xs text-slate-600">
-                        {q.options.map((opt, oIdx) => (
-                          <div key={oIdx} className="rounded-lg bg-white p-2 border border-slate-200">
-                            <span className="font-bold text-slate-400 mr-2">{String.fromCharCode(65 + oIdx)}.</span>
-                            {opt}
-                          </div>
-                        ))}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-xs">
+                        {q.options.map((opt, oIdx) => {
+                          const isCorrect = (q.correct_answer != null && String(q.correct_answer).trim().toLowerCase() === String(opt).trim().toLowerCase()) ||
+                                            ((q as any).answer != null && String((q as any).answer).trim().toLowerCase() === String(opt).trim().toLowerCase());
+                          return (
+                            <div
+                              key={oIdx}
+                              className={`flex items-center gap-2 rounded-xl px-3 py-2 border transition-all ${
+                                isCorrect
+                                  ? "bg-emerald-50/90 border-emerald-300 text-emerald-900 font-semibold shadow-2xs"
+                                  : "bg-white border-slate-200 text-slate-700"
+                              }`}
+                            >
+                              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold ${
+                                isCorrect ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"
+                              }`}>
+                                {isCorrect ? <Check className="h-3 w-3" /> : String.fromCharCode(65 + oIdx)}
+                              </span>
+                              <span className="truncate flex-1">{opt}</span>
+                              {isCorrect && (
+                                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider shrink-0 bg-emerald-100/80 px-1.5 py-0.5 rounded-sm">
+                                  Answer
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {(q.model_answer || (q as any).answer) && q.question_type?.toLowerCase() !== "mcq" && (
+                      <div className="mt-2.5 rounded-xl border border-slate-200/90 bg-slate-50/80 p-3 text-xs space-y-1">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                          <span>Evaluation Guide / Model Answer:</span>
+                        </div>
+                        <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{q.model_answer || (q as any).answer}</p>
                       </div>
                     )}
                   </div>
@@ -3056,7 +4046,25 @@ export function FacultyGeneratePaper() {
                 <ArrowLeft className="h-4 w-4" /> Back to Settings
               </button>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
+                  title="Download Question Paper and Answer Key as PDF"
+                >
+                  <Download className="h-3.5 w-3.5 text-blue-600" />
+                  Export PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportDocx}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-2xs transition-colors"
+                  title="Download Question Paper and Answer Key as Word Document"
+                >
+                  <FileText className="h-3.5 w-3.5 text-indigo-600" />
+                  Export DOCX
+                </button>
                 <button
                   type="button"
                   onClick={handleSaveAsDraft}
@@ -3371,7 +4379,10 @@ export function FacultyGeneratePaper() {
         <GenerationProgressModal
           jobId={activeJobId}
           isOpen={showProgressModal}
-          onClose={() => setShowProgressModal(false)}
+          onClose={() => {
+            setShowProgressModal(false);
+            setActiveJobId(null);
+          }}
           onSuccess={handleGenerationSuccess}
           onReset={() => {
             clearScopedWizardDraft(currentUser?.id);

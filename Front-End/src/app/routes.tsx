@@ -78,6 +78,14 @@ const StudentSettings = lazy(() => import("./pages/StudentSettings").then((m) =>
 const NotFound = lazy(() => import("./pages/NotFound").then((m) => ({ default: m.NotFound })));
 const SuperAdminGateway = lazy(() => import("./pages/SuperAdminConsole").then((m) => ({ default: m.SuperAdminGateway })));
 
+function FacultyGeneratePageRoute() {
+  return (
+    <FacultyOnly>
+      <FacultyGeneratePaper />
+    </FacultyOnly>
+  );
+}
+
 export const router = createBrowserRouter([
   {
     Component: RootLayout,
@@ -165,11 +173,7 @@ export const router = createBrowserRouter([
   },
   {
     path: "/faculty/generate",
-    Component: () => (
-      <FacultyOnly>
-        <FacultyGeneratePaper />
-      </FacultyOnly>
-    ),
+    Component: FacultyGeneratePageRoute,
   },
   {
     path: "/faculty/create-bank-paper",

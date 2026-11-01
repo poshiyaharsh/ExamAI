@@ -38,20 +38,22 @@ interface DashboardLayoutProps {
     label: string;
     path: string;
   }>;
-  userRole: string;
+  userRole?: string;
+  role?: string;
 }
 
-export function DashboardLayout({ children, menuItems, userRole }: DashboardLayoutProps) {
+export function DashboardLayout({ children, menuItems, userRole, role }: DashboardLayoutProps) {
+  const effectiveRole = String(userRole || role || "Faculty");
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
-    const storedValue = window.localStorage.getItem(`examai-${userRole.toLowerCase()}-sidebar-open`);
+    const storedValue = window.localStorage.getItem(`examai-${effectiveRole.toLowerCase()}-sidebar-open`);
     return storedValue ? storedValue === "true" : true;
   });
   const location = useLocation();
   const navigate = useNavigate();
   const { session, clearAuthenticatedSession } = useAuth();
-  const isAdminLayout = userRole.toLowerCase() === "admin";
-  const isFacultyLayout = userRole.toLowerCase() === "faculty";
+  const isAdminLayout = effectiveRole.toLowerCase() === "admin";
+  const isFacultyLayout = effectiveRole.toLowerCase() === "faculty";
   const sidebarItems = isAdminLayout
     ? ADMIN_SIDEBAR_ITEMS
     : isFacultyLayout
@@ -60,8 +62,8 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
   const dashboardPath = sidebarItems[0]?.path || "/";
 
   useEffect(() => {
-    window.localStorage.setItem(`examai-${userRole.toLowerCase()}-sidebar-open`, String(sidebarOpen));
-  }, [sidebarOpen, userRole]);
+    window.localStorage.setItem(`examai-${effectiveRole.toLowerCase()}-sidebar-open`, String(sidebarOpen));
+  }, [sidebarOpen, effectiveRole]);
 
   const pageTitle = useMemo(() => {
     const sortedItems = [...sidebarItems].sort((a, b) => b.path.length - a.path.length);
@@ -69,8 +71,8 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
       return location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
     });
 
-    return matchedItem?.label || `${userRole} Dashboard`;
-  }, [location.pathname, sidebarItems, userRole]);
+    return matchedItem?.label || `${effectiveRole} Dashboard`;
+  }, [location.pathname, sidebarItems, effectiveRole]);
 
   useEffect(() => {
     document.title = `${pageTitle} | ExamAI`;
@@ -108,21 +110,15 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
       if (unread > prevCount && prevCount > 0) {
         const newest = list[0];
         if (newest && !newest.is_read) {
-          const currentPath = window.location.pathname;
-          const isCurrentTarget = Boolean(newest.link && currentPath.includes(newest.link));
-          const isGenerationPage = currentPath.includes('/faculty/generate') && (newest.title?.includes('Paper') || newest.link?.includes('/faculty/exams/'));
-
-          if (!isCurrentTarget && !isGenerationPage) {
-            if (newest.type === "success") {
-              toast.success(newest.title, {
-                description: newest.message,
-                action: newest.link ? { label: "View", onClick: () => navigate(newest.link!) } : undefined,
-              });
-            } else if (newest.type === "error") {
-              toast.error(newest.title, { description: newest.message });
-            } else {
-              toast.info(newest.title, { description: newest.message });
-            }
+          if (newest.type === "success") {
+            toast.success(newest.title, {
+              description: newest.message,
+              action: newest.link ? { label: "View", onClick: () => navigate(newest.link!) } : undefined,
+            });
+          } else if (newest.type === "error") {
+            toast.error(newest.title, { description: newest.message });
+          } else {
+            toast.info(newest.title, { description: newest.message });
           }
         }
       }
@@ -430,7 +426,7 @@ export function DashboardLayout({ children, menuItems, userRole }: DashboardLayo
 
               <button
                 type="button"
-                onClick={() => navigate(isAdminLayout ? "/admin/settings" : userRole.toLowerCase() === "student" ? "/student/settings" : "/faculty/settings")}
+                onClick={() => navigate(isAdminLayout ? "/admin/settings" : effectiveRole.toLowerCase() === "student" ? "/student/settings" : "/faculty/settings")}
                 className="p-2 rounded-lg hover:bg-accent transition-colors"
                 title="Settings"
               >
