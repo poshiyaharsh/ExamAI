@@ -62,6 +62,7 @@ urlpatterns = [
     path('api/admins/', include('admins.urls')),
     path('api/admin/', include('admins.urls')),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('api/ai-generator/', include('ai_paper_generator.urls')),
 ]
 
 # Cloaked Super Admin mount using dynamic regex pattern to avoid leaking secret slug in debug dumps

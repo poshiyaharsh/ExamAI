@@ -31,7 +31,20 @@ from .views_faculty_materials import (
     FacultyStudyMaterialsView,
     FacultyStudyMaterialDetailView,
 )
-from faculty.views import FacultyAIModelsView
+from ai_paper_generator.views import (
+    JobDetailView,
+    JobStatusView,
+    FacultyAiModelsAPIView,
+    FacultySyllabusParseAPIView,
+    ActiveJobView,
+    JobsListView,
+    CancelJobView,
+)
+from faculty.views import (
+    FacultyLoginAPIView,
+    FacultyProfileAPIView,
+    FacultySignupAPIView,
+)
 from .faculty_monitor import FacultyLiveMonitorView
 from .faculty_evaluation import (
     FacultyApproveAsIsView,
@@ -46,13 +59,6 @@ from .faculty_evaluation import (
     FacultyReopenReviewView,
     FacultySuggestGradeView,
 )
-from .generate_paper import (
-    GenerateMissingQuestionsView,
-    GeneratePaperView,
-    ParseSyllabusView,
-    RegenerateQuestionView,
-    ScopeCheckView,
-)
 from .notifications_views import (
     NotificationDismissAllPopupsView,
     NotificationDismissPopupView,
@@ -60,12 +66,6 @@ from .notifications_views import (
     NotificationMarkAllReadView,
     NotificationMarkReadView,
     NotificationPopupListView,
-)
-from .paper_generations import (
-    PaperGenerationJobActiveView,
-    PaperGenerationJobCancelView,
-    PaperGenerationJobDetailView,
-    PaperGenerationJobListView,
 )
 from .student_exam import (
     HeartbeatView,
@@ -107,14 +107,6 @@ urlpatterns = [
     path('admin/exams/<int:exam_id>/live-roster/', LiveRosterView.as_view(), name='api-admin-exam-live-roster'),
     path('admin/question-bank/', include('api.urls_question_bank')),
     path('faculty/exams/cache/', ClearFacultyPaperCacheView.as_view(), name='faculty-exam-clear-cache'),
-    path('faculty/ai-models/', FacultyAIModelsView.as_view(), name='api-faculty-ai-models'),
-    path('faculty/syllabus/parse/', ParseSyllabusView.as_view(), name='faculty-syllabus-parse'),
-    path('faculty/exams/generate/', GeneratePaperView.as_view(), name='faculty-exam-generate'),
-    path('faculty/exams/<int:exam_id>/generate-missing/', GenerateMissingQuestionsView.as_view(), name='faculty-exam-generate-missing'),
-    path('papers/generations/active/', PaperGenerationJobActiveView.as_view(), name='paper-generation-active'),
-    path('papers/generations/<int:job_id>/cancel/', PaperGenerationJobCancelView.as_view(), name='paper-generation-cancel'),
-    path('papers/generations/<int:job_id>/', PaperGenerationJobDetailView.as_view(), name='paper-generation-detail'),
-    path('papers/generations/', PaperGenerationJobListView.as_view(), name='paper-generation-list'),
     path('notifications/popups/', NotificationPopupListView.as_view(), name='notification-popups'),
     path('notifications/dismiss-all-popups/', NotificationDismissAllPopupsView.as_view(), name='notification-dismiss-all-popups'),
     path('notifications/<int:notification_id>/dismiss-popup/', NotificationDismissPopupView.as_view(), name='notification-dismiss-popup'),
@@ -124,12 +116,10 @@ urlpatterns = [
     path('faculty/exams/', ExamListView.as_view(), name='faculty-exam-list'),
     path('faculty/exams/<int:exam_id>/', ExamDetailView.as_view(), name='faculty-exam-detail'),
     path('faculty/exams/<int:exam_id>/confirm-review/', ConfirmExamReviewView.as_view(), name='faculty-exam-confirm-review'),
-    path('faculty/exams/<int:exam_id>/scope-check/', ScopeCheckView.as_view(), name='faculty-exam-scope-check'),
     path('faculty/exams/<int:exam_id>/shuffle/', ShuffleExamView.as_view(), name='faculty-exam-shuffle'),
     path('faculty/exams/<int:exam_id>/questions/', ExamQuestionCreateView.as_view(), name='faculty-exam-question-create'),
     path('faculty/exams/<int:exam_id>/questions/reorder/', ReorderQuestionsView.as_view(), name='faculty-exam-questions-reorder'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/swap/', SwapQuestionView.as_view(), name='faculty-exam-question-swap'),
-    path('faculty/exams/<int:exam_id>/questions/<int:question_id>/regenerate/', RegenerateQuestionView.as_view(), name='faculty-question-regenerate'),
     path('faculty/exams/<int:exam_id>/questions/<int:question_id>/', QuestionUpdateView.as_view(), name='faculty-question-update'),
     path('faculty/exams/<int:exam_id>/publish/', PublishExamView.as_view(), name='faculty-exam-publish'),
     path('faculty/exams/<int:exam_id>/adjust-marks/', AdjustMarksView.as_view(), name='faculty-exam-adjust-marks'),
@@ -206,6 +196,19 @@ urlpatterns = [
     path('auth/reset-password/', ResetPasswordAPIView.as_view(), name='auth-reset-password'),
     path('auth/logout', LogoutAPIView.as_view(), name='auth-logout-no-slash'),
     path('auth/logout/', LogoutAPIView.as_view(), name='auth-logout'),
+    path('papers/generations/<int:job_id>/', JobDetailView.as_view(), name='compat-job-detail'),
+    path('papers/generations/<int:job_id>', JobDetailView.as_view(), name='compat-job-detail-no-slash'),
+    path('papers/generations/<int:job_id>/status/', JobStatusView.as_view(), name='compat-job-status'),
+    path('papers/generations/<int:job_id>/status', JobStatusView.as_view(), name='compat-job-status-no-slash'),
+    path('papers/generations/active/', ActiveJobView.as_view(), name='compat-job-active'),
+    path('papers/generations/active', ActiveJobView.as_view(), name='compat-job-active-no-slash'),
+    path('papers/generations/', JobsListView.as_view(), name='compat-jobs-list'),
+    path('papers/generations', JobsListView.as_view(), name='compat-jobs-list-no-slash'),
+    path('papers/generations/<int:job_id>/cancel/', CancelJobView.as_view(), name='compat-job-cancel'),
+    path('faculty/ai-models/', FacultyAiModelsAPIView.as_view(), name='api-faculty-ai-models'),
+    path('faculty/ai-models', FacultyAiModelsAPIView.as_view(), name='api-faculty-ai-models-no-slash'),
+    path('faculty/syllabus/parse/', FacultySyllabusParseAPIView.as_view(), name='api-faculty-syllabus-parse'),
+    path('faculty/syllabus/parse', FacultySyllabusParseAPIView.as_view(), name='api-faculty-syllabus-parse-no-slash'),
 ]
 
 if settings.DEBUG:

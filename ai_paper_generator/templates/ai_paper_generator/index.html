@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+    <title>Faculty Paper Generation Wizard | ExamAI</title>
+    <link rel="stylesheet" href="/static/ai_paper_generator/style.css?v={{ timestamp|default:'1' }}">
+</head>
+<body>
+    <div class="layout-wrapper">
+        <!-- Top Faculty Navigation Header -->
+        <header class="app-header">
+            <div class="header-container">
+                <div class="brand-group">
+                    <div class="brand-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                        </svg>
+                    </div>
+                    <span class="brand-name">ExamAI</span>
+                    <span class="role-badge">Faculty Portal</span>
+                </div>
+
+                <div class="header-actions">
+                    <button type="button" id="btn-run-diagnostics" class="btn-subtle" title="Run diagnostic checks on page, models, and API">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                        </svg>
+                        Run Diagnostics
+                    </button>
+
+                    <button type="button" id="btn-clear-draft" class="btn-subtle text-rose" title="Clear all fields and start a fresh paper">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                            <path d="M21 3v5h-5"/>
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                            <path d="M3 21v-5h5"/>
+                        </svg>
+                        Clear Form / Start New
+                    </button>
+
+                    <a href="/api/ai-generator/logs/" target="_blank" class="btn-subtle">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        Generation Logs
+                    </a>
+
+                    <div class="model-status-pill" id="header-model-pill">
+                        <span class="status-dot"></span>
+                        <span id="model-pill-text">Checking Ollama...</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Wizard Container -->
+        <main class="wizard-container">
+            <!-- Header Titles -->
+            <div class="wizard-header">
+                <h1 class="wizard-title">Faculty Paper Generation Wizard</h1>
+                <p class="wizard-subtitle">Design, curate, proctor, and publish exams with intelligent assistance</p>
+            </div>
+
+            <!-- Continue to Review Card if Finished Paper exists -->
+            <div id="continue-review-card" class="card card-emerald mb-4" style="display: none;">
+                <div class="flex-between">
+                    <div>
+                        <h3 class="text-emerald-900 font-bold" style="margin: 0; font-size: 1.05rem;">Draft Paper Waiting for Review</h3>
+                        <p class="text-emerald-700 text-sm" style="margin: 0.25rem 0 0 0;">You have generated questions ready for review, editing, and publishing.</p>
+                    </div>
+                    <button type="button" id="btn-continue-review" class="btn btn-emerald">Continue to Review &rarr;</button>
+                </div>
+            </div>
+
+            <!-- Form Validation Banner -->
+            <div id="validation-alert" class="alert alert-error" style="display: none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span id="alert-message">Validation Error</span>
+            </div>
+
+            <!-- Single Page Generation Wizard Form Section -->
+            <div id="wizard-form-section">
+                <!-- Card 1: Exam Details -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>1. Exam Details</h2>
+                        <span class="card-badge">Required</span>
+                    </div>
+
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label for="exam-title">Exam Title *</label>
+                            <input type="text" id="exam-title" class="form-control" placeholder="e.g. Midterm Examination - Distributed Systems" value="End-Semester Examination">
+                            <span class="field-error" id="err-title"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="subject-name">Subject / Course Name *</label>
+                            <input type="text" id="subject-name" class="form-control" placeholder="e.g. Computer Networks & Protocols" value="Computer Science">
+                            <span class="field-error" id="err-subject"></span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-3 mt-3">
+                        <div class="form-group">
+                            <label for="class-sem">Class / Semester</label>
+                            <input type="text" id="class-sem" class="form-control" placeholder="e.g. B.Tech CS - Sem 6" value="Semester 6">
+                            <span class="field-error" id="err-class_semester"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="exam-type">Exam Type</label>
+                            <select id="exam-type" class="form-control">
+                                <option value="Final Examination">Final Examination</option>
+                                <option value="Midterm Test">Midterm Test</option>
+                                <option value="Quiz">Class Quiz</option>
+                                <option value="Assignment">Assignment</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="duration-mins">Duration (Minutes) *</label>
+                            <input type="number" id="duration-mins" class="form-control" min="15" max="360" value="60">
+                            <span class="field-error" id="err-duration"></span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-2 mt-3">
+                        <div class="form-group">
+                            <label for="total-marks">Target Total Marks *</label>
+                            <input type="number" id="total-marks" class="form-control font-bold" min="5" max="500" value="50">
+                            <span class="field-error" id="err-total_marks"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="topics-input">Curriculum Topics (Comma-separated)</label>
+                            <input type="text" id="topics-input" class="form-control" placeholder="e.g. TCP/IP, Routing Algorithms, Network Security" value="Unit 1: Fundamentals, Unit 2: Core Concepts, Unit 3: Advanced Topics">
+                            <span class="field-error" id="err-topics"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 2: Question Type Blueprint -->
+                <div class="card mt-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h2>2. Question Blueprint Allocation</h2>
+                            <p class="section-desc">Configure question counts and marks. Sum must equal total marks exactly.</p>
+                        </div>
+                        <div class="blueprint-summary-pill" id="blueprint-pill">
+                            Allocated: <span id="allocated-marks-num">50</span> / <span id="target-marks-num">50</span> M
+                        </div>
+                    </div>
+
+                    <!-- Blueprint Table -->
+                    <table class="blueprint-table">
+                        <thead>
+                            <tr>
+                                <th>Enable</th>
+                                <th>Question Type</th>
+                                <th>Questions</th>
+                                <th>Marks Each</th>
+                                <th>Subtotal</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blueprint-rows">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+
+                    <div class="blueprint-actions">
+                        <button type="button" id="btn-auto-distribute" class="btn btn-outline">
+                            Auto-Distribute Blueprint
+                        </button>
+                        <span id="marks-match-status" class="status-match text-emerald">
+                            Matches Target Marks Exactly
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Card 3: Multi-Document Syllabus & RAG Upload -->
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h2>3. Syllabus & Reference Documents (RAG)</h2>
+                        <span class="card-badge">Retrieval-Augmented</span>
+                    </div>
+
+                    <div class="upload-dropzone" id="dropzone">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        <p class="dropzone-text"><strong>Click to upload</strong> or drag and drop syllabus / notes</p>
+                        <p class="dropzone-hint">Supports PDF, DOCX, TXT, PPTX (Separate index per generation job)</p>
+                        <input type="file" id="file-input" multiple accept=".pdf,.docx,.txt,.pptx" style="display:none;">
+                    </div>
+                    <ul id="file-list" class="uploaded-files-list"></ul>
+                </div>
+
+                <!-- Card 4: Ollama Model Assignments -->
+                <div class="card mt-4">
+                    <div class="card-header flex-between">
+                        <h2>4. AI Model Roles (Local Ollama)</h2>
+                        <button type="button" id="btn-refresh-models" class="btn-subtle">Refresh Models</button>
+                    </div>
+
+                    <div class="models-grid">
+                        <div class="model-role-card">
+                            <span class="role-tag">Model 1: Generator</span>
+                            <select id="select-generator" class="form-control"></select>
+                            <p class="role-desc">Main question writer with strict JSON formatting.</p>
+                        </div>
+                        <div class="model-role-card">
+                            <span class="role-tag">Model 2: Validator</span>
+                            <select id="select-validator" class="form-control"></select>
+                            <p class="role-desc">Rule checker reviewing accuracy and syllabus match.</p>
+                        </div>
+                        <div class="model-role-card">
+                            <span class="role-tag">Model 3: Fallback / Repair</span>
+                            <select id="select-fallback" class="form-control"></select>
+                            <p class="role-desc">Fast fallback used when repair is required.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Generate Action Button -->
+                <div class="action-footer mt-4" style="text-align: right;">
+                    <button type="button" id="btn-generate-paper" class="btn btn-primary btn-lg" style="min-width: 260px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        Generate Examination Paper (AI)
+                    </button>
+                    <div id="generate-button-hint" class="generate-hint text-amber mt-2" style="font-size: 0.82rem; font-weight: 600;"></div>
+                </div>
+            </div>
+
+            <!-- Live Generation Progress Card (Shown during generation) -->
+            <div id="progress-section" class="card text-center" style="display: none;">
+                <div class="spinner-pulse">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                    </svg>
+                </div>
+                <h2 id="progress-title" class="mt-3">Synthesizing Examination Paper</h2>
+                <p id="progress-message" class="text-muted">Local Ollama RAG pipeline running. You can leave this page anytime and return.</p>
+
+                <div class="progress-bar-track mt-4">
+                    <div id="progress-bar-fill" class="progress-bar-fill" style="width: 5%;"></div>
+                </div>
+
+                <div class="progress-metrics flex-between mt-2">
+                    <span id="progress-slot-label" class="text-sm font-semibold">Preparing slot 1...</span>
+                    <span id="progress-percent-label" class="text-sm font-bold text-primary">5%</span>
+                </div>
+
+                <div class="mt-4">
+                    <button type="button" id="btn-cancel-generation" class="btn btn-outline text-rose">
+                        Cancel Generation
+                    </button>
+                </div>
+            </div>
+
+            <!-- Review Generated Paper Section -->
+            <div id="review-section" class="card mt-4" style="display: none;">
+                <div class="card-header flex-between">
+                    <div>
+                        <h2>Review & Refine Generated Paper</h2>
+                        <p class="section-desc">Inspect, edit, or regenerate individual questions before saving.</p>
+                    </div>
+                    <div class="export-actions">
+                        <button type="button" id="btn-export-docx" class="btn btn-outline">Export DOCX</button>
+                        <button type="button" id="btn-export-pdf" class="btn btn-outline">Export PDF</button>
+                    </div>
+                </div>
+
+                <div class="review-filters">
+                    <label>Filter Type:
+                        <select id="filter-type" class="form-control filter-select">
+                            <option value="ALL">All Types</option>
+                            <option value="MCQ">MCQ</option>
+                            <option value="True/False">True/False</option>
+                            <option value="Fill in the Blank">Fill in the Blank</option>
+                            <option value="Short Answer">Short Answer</option>
+                            <option value="Long Answer">Long Answer</option>
+                        </select>
+                    </label>
+                </div>
+
+                <div id="questions-list" class="questions-container mt-3"></div>
+            </div>
+        </main>
+
+                <!-- Diagnostics Modal -->
+        <div id="diagnostics-modal" class="diagnostics-modal-backdrop" style="display: none;">
+            <div class="diagnostics-modal-card">
+                <div class="diagnostics-modal-header">
+                    <h3>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                        </svg>
+                        Page & System Diagnostics
+                    </h3>
+                    <button type="button" id="btn-close-diagnostics" class="btn-close-modal">&times;</button>
+                </div>
+                <div class="diagnostics-modal-body" id="diagnostics-content">
+                    <p class="text-muted">Running checks...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sticky Bottom Summary Bar -->
+        <div id="sticky-action-bar" class="sticky-action-bar">
+            <div class="sticky-bar-content">
+                <div class="sticky-bar-info">
+                    <span class="sticky-pill" id="sticky-marks-pill">Allocated: 50 / 50 M</span>
+                    <span id="sticky-questions-count" class="sticky-count-text">28 Questions</span>
+                </div>
+                <div class="sticky-bar-action">
+                    <span id="sticky-hint" class="sticky-hint-text"></span>
+                    <button type="button" id="btn-sticky-generate" class="btn btn-primary">Generate with AI</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+        <script>
+        window.EXAMAI_CONFIG = {
+            authToken: "{{ auth_token|default:'' }}",
+            csrfToken: "{{ csrf_token|default:'' }}",
+            user: {{ user_json|default:'{}'|safe }}
+        };
+    </script>
+    <script src="/static/ai_paper_generator/app.js?v={{ timestamp|default:'1' }}"></script>
+</body>
+</html>

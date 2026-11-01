@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'faculty',
     'admins',
     'superadmin',
+    'ai_paper_generator',
     'rest_framework_simplejwt.token_blacklist',
 ]
 
