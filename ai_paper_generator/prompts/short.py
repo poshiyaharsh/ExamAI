@@ -1,6 +1,6 @@
 """
 Short Answer Prompt Template (Section 5.5).
-Model: llama3.2:3b
+Model: llama3.2:3b (English) / gemma3:4b (Multilingual)
 """
 import copy
 from typing import Any, Dict, List
@@ -43,7 +43,8 @@ def build_batch_short_prompt(
     slots: List[Dict[str, Any]],
     context: str,
     unit: str = "General",
-    words_per_mark: int = 35
+    words_per_mark: int = 35,
+    language: str = "en"
 ) -> str:
     """Builds prompt for batch Short Answer questions (Section 5.5)."""
     n = len(slots)
@@ -52,7 +53,7 @@ def build_batch_short_prompt(
     topics = list(set(s.get('topic', unit) for s in slots if s.get('topic')))
     topic_str = ", ".join(topics) if topics else unit
 
-    return f"""Write exactly {n} short-answer questions worth {marks} marks each.
+    prompt = f"""Write exactly {n} short-answer questions worth {marks} marks each.
 Subject: {subject}
 Unit/topic: {topic_str}
 Difficulty of each question in order: {difficulties}
@@ -65,9 +66,16 @@ Rules:
 2. "answer_points" has exactly {marks} items. Each item is one clear, complete sentence of at most {words_per_mark} words, and each item is worth one mark.
 3. The points are different from each other and use only facts from the CONTEXT.
 4. "source_quote" is an exact piece of 8 to 25 words copied from the CONTEXT.
-5. Generate all {n} questions in the "questions" array.
+5. Generate all {n} questions in the "questions" array."""
 
-Return only valid JSON matching the schema."""
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""
+6. LANGUAGE REQUIREMENT: Write the question, model answer, and all answer_points in {lang_name} ({language}) using its native script. Keep JSON keys exactly in English. Keep technical terms, formulas, code, and proper nouns as in the CONTEXT."""
+
+    prompt += "\n\nReturn only valid JSON matching the schema."
+    return prompt
 
 
 def build_short_prompt(
@@ -76,7 +84,8 @@ def build_short_prompt(
     difficulty: str,
     marks: int,
     context: str,
-    words_per_mark: int = 35
+    words_per_mark: int = 35,
+    language: str = "en"
 ) -> str:
     slot = [{'topic': topic, 'difficulty': difficulty, 'marks': marks, 'slot_index': 1}]
-    return build_batch_short_prompt(subject, slot, context, unit=topic, words_per_mark=words_per_mark)
+    return build_batch_short_prompt(subject, slot, context, unit=topic, words_per_mark=words_per_mark, language=language)

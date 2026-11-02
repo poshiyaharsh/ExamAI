@@ -2,11 +2,12 @@
 Repair and Fallback Coordinator.
 Coordinates:
 1. Main model attempts (at most 2 attempts per slot)
-2. AI validation check (phi3:mini) for Short/Long or suspicious slots
+2. AI validation check for Short/Long or suspicious slots
 3. Deduplication check
 4. Fallback model attempt with gemma3:4b (1 attempt) if main model fails
 5. If still fails, constructs deterministic grounded question and marks slot failed in UI and logs.
 Never silently drops a slot.
+Multilingual support passing language through all verification stages.
 """
 import logging
 from typing import Dict, Any, Optional
@@ -31,7 +32,8 @@ def generate_and_validate_slot_with_repair(
     model_validator: str,
     model_fallback: str,
     job_id: int,
-    progress_callback: Optional[callable] = None
+    progress_callback: Optional[callable] = None,
+    language: str = "en"
 ) -> Dict[str, Any]:
     """
     Executes single-slot generation with strict retry limits (Phase 4.8):
@@ -44,7 +46,7 @@ def generate_and_validate_slot_with_repair(
     max_main_attempts = 2  # Phase 4.8: at most 2 retries with main model
     expansion_level = 0
 
-    generator = QuestionGenerator(client, retriever, job_id)
+    generator = QuestionGenerator(client, retriever, job_id, language=language)
 
     # Phase 1: Try Main Model (up to 2 attempts)
     for attempt in range(1, max_main_attempts + 1):
@@ -61,7 +63,7 @@ def generate_and_validate_slot_with_repair(
                 continue
 
             # Tier 1 Instant Rules
-            is_valid, reason = validate_rules(cand, job_id=job_id)
+            is_valid, reason = validate_rules(cand, job_id=job_id, language=language)
             if not is_valid:
                 log_event(
                     'VALIDATION',
@@ -71,7 +73,7 @@ def generate_and_validate_slot_with_repair(
                 )
                 continue
 
-            # Tier 2 AI check (phi3:mini) ONLY for Short/Long or suspicious
+            # Tier 2 AI check ONLY for Short/Long or suspicious
             if should_run_ai_validation(cand, is_valid):
                 context_snippet = retriever.retrieve_context_for_slot(slot.get('topic', 'General'), q_type, slot.get('difficulty', 'Medium'))
                 m2_valid, m2_reason = validate_with_model2(cand, context_snippet, client, model_validator, job_id)
@@ -126,7 +128,7 @@ def generate_and_validate_slot_with_repair(
         cand = generator.generate_single_slot(
             slot, subject, model_name=model_fallback, expansion_level=expansion_level
         )
-        is_valid, reason = validate_rules(cand, job_id=job_id)
+        is_valid, reason = validate_rules(cand, job_id=job_id, language=language)
         if is_valid:
             is_dup, _ = deduplicator.is_duplicate(cand)
             if not is_dup:
@@ -152,7 +154,7 @@ def generate_and_validate_slot_with_repair(
         level=logging.WARNING,
         slot_number=slot_num
     )
-    cand = construct_deterministic_slot(slot, subject, retriever)
+    cand = construct_deterministic_slot(slot, subject, retriever, language=language)
     cand['failed'] = True
     cand['model_used'] = 'deterministic_fallback'
     cand['retries'] = max_main_attempts + 1
@@ -160,7 +162,12 @@ def generate_and_validate_slot_with_repair(
     return cand
 
 
-def construct_deterministic_slot(slot: Dict[str, Any], subject: str, retriever: RAGRetriever) -> Dict[str, Any]:
+def construct_deterministic_slot(
+    slot: Dict[str, Any],
+    subject: str,
+    retriever: RAGRetriever,
+    language: str = "en"
+) -> Dict[str, Any]:
     """Generates a valid, grounded question fallback so no slot is ever dropped."""
     slot_num = slot.get('slot_index', 1)
     q_type = slot.get('type', 'MCQ')
@@ -212,7 +219,7 @@ def construct_deterministic_slot(slot: Dict[str, Any], subject: str, retriever: 
         q_text = f"Explain the fundamental role and practical application of {topic} in {subject}."
         ans_text = f"{topic} is an essential concept in {subject}. It provides the theoretical framework and operational rules required to analyze, design, and optimize modern systems effectively."
         raw_pts = [f"Definition of {topic}", f"Operational significance in {subject}", "Key practical outcomes"]
-        rub = build_rubric('Short Answer', marks, raw_pts, question_text=q_text, model_answer=ans_text)
+        rub = build_rubric('Short Answer', marks, raw_pts, question_text=q_text, model_answer=ans_text, language=language)
         return {
             'slot_index': slot_num,
             'type': 'Short Answer',
@@ -233,7 +240,7 @@ def construct_deterministic_slot(slot: Dict[str, Any], subject: str, retriever: 
             "Analysis of operational trade-offs",
             "Summary of best practices and system constraints"
         ]
-        rub = build_rubric('Long Answer', marks, raw_pts, question_text=q_text, model_answer=ans_text)
+        rub = build_rubric('Long Answer', marks, raw_pts, question_text=q_text, model_answer=ans_text, language=language)
         return {
             'slot_index': slot_num,
             'type': 'Long Answer',

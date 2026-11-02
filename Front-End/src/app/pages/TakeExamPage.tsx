@@ -893,7 +893,7 @@ export function TakeExamPage() {
                   Question {currentIndex + 1} of {questions.length}
                 </div>
                 {isFillBlank ? (
-                  <h3 className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
+                  <h3 dir="auto" className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
                     {currentQuestion.text.split(/_{3,}/).map((chunk, cIdx, arr) => (
                       <span key={cIdx}>
                         {chunk}
@@ -906,7 +906,7 @@ export function TakeExamPage() {
                     ))}
                   </h3>
                 ) : (
-                  <h3 className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
+                  <h3 dir="auto" className="text-base sm:text-lg font-medium leading-relaxed text-slate-900">
                     {currentQuestion.text}
                   </h3>
                 )}
@@ -944,7 +944,7 @@ export function TakeExamPage() {
                         >
                           {labelLetter}
                         </span>
-                        <span className="text-sm sm:text-base font-normal text-slate-800 leading-normal">
+                        <span dir="auto" className="text-sm sm:text-base font-normal text-slate-800 leading-normal">
                           {option}
                         </span>
                       </label>
@@ -995,6 +995,7 @@ export function TakeExamPage() {
                           Blank #{bIdx + 1}
                         </span>
                         <input
+                          dir="auto"
                           type="text"
                           value={currentBlanks[bIdx] || ""}
                           onChange={(e) => setBlankValue(currentQuestion.id, bIdx, e.target.value, totalBlanks)}
@@ -1011,6 +1012,7 @@ export function TakeExamPage() {
               {isSubjective && (
                 <div className="space-y-2">
                   <textarea
+                    dir="auto"
                     rows={qType === "short_answer" ? 6 : 10}
                     value={textAnswer}
                     onChange={(e) => setAnswer(currentQuestion.id, e.target.value)}

@@ -30,7 +30,7 @@ SUPPORTED_LANGUAGES = [
 ]
 
 # Initialize Lingua detector once at module load
-_DETECTOR = LanguageDetectorBuilder.from_languages(*SUPPORTED_LANGUAGES).with_preheating().build()
+_DETECTOR = LanguageDetectorBuilder.from_languages(*SUPPORTED_LANGUAGES).build()
 
 # ISO 639-1 code mapping
 LINGUA_TO_ISO = {
@@ -82,6 +82,11 @@ ISO_TO_SCRIPT = {
 }
 
 RTL_LANGUAGES = {'ar', 'ur', 'he', 'fa'}
+
+
+def get_language_name(code: str) -> str:
+    """Returns human-readable language name for an ISO code."""
+    return ISO_TO_NAME.get(str(code).lower(), 'English')
 
 
 def get_unicode_script(char: str) -> str:
@@ -159,16 +164,12 @@ def detect_language(text: str) -> Tuple[str, float, Dict[str, Any]]:
     scripts = analyze_scripts(cleaned)
 
     # 1. First-class Unicode Script Anchors:
-    # If text is heavily Gujarati script (>40%), it is unambiguously Gujarati
     if scripts.get('Gujarati', 0) >= 0.35:
         return 'gu', max(0.95, scripts['Gujarati']), {'script': 'Gujarati', 'script_share': scripts['Gujarati']}
-    # If text has Tamil script (>35%)
     if scripts.get('Tamil', 0) >= 0.35:
         return 'ta', max(0.95, scripts['Tamil']), {'script': 'Tamil', 'script_share': scripts['Tamil']}
-    # If text has Bengali script (>35%)
     if scripts.get('Bengali', 0) >= 0.35:
         return 'bn', max(0.95, scripts['Bengali']), {'script': 'Bengali', 'script_share': scripts['Bengali']}
-    # If text has Japanese Kana
     if scripts.get('JapaneseKana', 0) >= 0.15:
         return 'ja', 0.95, {'script': 'JapaneseKana', 'script_share': scripts['JapaneseKana']}
 
@@ -185,7 +186,6 @@ def detect_language(text: str) -> Tuple[str, float, Dict[str, Any]]:
         # Devanagari Disambiguation (Hindi vs Marathi)
         dev_share = scripts.get('Devanagari', 0)
         if dev_share >= 0.35:
-            # Check Hindi vs Marathi scores
             hi_score = next((c.value for c in confidences if c.language == Language.HINDI), 0.0)
             mr_score = next((c.value for c in confidences if c.language == Language.MARATHI), 0.0)
             if mr_score > hi_score and mr_score > 0.2:
@@ -208,7 +208,6 @@ def detect_language(text: str) -> Tuple[str, float, Dict[str, Any]]:
                 best_score = max(ar_score, arab_share)
 
         # Hinglish Detection (Hindi written in Devanagari with technical English terms)
-        # If Devanagari is dominant or substantial (>25%), treat as Hindi
         if dev_share >= 0.25 and best_iso == 'en':
             best_iso = 'hi'
             best_score = 0.85
@@ -223,17 +222,14 @@ def detect_language(text: str) -> Tuple[str, float, Dict[str, Any]]:
         return 'en', 0.5, {'error': str(exc), 'fallback': 'en'}
 
 
-def is_garbled_legacy_text(text: str) -> Tuple[bool, str]:
+def is_garbled_legacy_text(text: str) -> bool:
     """
     Detects if text extracted from a PDF/DOCX represents legacy 8-bit font gibberish
     (such as Kruti Dev, DevLys, Shree-Lipi, or Saral).
-    Characteristics:
-    - High concentration of unusual ASCII punctuation sequences (e.g. 'iz'u', 'dksbZ', ';k', 'vFkok')
-    - Absence of actual Devanagari/Gujarati codepoints while having non-English word patterns
-    - High frequency of unpronounceable consonant clusters in ASCII
+    Returns True if legacy text is detected.
     """
     if not text or len(text) < 40:
-        return False, ""
+        return False
 
     sample = text[:3000]
     total_chars = len(sample)
@@ -245,29 +241,32 @@ def is_garbled_legacy_text(text: str) -> Tuple[bool, str]:
     ]
     kruti_hits = sum(1 for m in kruti_markers if m in sample)
     if kruti_hits >= 2:
-        return True, "Legacy Kruti Dev/DevLys 8-bit font detected."
+        return True
 
     # Shree-Lipi / Saral Gujarati markers
     shree_markers = ['Á', 'Â', 'Ã', 'Ä', 'Å', 'Æ', 'Ç', 'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï']
     shree_hits = sum(sample.count(ch) for ch in shree_markers)
     if shree_hits >= 15:
-        return True, "Legacy Shree-Lipi/Saral 8-bit font detected."
+        return True
 
     # Extreme ratio of misplaced symbols
     weird_symbols = sum(1 for ch in sample if ch in '^~`|\\_§±')
     if weird_symbols / total_chars > 0.08:
-        return True, "Abnormal symbol density indicating non-Unicode encoding."
+        return True
 
-    return False, ""
+    return False
 
 
-def determine_paper_language(documents_text: List[Dict[str, Any]]) -> Tuple[str, float, Dict[str, Any]]:
+def determine_paper_language(
+    documents_text: List[Any],
+    topics: Optional[List[str]] = None
+) -> Tuple[str, float, Dict[str, Any]]:
     """
-    Deterministically determines the paper language across all uploaded documents.
+    Deterministically determines the paper language across all uploaded documents and blueprint topics.
     Weighted by text length.
     If syllabus is explicitly marked, syllabus language takes precedence.
     """
-    if not documents_text:
+    if not documents_text and not topics:
         return 'en', 1.0, {'status': 'default', 'reason': 'no_documents'}
 
     language_weights: Dict[str, float] = {}
@@ -275,21 +274,39 @@ def determine_paper_language(documents_text: List[Dict[str, Any]]) -> Tuple[str,
     syllabus_conf: float = 0.0
     total_weight = 0.0
 
-    for doc in documents_text:
-        raw_text = doc.get('text', '')
-        if not raw_text:
+    # 1. Process documents
+    for doc in (documents_text or []):
+        if isinstance(doc, dict):
+            raw_text = doc.get('text', '')
+            source = doc.get('source', '').lower()
+            is_syllabus = doc.get('is_syllabus', False) or 'syllabus' in source
+        else:
+            raw_text = str(doc)
+            source = ''
+            is_syllabus = False
+
+        if not raw_text.strip():
             continue
 
         weight = max(1.0, float(len(raw_text)))
         lang_code, conf, meta = detect_language(raw_text)
 
-        is_syllabus = doc.get('is_syllabus', False) or 'syllabus' in doc.get('source', '').lower()
         if is_syllabus and syllabus_lang is None:
             syllabus_lang = lang_code
             syllabus_conf = conf
 
         language_weights[lang_code] = language_weights.get(lang_code, 0.0) + (weight * conf)
         total_weight += weight
+
+    # 2. Process blueprint topics if present
+    if topics:
+        combined_topics = " ".join(topics)
+        if len(combined_topics.strip()) >= 6:
+            lang_code, conf, _ = detect_language(combined_topics)
+            # Give curriculum topics significant weight (equivalent to 1000 characters)
+            weight = 1000.0
+            language_weights[lang_code] = language_weights.get(lang_code, 0.0) + (weight * conf)
+            total_weight += weight
 
     if not language_weights or total_weight == 0:
         return 'en', 1.0, {'status': 'default', 'reason': 'empty_weights'}
@@ -318,3 +335,44 @@ def determine_paper_language(documents_text: List[Dict[str, Any]]) -> Tuple[str,
         'language_name': ISO_TO_NAME.get(decision, 'English'),
         'script': ISO_TO_SCRIPT.get(decision, 'Latin'),
     }
+
+
+# Alias for backward compatibility
+detect_paper_language = determine_paper_language
+
+
+def verify_question_language(question_data: Dict[str, Any], target_language: str) -> Tuple[bool, str]:
+    """
+    Verifies that a generated question item matches the target language.
+    If target_language is English ('en'), returns True.
+    If target_language is non-English and the item contains solely English ASCII without target script,
+    detects drift and flags for repair.
+    """
+    if not target_language or target_language == 'en':
+        return True, ""
+
+    text = (question_data.get('question') or '') + ' ' + (question_data.get('answer') or '')
+    if not text.strip():
+        return True, ""
+
+    expected_script = ISO_TO_SCRIPT.get(target_language)
+    scripts = analyze_scripts(text)
+
+    # If target is Devanagari (hi, mr) but no Devanagari characters:
+    if expected_script == 'Devanagari':
+        if scripts.get('Devanagari', 0.0) < 0.15 and scripts.get('Latin', 0.0) > 0.80:
+            return False, f"Language drift: Question was output in English instead of Hindi/Devanagari."
+    elif expected_script == 'Gujarati':
+        if scripts.get('Gujarati', 0.0) < 0.15 and scripts.get('Latin', 0.0) > 0.80:
+            return False, f"Language drift: Question was output in English instead of Gujarati."
+    elif expected_script == 'Arabic':
+        if scripts.get('Arabic', 0.0) < 0.15 and scripts.get('Latin', 0.0) > 0.80:
+            return False, f"Language drift: Question was output in English instead of Arabic script."
+    elif expected_script == 'Bengali':
+        if scripts.get('Bengali', 0.0) < 0.15 and scripts.get('Latin', 0.0) > 0.80:
+            return False, f"Language drift: Question was output in English instead of Bengali."
+    elif expected_script == 'Tamil':
+        if scripts.get('Tamil', 0.0) < 0.15 and scripts.get('Latin', 0.0) > 0.80:
+            return False, f"Language drift: Question was output in English instead of Tamil."
+
+    return True, ""

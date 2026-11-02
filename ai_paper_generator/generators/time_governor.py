@@ -3,12 +3,12 @@ Time Governor (Section 2.5 & 2.7).
 Enforces 540s (9 minutes) total generation budget for 100-mark paper and 270s for 50-mark paper.
 Features:
 1. Measures tokens per second in real-time.
-2. Projects completion time from blueprint.
+2. Projects completion time from blueprint, factoring in multilingual token expansion.
 3. Applies ordered graceful degradation:
    (a) skip AI validator for Short answers
    (b) reduce Long and Short word targets (floor: 25 words/mark)
-   (c) switch remaining batches to granite3.3:2b
-   (d) switch Long answers to granite3.3:2b
+   (c) switch remaining batches to granite3.3:2b (English/Latin only; never for Indic/Arabic)
+   (d) switch Long answers to granite3.3:2b (English/Latin only; never for Indic/Arabic)
 4. Speed calibration benchmark function.
 5. Never drops question counts or marks.
 """
@@ -21,7 +21,8 @@ from ..config import (
     TIME_BUDGET_SEC,
     BASE_TOKENS_BY_TYPE,
     MODEL_ROLES,
-    LOGS_DIR
+    LOGS_DIR,
+    get_token_expansion_factor
 )
 from ..logging_setup import log_event, log_timing
 
@@ -31,12 +32,20 @@ CALIBRATION_FILE = LOGS_DIR / "speed_calibration.json"
 
 
 class TimeGovernor:
-    def __init__(self, job_id: int, total_marks: int, blueprint: List[Dict[str, Any]], start_time: Optional[float] = None):
+    def __init__(
+        self,
+        job_id: int,
+        total_marks: int,
+        blueprint: List[Dict[str, Any]],
+        start_time: Optional[float] = None,
+        language: str = "en"
+    ):
         self.job_id = job_id
         self.total_marks = total_marks
         self.blueprint = blueprint
         self.start_time = start_time or time.time()
         self.budget_sec = TIME_BUDGET_SEC if total_marks >= 70 else 270.0
+        self.language = language or "en"
 
         # Degradation state flags
         self.skip_short_ai_val = False
@@ -73,7 +82,7 @@ class TimeGovernor:
             self.observed_tps[model] = tps
 
     def estimate_remaining_tokens(self, remaining_slots: List[Dict[str, Any]]) -> int:
-        """Calculates expected token count for all remaining slots."""
+        """Calculates expected token count for all remaining slots, scaled by language factor."""
         total = 0
         for s in remaining_slots:
             q_type = s.get('type')
@@ -88,7 +97,9 @@ class TimeGovernor:
                 total += self.words_per_mark_long * marks + 40
             else:
                 total += 100
-        return total
+
+        factor = get_token_expansion_factor(self.language)
+        return int(total * factor)
 
     def evaluate_and_govern(
         self,
@@ -99,6 +110,7 @@ class TimeGovernor:
         """
         Projects completion time and applies graceful degradation if over budget.
         Returns governor instructions and estimated seconds remaining.
+        Guarantees Indic/Arabic jobs never degrade to granite3.3:2b.
         """
         elapsed = time.time() - self.start_time
         remaining_budget = max(5.0, self.budget_sec - elapsed)
@@ -125,14 +137,16 @@ class TimeGovernor:
                 dec = f"Governor: Step (b): Reduced word targets to Short={self.words_per_mark_short}w/m, Long={self.words_per_mark_long}w/m."
                 self._log_decision(dec)
 
-            # Level 3: Route remaining subjective batches to faster granite3.3:2b
-            if overage > 60 and not self.use_fast_for_subjective:
+            # Level 3: Route remaining subjective batches to faster granite3.3:2b (ONLY for English/Latin)
+            # Never degrade Indic or Arabic to granite3.3:2b as it causes language corruption
+            is_indic_or_arabic = self.language in ('hi', 'gu', 'mr', 'ta', 'bn', 'ur', 'ar')
+            if overage > 60 and not self.use_fast_for_subjective and not is_indic_or_arabic:
                 self.use_fast_for_subjective = True
                 dec = f"Governor: Step (c): Routed remaining Short Answer batches to granite3.3:2b."
                 self._log_decision(dec)
 
-            # Level 4: Route Long answers to granite3.3:2b
-            if overage > 100 and not self.use_fast_for_long:
+            # Level 4: Route Long answers to granite3.3:2b (ONLY for English/Latin)
+            if overage > 100 and not self.use_fast_for_long and not is_indic_or_arabic:
                 self.use_fast_for_long = True
                 dec = f"Governor: Step (d): Routed Long Answer generation to granite3.3:2b."
                 self._log_decision(dec)

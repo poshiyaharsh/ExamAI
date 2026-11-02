@@ -1,5 +1,6 @@
 """
 Prompts for AI Validator (5.7), Batched Repair (5.8), and Distractor Repair (5.9).
+Multilingual support preserving native scripts and ensure_ascii=False JSON formatting.
 """
 import json
 from typing import Any, Dict, List
@@ -38,9 +39,9 @@ DISTRACTOR_REPAIR_SCHEMA = {
 }
 
 
-def build_validator_prompt(context: str, items: List[Dict[str, Any]]) -> str:
+def build_validator_prompt(context: str, items: List[Dict[str, Any]], language: str = "en") -> str:
     """Builds prompt for Section 5.7 AI Validator (batches of 5)."""
-    items_json = json.dumps(items, indent=2)
+    items_json = json.dumps(items, indent=2, ensure_ascii=False)
     return f"""You check exam items against the CONTEXT. For each item decide pass or fail. Fail if the answer is wrong or not supported by the CONTEXT, the answer does not answer the question, facts are invented, the answer is incomplete for its marks, or the question is unclear.
 
 CONTEXT:
@@ -58,11 +59,12 @@ def build_repair_prompt(
     issues: str,
     context: str,
     q_type: str,
-    marks: int
+    marks: int,
+    language: str = "en"
 ) -> str:
     """Builds prompt for Section 5.8 Repair."""
-    item_json = json.dumps(item, indent=2)
-    return f"""Fix this exam item so that it is correct and follows the rules. Use only the CONTEXT.
+    item_json = json.dumps(item, indent=2, ensure_ascii=False)
+    prompt = f"""Fix this exam item so that it is correct and follows the rules. Use only the CONTEXT.
 Type: {q_type}
 Marks: {marks}
 
@@ -73,9 +75,15 @@ ITEM:
 {item_json}
 
 PROBLEMS:
-{issues}
+{issues}"""
 
-Return only the corrected item in the same JSON format as the item."""
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""\nLANGUAGE REQUIREMENT: Write the corrected question, options, answers, and rubric points in {lang_name} ({language}) using its native script. Keep JSON keys exactly in English."""
+
+    prompt += "\n\nReturn only the corrected item in the same JSON format as the item."
+    return prompt
 
 
 def build_distractor_repair_prompt(
@@ -83,17 +91,24 @@ def build_distractor_repair_prompt(
     correct: str,
     existing_distractors: List[str],
     context: str,
-    k: int
+    k: int,
+    language: str = "en"
 ) -> str:
     """Builds prompt for Section 5.9 Distractor Repair."""
-    return f"""Question: {question}
+    prompt = f"""Question: {question}
 Correct answer: {correct}
 Already used wrong answers: {existing_distractors}
 
 CONTEXT:
 {context}
 
-Write {k} more wrong but believable answers. They must be similar in length and style to the correct answer, clearly wrong according to the CONTEXT, and different from the correct answer and from each other.
+Write {k} more wrong but believable answers. They must be similar in length and style to the correct answer, clearly wrong according to the CONTEXT, and different from the correct answer and from each other."""
 
-Return only this JSON:
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""\nLANGUAGE REQUIREMENT: Write the distractors in {lang_name} ({language}) using its native script."""
+
+    prompt += f"""\n\nReturn only this JSON:
 {{"distractors":[""]}}"""
+    return prompt

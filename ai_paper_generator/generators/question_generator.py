@@ -7,6 +7,7 @@ Supports:
 4. Normalization of MCQs (Section 3.3) ensuring 4 unique options and exact correct answer.
 5. RAG context integration with INSUFFICIENT_CONTEXT fallback expansion.
 6. Blueprint authority: marks strictly taken from blueprint, never model output.
+7. Multilingual support: passes language to prompt builders and rubric construction, scales token budgets.
 """
 import re
 import logging
@@ -20,7 +21,7 @@ from ..prompts.short import build_batch_short_prompt, build_short_prompt, SHORT_
 from ..prompts.long import build_batch_long_prompt, build_long_prompt, LONG_JSON_SCHEMA, get_batch_long_schema
 from ..prompts.system_rules import BASE_SYSTEM_PROMPT
 from ..logging_setup import log_event
-from ..config import TEMPERATURE_BY_TYPE, BASE_TOKENS_BY_TYPE
+from ..config import TEMPERATURE_BY_TYPE, BASE_TOKENS_BY_TYPE, get_token_expansion_factor
 from .json_repair import parse_and_repair_json, extract_questions_list
 from .mcq_normalizer import normalize_mcq
 from .rubric_builder import build_rubric
@@ -29,10 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 class QuestionGenerator:
-    def __init__(self, client: OllamaClient, retriever: RAGRetriever, job_id: int):
+    def __init__(
+        self,
+        client: OllamaClient,
+        retriever: RAGRetriever,
+        job_id: int,
+        language: str = "en"
+    ):
         self.client = client
         self.retriever = retriever
         self.job_id = job_id
+        self.language = language or "en"
 
     def generate_batch(
         self,
@@ -58,35 +66,36 @@ class QuestionGenerator:
         schema = None
         n_slots = len(slots)
         if q_type == 'MCQ':
-            prompt = build_batch_mcq_prompt(subject, slots, combined_context)
+            prompt = build_batch_mcq_prompt(subject, slots, combined_context, language=self.language)
             schema = get_batch_mcq_schema(n_slots)
             base_tok = 135
         elif q_type == 'True/False':
-            prompt = build_batch_true_false_prompt(subject, slots, combined_context)
+            prompt = build_batch_true_false_prompt(subject, slots, combined_context, language=self.language)
             schema = get_batch_true_false_schema(n_slots)
             base_tok = 90
         elif q_type == 'Fill in the Blank':
-            prompt = build_batch_fill_blank_prompt(subject, slots, combined_context)
+            prompt = build_batch_fill_blank_prompt(subject, slots, combined_context, language=self.language)
             schema = get_batch_fill_blank_schema(n_slots)
             base_tok = 90
         elif q_type == 'Short Answer':
-            prompt = build_batch_short_prompt(subject, slots, combined_context, words_per_mark=words_per_mark_short)
+            prompt = build_batch_short_prompt(subject, slots, combined_context, words_per_mark=words_per_mark_short, language=self.language)
             schema = get_batch_short_schema(n_slots)
             avg_marks = slots[0].get('marks', 2) if slots else 2
             base_tok = words_per_mark_short * avg_marks + 80
         elif q_type == 'Long Answer':
-            prompt = build_batch_long_prompt(subject, slots, combined_context, words_per_mark=words_per_mark_long)
+            prompt = build_batch_long_prompt(subject, slots, combined_context, words_per_mark=words_per_mark_long, language=self.language)
             schema = get_batch_long_schema(n_slots)
             avg_marks = slots[0].get('marks', 5) if slots else 5
             base_tok = words_per_mark_long * avg_marks + 100
         else:
-            prompt = build_batch_mcq_prompt(subject, slots, combined_context)
+            prompt = build_batch_mcq_prompt(subject, slots, combined_context, language=self.language)
             schema = get_batch_mcq_schema(n_slots)
             base_tok = 135
 
         temp = TEMPERATURE_BY_TYPE.get(q_type, 0.25)
-        # Token budget (Section 2.1): expected tokens * 1.5 + 120
-        expected_tokens = int(n_slots * base_tok * 1.5) + 120
+        # Token budget scaled by language token expansion factor
+        expansion_factor = get_token_expansion_factor(self.language)
+        expected_tokens = int(n_slots * base_tok * 1.5 * expansion_factor) + 120
         num_predict = min(4096, max(200, expected_tokens))
 
         raw_output = ""
@@ -136,7 +145,11 @@ class QuestionGenerator:
                 q = dict(raw_item)
             else:
                 # Slot missed in batch, generate single slot
-                q = self.generate_single_slot(slot, subject, model_name, words_per_mark_short=words_per_mark_short, words_per_mark_long=words_per_mark_long)
+                q = self.generate_single_slot(
+                    slot, subject, model_name,
+                    words_per_mark_short=words_per_mark_short,
+                    words_per_mark_long=words_per_mark_long
+                )
 
             # Normalization per type
             if q_type == 'MCQ':
@@ -152,12 +165,18 @@ class QuestionGenerator:
 
             elif q_type == 'True/False':
                 statement = q.get('statement') or q.get('question') or q.get('text') or ''
-                ans_bool = q.get('answer')
-                if isinstance(ans_bool, str):
-                    ans_bool = (ans_bool.lower().strip() == 'true')
+                ans_val = q.get('answer')
+                if isinstance(ans_val, bool):
+                    ans_str = 'True' if ans_val else 'False'
+                else:
+                    raw_s = str(ans_val).strip().lower()
+                    if raw_s in ('true', 'सत्य', 'સાચું', 'vrai', 'wahr', 'verdadero', '正确', '1'):
+                        ans_str = 'True'
+                    else:
+                        ans_str = 'False'
                 q['question'] = statement
                 q['text'] = statement
-                q['answer'] = 'True' if ans_bool else 'False'
+                q['answer'] = ans_str
                 q['options'] = ['True', 'False']
 
             elif q_type == 'Fill in the Blank':
@@ -176,7 +195,12 @@ class QuestionGenerator:
                     q['answer'] = "\n".join(f"- {p}" for p in pts)
                 elif not q.get('answer'):
                     q['answer'] = q.get('model_answer') or ''
-                rub = build_rubric('Short Answer', slot['marks'], pts, question_text=q.get('question', ''), model_answer=q.get('answer', ''))
+                rub = build_rubric(
+                    'Short Answer', slot['marks'], pts,
+                    question_text=q.get('question', ''),
+                    model_answer=q.get('answer', ''),
+                    language=self.language
+                )
                 q['rubric'] = rub
                 q['key_points'] = rub[0]['key_points']
                 q['options'] = []
@@ -195,7 +219,12 @@ class QuestionGenerator:
                     q['answer'] = "\n\n".join(formatted_pts)
                 elif not q.get('answer'):
                     q['answer'] = q.get('model_answer') or ''
-                rub = build_rubric('Long Answer', slot['marks'], pts, question_text=q.get('question', ''), model_answer=q.get('answer', ''))
+                rub = build_rubric(
+                    'Long Answer', slot['marks'], pts,
+                    question_text=q.get('question', ''),
+                    model_answer=q.get('answer', ''),
+                    language=self.language
+                )
                 q['rubric'] = rub
                 q['key_points'] = rub[0]['key_points']
                 q['options'] = []
@@ -242,32 +271,33 @@ class QuestionGenerator:
 
         schema = None
         if q_type == 'MCQ':
-            prompt = build_mcq_prompt(subject, topic, difficulty, marks, context)
+            prompt = build_mcq_prompt(subject, topic, difficulty, marks, context, language=self.language)
             schema = MCQ_JSON_SCHEMA
             base_tok = 90
         elif q_type == 'True/False':
-            prompt = build_true_false_prompt(subject, topic, difficulty, marks, context)
+            prompt = build_true_false_prompt(subject, topic, difficulty, marks, context, language=self.language)
             schema = TRUE_FALSE_JSON_SCHEMA
             base_tok = 45
         elif q_type == 'Fill in the Blank':
-            prompt = build_fill_blank_prompt(subject, topic, difficulty, marks, context)
+            prompt = build_fill_blank_prompt(subject, topic, difficulty, marks, context, language=self.language)
             schema = FILL_BLANK_JSON_SCHEMA
             base_tok = 45
         elif q_type == 'Short Answer':
-            prompt = build_short_prompt(subject, topic, difficulty, marks, context, words_per_mark=words_per_mark_short)
+            prompt = build_short_prompt(subject, topic, difficulty, marks, context, words_per_mark=words_per_mark_short, language=self.language)
             schema = SHORT_JSON_SCHEMA
             base_tok = words_per_mark_short * marks + 40
         elif q_type == 'Long Answer':
-            prompt = build_long_prompt(subject, topic, difficulty, marks, context, words_per_mark=words_per_mark_long)
+            prompt = build_long_prompt(subject, topic, difficulty, marks, context, words_per_mark=words_per_mark_long, language=self.language)
             schema = LONG_JSON_SCHEMA
             base_tok = words_per_mark_long * marks + 40
         else:
-            prompt = build_mcq_prompt(subject, topic, difficulty, marks, context)
+            prompt = build_mcq_prompt(subject, topic, difficulty, marks, context, language=self.language)
             schema = MCQ_JSON_SCHEMA
             base_tok = 90
 
         temp = TEMPERATURE_BY_TYPE.get(q_type, 0.25)
-        num_predict = min(4096, int(base_tok * 1.5) + 100)
+        expansion_factor = get_token_expansion_factor(self.language)
+        num_predict = min(4096, int((base_tok * 1.5 + 100) * expansion_factor))
 
         raw_output = ""
         for attempt in range(2):
@@ -317,9 +347,12 @@ class QuestionGenerator:
             item['text'] = stmt
             item['options'] = ['True', 'False']
             ans = item.get('answer')
-            if isinstance(ans, str):
-                ans = (ans.lower().strip() == 'true')
-            item['answer'] = 'True' if ans else 'False'
+            if isinstance(ans, bool):
+                ans_str = 'True' if ans else 'False'
+            else:
+                raw_s = str(ans).strip().lower()
+                ans_str = 'True' if raw_s in ('true', 'सत्य', 'સાચું', 'vrai', 'wahr', 'verdadero', '正确', '1') else 'False'
+            item['answer'] = ans_str
         elif q_type == 'Fill in the Blank':
             s = item.get('sentence') or item.get('question') or ''
             ans = str(item.get('answer') or '').strip()
@@ -338,7 +371,12 @@ class QuestionGenerator:
                 item['answer'] = "\n".join(f"- {p}" for p in pts)
             elif not item.get('answer'):
                 item['answer'] = item.get('model_answer') or ''
-            rub = build_rubric('Short Answer', marks, pts, question_text=q_txt, model_answer=item.get('answer', ''))
+            rub = build_rubric(
+                'Short Answer', marks, pts,
+                question_text=q_txt,
+                model_answer=item.get('answer', ''),
+                language=self.language
+            )
             item['rubric'] = rub
             item['key_points'] = rub[0]['key_points']
             item['options'] = []
@@ -359,7 +397,12 @@ class QuestionGenerator:
                 item['answer'] = "\n\n".join(formatted_pts)
             elif not item.get('answer'):
                 item['answer'] = item.get('model_answer') or ''
-            rub = build_rubric('Long Answer', marks, pts, question_text=q_txt, model_answer=item.get('answer', ''))
+            rub = build_rubric(
+                'Long Answer', marks, pts,
+                question_text=q_txt,
+                model_answer=item.get('answer', ''),
+                language=self.language
+            )
             item['rubric'] = rub
             item['key_points'] = rub[0]['key_points']
             item['options'] = []

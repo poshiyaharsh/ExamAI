@@ -1,6 +1,6 @@
 """
 True/False Prompt Template (Section 5.3).
-Model: granite3.3:2b
+Model: granite3.3:2b (English) / gemma3:4b (Multilingual)
 Ensures 40% to 60% balance between True and False.
 """
 import copy
@@ -41,7 +41,8 @@ def build_batch_true_false_prompt(
     subject: str,
     slots: List[Dict[str, Any]],
     context: str,
-    unit: str = "General"
+    unit: str = "General",
+    language: str = "en"
 ) -> str:
     """Builds prompt for batch True/False questions (Section 5.3)."""
     n = len(slots)
@@ -51,7 +52,7 @@ def build_batch_true_false_prompt(
     topics = list(set(s.get('topic', unit) for s in slots if s.get('topic')))
     topic_str = ", ".join(topics) if topics else unit
 
-    return f"""Write exactly {n} true/false statements. Exactly {n_true} must be true and {n_false} must be false.
+    prompt = f"""Write exactly {n} true/false statements. Exactly {n_true} must be true and {n_false} must be false.
 Subject: {subject}
 Unit/topic: {topic_str}
 Difficulty of each statement in order: {difficulties}
@@ -66,9 +67,16 @@ Rules:
 4. For false statements, "correction" is the correct statement in at most 15 words. For true statements it is an empty string.
 5. "source_quote" is an exact piece of 8 to 25 words copied from the CONTEXT.
 6. Every statement covers a different fact.
-7. Generate all {n} statements in the "questions" array.
+7. Generate all {n} statements in the "questions" array."""
 
-Return only valid JSON matching the schema."""
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""
+8. LANGUAGE REQUIREMENT: Write the statements and corrections in {lang_name} ({language}) using its native script. The "answer" boolean (true/false) and schema keys must stay in English format. Keep technical terms, formulas, code, and proper nouns as in the CONTEXT."""
+
+    prompt += "\n\nReturn only valid JSON matching the schema."
+    return prompt
 
 
 def build_true_false_prompt(
@@ -76,7 +84,8 @@ def build_true_false_prompt(
     topic: str,
     difficulty: str,
     marks: int,
-    context: str
+    context: str,
+    language: str = "en"
 ) -> str:
     slot = [{'topic': topic, 'difficulty': difficulty, 'marks': marks, 'slot_index': 1}]
-    return build_batch_true_false_prompt(subject, slot, context, unit=topic)
+    return build_batch_true_false_prompt(subject, slot, context, unit=topic, language=language)

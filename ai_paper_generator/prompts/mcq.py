@@ -1,6 +1,6 @@
 """
 MCQ Prompt Template (Section 5.2).
-Model: qwen3:4b
+Model: qwen3:4b (English) / gemma3:4b (Multilingual)
 Schema fields: question, correct, distractors (exactly 3), source_quote, difficulty.
 """
 import copy
@@ -46,7 +46,8 @@ def build_batch_mcq_prompt(
     subject: str,
     slots: List[Dict[str, Any]],
     context: str,
-    unit: str = "General"
+    unit: str = "General",
+    language: str = "en"
 ) -> str:
     """Builds prompt to generate a batch of MCQs following Section 5.2."""
     n = len(slots)
@@ -55,7 +56,7 @@ def build_batch_mcq_prompt(
     topics = list(set(s.get('topic', unit) for s in slots if s.get('topic')))
     topic_str = ", ".join(topics) if topics else unit
 
-    return f"""/no_think
+    prompt = f"""/no_think
 Write exactly {n} multiple-choice questions.
 Subject: {subject}
 Unit/topic: {topic_str}
@@ -73,9 +74,16 @@ Rules:
 5. The question must not give away the answer.
 6. "source_quote" is an exact piece of 8 to 25 words copied from the CONTEXT that proves the correct answer.
 7. Every question covers a different fact.
-8. Generate all {n} questions in the "questions" array.
+8. Generate all {n} questions in the "questions" array."""
 
-Return only valid JSON matching the schema."""
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""
+9. LANGUAGE REQUIREMENT: Write the question, correct answer, and distractors in {lang_name} ({language}) using its native script. Keep JSON keys ("question", "correct", "distractors", "source_quote", "difficulty") exactly in English. Keep technical terms, formulas, code, and proper nouns as in the CONTEXT."""
+
+    prompt += "\n\nReturn only valid JSON matching the schema."
+    return prompt
 
 
 def build_mcq_prompt(
@@ -83,8 +91,9 @@ def build_mcq_prompt(
     topic: str,
     difficulty: str,
     marks: int,
-    context: str
+    context: str,
+    language: str = "en"
 ) -> str:
     """Builds single-slot MCQ prompt."""
     slot = [{'topic': topic, 'difficulty': difficulty, 'marks': marks, 'slot_index': 1}]
-    return build_batch_mcq_prompt(subject, slot, context, unit=topic)
+    return build_batch_mcq_prompt(subject, slot, context, unit=topic, language=language)

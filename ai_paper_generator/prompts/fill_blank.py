@@ -1,6 +1,6 @@
 """
 Fill in the Blank Prompt Template (Section 5.4).
-Model: granite3.3:2b
+Model: granite3.3:2b (English) / gemma3:4b (Multilingual)
 """
 import copy
 from typing import Any, Dict, List
@@ -39,7 +39,8 @@ def build_batch_fill_blank_prompt(
     subject: str,
     slots: List[Dict[str, Any]],
     context: str,
-    unit: str = "General"
+    unit: str = "General",
+    language: str = "en"
 ) -> str:
     """Builds prompt for batch Fill in the Blank questions (Section 5.4)."""
     n = len(slots)
@@ -47,7 +48,7 @@ def build_batch_fill_blank_prompt(
     topics = list(set(s.get('topic', unit) for s in slots if s.get('topic')))
     topic_str = ", ".join(topics) if topics else unit
 
-    return f"""Write exactly {n} fill-in-the-blank sentences.
+    prompt = f"""Write exactly {n} fill-in-the-blank sentences.
 Subject: {subject}
 Unit/topic: {topic_str}
 Difficulty of each sentence in order: {difficulties}
@@ -62,9 +63,16 @@ Rules:
 4. The answer must not appear anywhere else in the sentence.
 5. "source_quote" is an exact piece of 8 to 25 words copied from the CONTEXT that contains the answer.
 6. Every sentence covers a different fact.
-7. Generate all {n} sentences in the "questions" array.
+7. Generate all {n} sentences in the "questions" array."""
 
-Return only valid JSON matching the schema."""
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""
+8. LANGUAGE REQUIREMENT: Write the sentence and the answer in {lang_name} ({language}) using its native script with the _____ blank marker. Keep JSON keys exactly in English. Keep technical terms, formulas, code, and proper nouns as in the CONTEXT."""
+
+    prompt += "\n\nReturn only valid JSON matching the schema."
+    return prompt
 
 
 def build_fill_blank_prompt(
@@ -72,7 +80,8 @@ def build_fill_blank_prompt(
     topic: str,
     difficulty: str,
     marks: int,
-    context: str
+    context: str,
+    language: str = "en"
 ) -> str:
     slot = [{'topic': topic, 'difficulty': difficulty, 'marks': marks, 'slot_index': 1}]
-    return build_batch_fill_blank_prompt(subject, slot, context, unit=topic)
+    return build_batch_fill_blank_prompt(subject, slot, context, unit=topic, language=language)

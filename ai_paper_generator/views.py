@@ -1338,71 +1338,63 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
 
 
 
-        vector_store = LocalVectorStore(job.id)
-
         all_chunks = []
-
-
+        uploaded_doc_sections = []
 
         if uploaded_files:
-
             for f in uploaded_files:
-
                 suffix = os.path.splitext(f.name)[1].lower()
-
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-
                     for chunk in f.chunks():
-
                         tmp.write(chunk)
-
                     tmp_path = tmp.name
 
-
-
                 try:
-
                     pages = load_document(tmp_path)
-
+                    uploaded_doc_sections.extend(pages)
                     chunks = chunk_document_pages(pages, default_topic=topics[0] if topics else 'Syllabus')
-
                     all_chunks.extend(chunks)
-
                 finally:
-
                     if os.path.exists(tmp_path):
-
                         os.unlink(tmp_path)
-
         else:
-
             # If no files uploaded, create synthetic topic chunks so RAG still operates
-
             for t in topics:
-
                 all_chunks.append({
-
                     'chunk_id': f"topic_{t}",
-
                     'text': f"Curriculum Unit: {t}. Core principles, fundamental concepts, and applied analytical methodologies of {vdata['subject']}.",
-
                     'source': 'curriculum_topics',
-
                     'page': 1,
-
                     'topic': t,
-
                     'token_count': 50,
-
                 })
 
+        # Automatic Language Detection (Section 2.1)
+        from .language import determine_paper_language, get_language_name
+        from .config import get_model_roles_for_language
 
+        detected_lang, confidence, lang_meta = determine_paper_language(
+            uploaded_doc_sections if uploaded_doc_sections else all_chunks,
+            topics=topics
+        )
 
-        vector_store.add_chunks(all_chunks)
+        job.language = detected_lang
+        if detected_lang and detected_lang != 'en':
+            assigned_roles = get_model_roles_for_language(detected_lang)
+            job.model_assignments = assigned_roles
 
         job.rag_sources = [{'count': len(all_chunks), 'files': [f.name for f in uploaded_files]}]
+        job.save(update_fields=['language', 'model_assignments', 'rag_sources'])
 
-        job.save(update_fields=['rag_sources'])
+        log_event(
+            'LANGUAGE',
+            f"Paper language detected: '{detected_lang}' ({lang_meta.get('language_name', 'English')}) with confidence={confidence:.2f}. "
+            f"Reason: {lang_meta.get('reason')}",
+            job_id=job.id
+        )
+
+        vector_store = LocalVectorStore(job.id, language=detected_lang)
+        vector_store.add_chunks(all_chunks)
 
 
 
@@ -1918,17 +1910,12 @@ class ExportPaperView(AIPaperGeneratorBaseAPIView):
 
 
         paper_payload = {
-
             'title': job.title,
-
             'subject': job.subject,
-
             'duration': job.duration,
-
             'total_marks': job.total_marks,
-
             'questions': questions,
-
+            'language': getattr(job, 'language', 'en') or 'en',
         }
 
 

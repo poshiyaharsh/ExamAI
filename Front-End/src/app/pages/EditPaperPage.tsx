@@ -1176,6 +1176,7 @@ export function EditPaperPage() {
                           Question Prompt {qType === "fill_blank" && "(Use ____ for blanks)"}
                         </label>
                         <textarea
+                          dir="auto"
                           value={question.text}
                           disabled={isPublished}
                           onChange={(e) => updateQuestion(question.id, { text: e.target.value })}
@@ -1218,6 +1219,7 @@ export function EditPaperPage() {
                                     {letter}
                                   </button>
                                   <input
+                                    dir="auto"
                                     type="text"
                                     disabled={isPublished}
                                     value={opt}
@@ -1272,7 +1274,7 @@ export function EditPaperPage() {
                             <span className="text-[11px] font-bold text-purple-900 uppercase block mb-1">
                               Student View Preview:
                             </span>
-                            <p className="text-xs text-purple-950 font-medium">
+                            <p dir="auto" className="text-xs text-purple-950 font-medium">
                               {question.text.split(/_{3,}/).map((chunk, cIdx, arr) => (
                                 <React.Fragment key={cIdx}>
                                   {chunk}
@@ -1356,6 +1358,7 @@ export function EditPaperPage() {
                                 )}
                               </div>
                               <textarea
+                                dir="auto"
                                 value={question.model_answer || ""}
                                 disabled={isPublished}
                                 onChange={(e) => updateQuestion(question.id, { model_answer: e.target.value })}

@@ -3,16 +3,17 @@ High-Speed Background Generation Worker & Pipeline (Under 10 Minutes).
 Implements Speed Architecture:
 1. Grouped by model to avoid VRAM swapping (OLLAMA_MAX_LOADED_MODELS=1).
    Stage order:
-   (a) RAG indexing (nomic-embed-text)
-   (b) All MCQs (qwen3:4b in batches <= 10)
-   (c) All True/False & Fill in Blank (granite3.3:2b in batches <= 15)
-   (d) All Short & Long answers (llama3.2:3b, Short batches of 5, Long batches of 1-2)
-   (e) AI validation & batched repair (phi3:mini, batches of 5, Long and flagged items only)
-   (f) Final assembly & DB persistence with MCQ integrity check.
+   (a) RAG indexing (nomic-embed-text for English, bge-m3 for multilingual)
+   (b) All MCQs (qwen3:4b for English/CJK, gemma3:4b for Indic/Arabic)
+   (c) All True/False & Fill in Blank (granite3.3:2b for English, gemma3:4b for Indic/Arabic)
+   (d) All Short & Long answers (llama3.2:3b for English, gemma3:4b for Indic/Arabic)
+   (e) AI validation & batched repair (phi3:mini / gemma3:4b)
+   (f) Final assembly & DB persistence with MCQ integrity check and language tagging.
 2. Writes execution time of every stage and Ollama metrics to timing.log.
 3. Resumable across restarts from database state.
 4. Early partial questions saved to job.generated_questions for instant review screen visibility.
-5. TimeGovernor ensures 540s budget with graceful degradation.
+5. TimeGovernor ensures 540s budget with language-aware token scaling.
+6. Output language verification prevents silent language drift.
 """
 import time
 import threading
@@ -23,6 +24,8 @@ from .models import GenerationJob
 from .config import (
     BATCH_SIZE_BY_TYPE,
     MODEL_ROLES,
+    get_batch_size_for_language,
+    get_model_roles_for_language,
 )
 from .ollama_client import OllamaClient
 from .model_manager import ModelManager
@@ -35,6 +38,7 @@ from .generators.validator import validate_rules, validate_batch_with_ai, should
 from .generators.repair import generate_and_validate_slot_with_repair
 from .generators.paper_builder import assemble_and_order_paper, save_paper_to_database
 from .generators.time_governor import TimeGovernor
+from .language import verify_question_language, get_language_name
 from .logging_setup import log_event, log_timing
 
 logger = logging.getLogger(__name__)
@@ -53,7 +57,12 @@ def _do_run_grouped_generation_job(job_id: int):
 
     client = OllamaClient()
     model_mgr = ModelManager(client)
-    role_info = model_mgr.detect_and_assign_roles(job.model_assignments)
+
+    lang = getattr(job, 'language', 'en') or 'en'
+    if lang != 'en':
+        role_info = get_model_roles_for_language(lang)
+    else:
+        role_info = model_mgr.detect_and_assign_roles(job.model_assignments)
 
     mcq_model = role_info.get('mcq_generator') or MODEL_ROLES['mcq_generator']
     fast_model = role_info.get('fast_generator') or MODEL_ROLES['fast_generator']
@@ -63,17 +72,17 @@ def _do_run_grouped_generation_job(job_id: int):
 
     log_event(
         'GENERATION',
-        f"Starting Generation Job #{job.id}: '{job.title}' ({job.total_marks} marks). "
+        f"Starting Generation Job #{job.id}: '{job.title}' ({job.total_marks} marks, language='{lang}' [{get_language_name(lang)}]). "
         f"Roles: MCQ={mcq_model}, Fast={fast_model}, Writer={writer_model}, Val={validator_model}, FB={fallback_model}.",
         job_id=job.id,
         faculty=job.faculty,
         institution=job.institution
     )
 
-    vector_store = LocalVectorStore(job.id)
+    vector_store = LocalVectorStore(job.id, language=lang)
     retriever = RAGRetriever(vector_store, job.id)
     deduplicator = QuestionDeduplicator()
-    q_gen = QuestionGenerator(client, retriever, job_id=job.id)
+    q_gen = QuestionGenerator(client, retriever, job_id=job.id, language=lang)
 
     blueprint = job.blueprint or []
     total_slots = len(blueprint)
@@ -83,8 +92,8 @@ def _do_run_grouped_generation_job(job_id: int):
         job.save(update_fields=['status', 'error_message', 'updated_at'])
         return
 
-    # Initialize Time Governor (Section 2.5)
-    governor = TimeGovernor(job_id=job.id, total_marks=job.total_marks, blueprint=blueprint, start_time=job_start_time)
+    # Initialize Time Governor (Section 2.5) with language token scaling
+    governor = TimeGovernor(job_id=job.id, total_marks=job.total_marks, blueprint=blueprint, start_time=job_start_time, language=lang)
 
     # Load already accepted questions if resuming
     accepted_by_slot: Dict[int, Dict[str, Any]] = {}
@@ -95,7 +104,12 @@ def _do_run_grouped_generation_job(job_id: int):
                 rub = q.get('rubric')
                 if not rub or not isinstance(rub, list) or not rub[0].get('key_points'):
                     raw_pts = q.get('key_points') or q.get('answer_points') or q.get('answer')
-                    rub = build_rubric(q['type'], q['marks'], raw_pts, question_text=q.get('question', ''), model_answer=q.get('answer', ''))
+                    rub = build_rubric(
+                        q['type'], q['marks'], raw_pts,
+                        question_text=q.get('question', ''),
+                        model_answer=q.get('answer', ''),
+                        language=lang
+                    )
                     q['rubric'] = rub
                     q['key_points'] = rub[0]['key_points']
             accepted_by_slot[slot_idx] = q
@@ -128,7 +142,7 @@ def _do_run_grouped_generation_job(job_id: int):
         log_timing('RAG Indexing', rag_duration, job_id=job.id)
 
         # =========================================================================
-        # STAGE 2: BATCH MCQs (Model: qwen3:4b)
+        # STAGE 2: BATCH MCQs
         # =========================================================================
         if mcq_slots and not all(s['slot_index'] in accepted_by_slot for s in mcq_slots):
             if check_cancelled():
@@ -140,7 +154,7 @@ def _do_run_grouped_generation_job(job_id: int):
             job.progress_message = f"Synthesizing {len(pending_mcqs)} MCQs with {mcq_model}... (~{gov_status['estimated_seconds_remaining']}s left)"
             job.save(update_fields=['progress_percent', 'progress_message', 'updated_at'])
 
-            batch_size = BATCH_SIZE_BY_TYPE.get('MCQ', 10)
+            batch_size = get_batch_size_for_language('MCQ', lang)
             for i in range(0, len(pending_mcqs), batch_size):
                 if check_cancelled():
                     return
@@ -162,7 +176,7 @@ def _do_run_grouped_generation_job(job_id: int):
             log_timing('MCQ Batch Generation', duration, job_id=job.id, details=f"{len(pending_mcqs)} MCQs via {mcq_model}")
 
         # =========================================================================
-        # STAGE 3: TRUE/FALSE & FILL IN THE BLANK (Model: granite3.3:2b)
+        # STAGE 3: TRUE/FALSE & FILL IN THE BLANK
         # =========================================================================
         if tf_fill_slots and not all(s['slot_index'] in accepted_by_slot for s in tf_fill_slots):
             if check_cancelled():
@@ -178,7 +192,7 @@ def _do_run_grouped_generation_job(job_id: int):
             fill_slots = [s for s in pending_tf_fill if s['type'] == 'Fill in the Blank']
 
             if tf_slots:
-                b_size = BATCH_SIZE_BY_TYPE.get('True/False', 15)
+                b_size = get_batch_size_for_language('True/False', lang)
                 for i in range(0, len(tf_slots), b_size):
                     if check_cancelled():
                         return
@@ -188,7 +202,7 @@ def _do_run_grouped_generation_job(job_id: int):
                         accepted_by_slot[q['slot_index']] = q
 
             if fill_slots:
-                b_size = BATCH_SIZE_BY_TYPE.get('Fill in the Blank', 15)
+                b_size = get_batch_size_for_language('Fill in the Blank', lang)
                 for i in range(0, len(fill_slots), b_size):
                     if check_cancelled():
                         return
@@ -209,7 +223,7 @@ def _do_run_grouped_generation_job(job_id: int):
             log_timing('True/False & Fill in Blank', duration, job_id=job.id, details=f"{len(pending_tf_fill)} items via {fast_model}")
 
         # =========================================================================
-        # STAGE 4: SHORT & LONG ANSWERS (Model: llama3.2:3b / granite3.3:2b if governed)
+        # STAGE 4: SHORT & LONG ANSWERS
         # =========================================================================
         if short_long_slots and not all(s['slot_index'] in accepted_by_slot for s in short_long_slots):
             if check_cancelled():
@@ -229,7 +243,7 @@ def _do_run_grouped_generation_job(job_id: int):
             long_slots = [s for s in pending_subjective if s['type'] == 'Long Answer']
 
             if short_slots:
-                b_size = BATCH_SIZE_BY_TYPE.get('Short Answer', 5)
+                b_size = get_batch_size_for_language('Short Answer', lang)
                 for i in range(0, len(short_slots), b_size):
                     if check_cancelled():
                         return
@@ -245,7 +259,7 @@ def _do_run_grouped_generation_job(job_id: int):
                         accepted_by_slot[q['slot_index']] = q
 
             if long_slots:
-                b_size = BATCH_SIZE_BY_TYPE.get('Long Answer', 2)
+                b_size = get_batch_size_for_language('Long Answer', lang)
                 for i in range(0, len(long_slots), b_size):
                     if check_cancelled():
                         return
@@ -279,7 +293,7 @@ def _do_run_grouped_generation_job(job_id: int):
         job.progress_message = "Auditing questions & verifying academic rigor..."
         job.save(update_fields=['progress_percent', 'progress_message', 'updated_at'])
 
-        # 1. Instant Tier 1 Code Rules
+        # 1. Instant Tier 1 Code Rules & Output Language Drift Verification
         items_needing_ai: List[Dict[str, Any]] = []
         rule_passed_items: Dict[int, Dict[str, Any]] = {}
 
@@ -290,7 +304,15 @@ def _do_run_grouped_generation_job(job_id: int):
                 continue
 
             topic_ctx = retriever.retrieve_context_for_slot(q.get('topic', 'General'), q['type'], q.get('difficulty', 'Medium'))
-            rule_ok, reason = validate_rules(q, context=topic_ctx, job_id=job.id)
+            rule_ok, reason = validate_rules(q, context=topic_ctx, job_id=job.id, language=lang)
+
+            # Output language verification check
+            if rule_ok and lang != 'en':
+                lang_ok, drift_reason = verify_question_language(q, lang)
+                if not lang_ok:
+                    rule_ok = False
+                    reason = drift_reason
+                    log_event('VALIDATION', f"Slot {idx} failed language verification: {drift_reason}", job_id=job.id, slot_number=idx)
 
             if rule_ok:
                 rule_passed_items[idx] = q
@@ -301,7 +323,7 @@ def _do_run_grouped_generation_job(job_id: int):
             else:
                 log_event('VALIDATION', f"Slot {idx} failed rule check: {reason}", job_id=job.id, slot_number=idx)
 
-        # 2. Batched AI Validation (batches of 5 items with phi3:mini)
+        # 2. Batched AI Validation
         ai_verdicts: Dict[int, bool] = {}
         if items_needing_ai:
             val_batch_size = BATCH_SIZE_BY_TYPE.get('Validator', 5)
@@ -342,7 +364,8 @@ def _do_run_grouped_generation_job(job_id: int):
                 model_generator=mcq_model if slot['type'] == 'MCQ' else (fast_model if slot['type'] in ('True/False', 'Fill in the Blank') else writer_model),
                 model_validator=validator_model,
                 model_fallback=writer_model if slot['type'] == 'MCQ' else fast_model,
-                job_id=job.id
+                job_id=job.id,
+                language=lang
             )
             if repaired_q.get('needs_review'):
                 items_needs_review += 1
@@ -362,6 +385,7 @@ def _do_run_grouped_generation_job(job_id: int):
             'items_needing_review': items_needs_review,
             'first_pass_accuracy': round((items_first_pass / max(1, total_slots)) * 100, 1),
             'final_grounding_percent': 100.0,
+            'detected_language': lang,
         }
         log_event('GENERATION', f"Quality Report: {quality_report}", job_id=job.id)
 
@@ -386,6 +410,7 @@ def _do_run_grouped_generation_job(job_id: int):
             duration_minutes=job.duration,
             total_marks=job.total_marks,
             questions=final_questions,
+            language=lang,
         )
 
         assembly_duration = round(time.time() - t_assembly, 2)
@@ -409,6 +434,7 @@ def _do_run_grouped_generation_job(job_id: int):
             'stage_timings': stage_timings,
             'questions_generated': len(final_questions),
             'total_marks': job.total_marks,
+            'detected_language': lang,
             'mcq_model': mcq_model,
             'fast_model': fast_model,
             'writer_model': writer_model,
@@ -425,7 +451,7 @@ def _do_run_grouped_generation_job(job_id: int):
         log_timing('COMPLETE JOB', total_job_time, job_id=job.id, details=str(stage_timings))
         log_event(
             'GENERATION',
-            f"Job #{job.id} completed successfully in {total_job_time}s. {len(final_questions)} questions saved. "
+            f"Job #{job.id} completed successfully in {total_job_time}s. {len(final_questions)} questions saved (language='{lang}'). "
             f"Quality: First-pass={quality_report['first_pass_accuracy']}%, Repaired={items_repaired}, Review={items_needs_review}",
             job_id=job.id,
             faculty=job.faculty,

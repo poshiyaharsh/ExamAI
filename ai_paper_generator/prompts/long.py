@@ -1,6 +1,6 @@
 """
 Long Answer Prompt Template (Section 5.6).
-Model: llama3.2:3b
+Model: llama3.2:3b (English) / gemma3:4b (Multilingual)
 """
 import copy
 from typing import Any, Dict, List
@@ -51,7 +51,8 @@ def build_batch_long_prompt(
     slots: List[Dict[str, Any]],
     context: str,
     unit: str = "General",
-    words_per_mark: int = 55
+    words_per_mark: int = 55,
+    language: str = "en"
 ) -> str:
     """Builds prompt for batch Long Answer questions (Section 5.6)."""
     n = len(slots)
@@ -61,7 +62,7 @@ def build_batch_long_prompt(
     topics = list(set(s.get('topic', unit) for s in slots if s.get('topic')))
     topic_str = ", ".join(topics) if topics else unit
 
-    return f"""Write exactly {n} long-answer question(s) worth {marks} marks each.
+    prompt = f"""Write exactly {n} long-answer question(s) worth {marks} marks each.
 Subject: {subject}
 Unit/topic: {topic_str}
 Difficulty: {difficulties}
@@ -74,9 +75,16 @@ Rules:
 2. "answer_points" has exactly {points} items (one item per mark, at most 8). Each item has a "heading" of 2 to 6 words and a "text" of 1 to 2 sentences. The whole answer is about {words_per_mark} words per mark.
 3. The points are different, in a logical order, and use only facts from the CONTEXT. No padding and no repeated sentences.
 4. "source_quote" is an exact piece of 8 to 25 words copied from the CONTEXT.
-5. Generate all {n} questions in the "questions" array.
+5. Generate all {n} questions in the "questions" array."""
 
-Return only valid JSON matching the schema."""
+    if language and language != "en":
+        from ..language import get_language_name
+        lang_name = get_language_name(language)
+        prompt += f"""
+6. LANGUAGE REQUIREMENT: Write the question, headings, and detailed text points in {lang_name} ({language}) using its native script. Keep JSON keys ("question", "answer_points", "heading", "text", "source_quote", "difficulty") exactly in English. Keep technical terms, formulas, code, and proper nouns as in the CONTEXT."""
+
+    prompt += "\n\nReturn only valid JSON matching the schema."
+    return prompt
 
 
 def build_long_prompt(
@@ -85,7 +93,8 @@ def build_long_prompt(
     difficulty: str,
     marks: int,
     context: str,
-    words_per_mark: int = 55
+    words_per_mark: int = 55,
+    language: str = "en"
 ) -> str:
     slot = [{'topic': topic, 'difficulty': difficulty, 'marks': marks, 'slot_index': 1}]
-    return build_batch_long_prompt(subject, slot, context, unit=topic, words_per_mark=words_per_mark)
+    return build_batch_long_prompt(subject, slot, context, unit=topic, words_per_mark=words_per_mark, language=language)

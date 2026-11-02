@@ -94,7 +94,7 @@ export function ResultsPage() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs sm:text-sm text-muted-foreground">{answer.question_text}</p>
+                  <p dir="auto" className="text-xs sm:text-sm text-muted-foreground">{answer.question_text}</p>
                 </div>
                 {answer.is_correct === true ? (
                   <CheckCircle className="h-5 w-5 text-emerald-600 shrink-0" />
@@ -103,9 +103,9 @@ export function ResultsPage() {
                 ) : null}
               </div>
               <div className="mt-4 pt-3 border-t border-border/60 space-y-1.5 text-xs sm:text-sm">
-                <p><span className="text-muted-foreground font-medium">Answer:</span> <span className="text-foreground">{answer.answer_text || "No answer"}</span></p>
+                <p><span className="text-muted-foreground font-medium">Answer:</span> <span dir="auto" className="text-foreground">{answer.answer_text || "No answer"}</span></p>
                 {answer.question_type !== "subjective" && (
-                  <p><span className="text-muted-foreground font-medium">Correct answer:</span> <span className="text-emerald-700 font-medium">{String(answer.correct_answer ?? "Not available")}</span></p>
+                  <p><span className="text-muted-foreground font-medium">Correct answer:</span> <span dir="auto" className="text-emerald-700 font-medium">{String(answer.correct_answer ?? "Not available")}</span></p>
                 )}
                 <p><span className="text-muted-foreground font-medium">Score:</span> <strong className="text-primary font-semibold">{answer.score_awarded ?? 0}</strong> {answer.marks ? `/ ${answer.marks}` : ""}</p>
                 {answer.is_overridden && answer.faculty_comment && (

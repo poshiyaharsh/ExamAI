@@ -2,6 +2,7 @@
 DOCX Exporter for Generated Examination Papers.
 Uses python-docx to generate editable Microsoft Word documents for
 examination question papers and answer keys.
+Supports multilingual text rendering and RTL direction when appropriate.
 """
 import io
 from typing import Dict, Any, List
@@ -27,6 +28,9 @@ def export_paper_to_docx(
         section.bottom_margin = Inches(0.75)
         section.left_margin = Inches(0.75)
         section.right_margin = Inches(0.75)
+
+    lang = paper_data.get('language', 'en')
+    is_rtl = lang in ('ar', 'ur', 'fa', 'he')
 
     title = paper_data.get('title', 'Examination Paper')
     subject = paper_data.get('subject', 'General Subject')
@@ -65,6 +69,9 @@ def export_paper_to_docx(
         # Question header line
         p_q = doc.add_paragraph()
         p_q.paragraph_format.space_after = Pt(4)
+        if is_rtl:
+            p_q.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
         run_num = p_q.add_run(f"Q{q_num}. ")
         run_num.font.bold = True
         run_num.font.size = Pt(11)
@@ -85,6 +92,8 @@ def export_paper_to_docx(
                 p_opt = doc.add_paragraph()
                 p_opt.paragraph_format.left_indent = Inches(0.4)
                 p_opt.paragraph_format.space_after = Pt(2)
+                if is_rtl:
+                    p_opt.alignment = WD_ALIGN_PARAGRAPH.RIGHT
                 r_opt = p_opt.add_run(f"{lbl}  {opt}")
                 r_opt.font.size = Pt(10.5)
                 r_opt.font.color.rgb = RGBColor(0x33, 0x41, 0x55)
@@ -94,6 +103,8 @@ def export_paper_to_docx(
             p_ans = doc.add_paragraph()
             p_ans.paragraph_format.left_indent = Inches(0.4)
             p_ans.paragraph_format.space_after = Pt(6)
+            if is_rtl:
+                p_ans.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             r_ans_lbl = p_ans.add_run("Answer Key: ")
             r_ans_lbl.font.bold = True
             r_ans_lbl.font.size = Pt(10)

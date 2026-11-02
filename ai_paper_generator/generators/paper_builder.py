@@ -4,7 +4,7 @@ Paper Builder and Final Assembler.
 2. Orders sections strictly: MCQ -> True/False -> Fill in the Blank -> Short Answer -> Long Answer.
 3. Re-numbers questions sequentially (1, 2, 3...).
 4. Marks control: recomputes actual total marks from saved questions and asserts it matches target total marks.
-5. Saves final paper into faculty.models.Paper, faculty.models.PaperQuestion, api.models.Exam, and api.models.Question.
+5. Saves final paper into faculty.models.Paper, faculty.models.PaperQuestion, api.models.Exam, and api.models.Question with detected language code.
 6. Exports to PDF and DOCX.
 """
 import random
@@ -52,7 +52,6 @@ def assemble_and_order_paper(questions: List[Dict[str, Any]], target_total_marks
         if len(options) == 4 and correct_answer in options:
             random.shuffle(options)
             mcq['options'] = options
-            # Answer text remains unchanged because it stores verbatim text
 
     # Assemble in canonical order
     current_q_num = 1
@@ -90,10 +89,11 @@ def save_paper_to_database(
     total_marks: int,
     questions: List[Dict[str, Any]],
     raw_syllabus_text: str = '',
+    language: str = 'en',
 ) -> Tuple[int, int]:
     """
     Saves the final generated paper into existing system models:
-    - faculty.models.Paper
+    - faculty.models.Paper (including additive nullable language field)
     - faculty.models.PaperQuestion
     - api.models.Exam
     - api.models.Question
@@ -128,6 +128,7 @@ def save_paper_to_database(
             total_marks=total_marks,
             generated_questions=questions,
             is_published=True,
+            language=language or 'en',
         )
 
         for q in questions:
@@ -190,7 +191,12 @@ def save_paper_to_database(
                 rub = q.get('rubric')
                 if not rub or not isinstance(rub, list) or not rub[0].get('key_points'):
                     raw_pts = q.get('key_points') or q.get('answer_points') or q.get('answer')
-                    rub = build_rubric(q['type'], q['marks'], raw_pts, question_text=q.get('question', ''), model_answer=q.get('answer', ''))
+                    rub = build_rubric(
+                        q['type'], q['marks'], raw_pts,
+                        question_text=q.get('question', ''),
+                        model_answer=q.get('answer', ''),
+                        language=language
+                    )
                 q['rubric'] = rub
                 q['key_points'] = rub[0]['key_points']
                 exam_rubric = rub
@@ -237,7 +243,7 @@ def save_paper_to_database(
 
     log_event(
         'GENERATION',
-        f"Paper successfully saved to database: Paper #{paper.id}, Exam #{exam.id} ({len(questions)} questions, {total_marks} marks).",
+        f"Paper successfully saved to database: Paper #{paper.id}, Exam #{exam.id} ({len(questions)} questions, {total_marks} marks, language='{language}').",
         job_id=job_id,
         faculty=faculty,
         institution=institution
