@@ -343,47 +343,40 @@ def parse_syllabus_units_and_topics(full_text: str, pages_data: Optional[List[Di
 
 
     # If no explicit headings found, use pages or paragraph chunks
-
     if not raw_units:
+        doc_lang = 'en'
+        try:
+            from .language import detect_language
+            doc_lang, _, _ = detect_language(full_text[:5000]) if len(full_text.strip()) >= 20 else ('en', 1.0, {})
+        except Exception:
+            pass
+
+        sec_label = 'Section'
+        if doc_lang == 'gu':
+            sec_label = 'એકમ'
+        elif doc_lang == 'hi':
+            sec_label = 'इकाई'
 
         if pages_data and len(pages_data) > 1:
-
             for idx, p in enumerate(pages_data, start=1):
-
                 raw_units.append({
-
-                    'title': f'Section {idx}',
-
+                    'title': f'{sec_label} {idx}',
                     'lines': [p.get('text', '')],
-
                 })
-
         else:
-
             paragraphs = [p.strip() for p in full_text.split('\n\n') if len(p.strip()) > 30]
-
             if len(paragraphs) > 1:
-
                 for idx, para in enumerate(paragraphs[:15], start=1):
-
                     first_line = para.splitlines()[0][:80].strip()
-
                     raw_units.append({
-
-                        'title': first_line or f'Topic {idx}',
-
+                        'title': first_line or f'{sec_label} {idx}',
                         'lines': [para],
-
                     })
-
             else:
-
+                default_title = 'Core Syllabus' if doc_lang == 'en' else ('અભ્યાસક્રમ' if doc_lang == 'gu' else 'पाठ्यक्रम')
                 raw_units.append({
-
-                    'title': 'Core Syllabus',
-
+                    'title': default_title,
                     'lines': [full_text],
-
                 })
 
 
@@ -675,9 +668,8 @@ class ActiveJobView(AIPaperGeneratorBaseAPIView):
 
 
 
-        # Auto-fail stale jobs left hanging for more than 15 minutes
-
-        cutoff = timezone.now() - datetime.timedelta(minutes=15)
+        # Auto-fail stale jobs left hanging for more than 5 minutes
+        cutoff = timezone.now() - datetime.timedelta(minutes=5)
 
         stale_filter = {
 
@@ -705,7 +697,7 @@ class ActiveJobView(AIPaperGeneratorBaseAPIView):
 
             status=GenerationJob.Status.FAILED,
 
-            error_message="Generation job timed out (exceeded 15 minutes limit).",
+            error_message="Generation job timed out (exceeded 5 minutes limit).",
 
             completed_at=timezone.now()
 
@@ -1360,15 +1352,25 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
                         os.unlink(tmp_path)
 
         # Also load materials selected by material_ids if passed
-        material_ids = request.data.getlist('material_ids') if hasattr(request.data, 'getlist') else request.data.get('material_ids')
-        if material_ids:
-            if isinstance(material_ids, str):
-                try:
-                    material_ids = json.loads(material_ids)
-                except Exception:
-                    material_ids = [material_ids]
-            if not isinstance(material_ids, list):
-                material_ids = [material_ids]
+        raw_mat_ids = request.data.getlist('material_ids') if hasattr(request.data, 'getlist') else request.data.get('material_ids')
+        material_ids = []
+        if raw_mat_ids:
+            if not isinstance(raw_mat_ids, list):
+                raw_mat_ids = [raw_mat_ids]
+            for item in raw_mat_ids:
+                if isinstance(item, str) and item.strip().startswith('['):
+                    try:
+                        parsed = json.loads(item)
+                        if isinstance(parsed, list):
+                            material_ids.extend(parsed)
+                        else:
+                            material_ids.append(parsed)
+                    except Exception:
+                        material_ids.append(item)
+                elif isinstance(item, list):
+                    material_ids.extend(item)
+                else:
+                    material_ids.append(item)
 
             try:
                 from faculty.models import SyllabusUpload
@@ -1376,8 +1378,9 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
                     try:
                         mat_obj = SyllabusUpload.objects.filter(id=int(mat_id)).first()
                         if mat_obj:
-                            if mat_obj.file and hasattr(mat_obj.file, 'path') and os.path.exists(mat_obj.file.path):
-                                pages = load_document(mat_obj.file.path)
+                            mat_file = getattr(mat_obj, 'original_file', None) or getattr(mat_obj, 'file', None)
+                            if mat_file and hasattr(mat_file, 'path') and os.path.exists(mat_file.path):
+                                pages = load_document(mat_file.path)
                                 uploaded_doc_sections.extend(pages)
                                 chunks = chunk_document_pages(pages, default_topic=topics[0] if topics else 'Study Material')
                                 all_chunks.extend(chunks)

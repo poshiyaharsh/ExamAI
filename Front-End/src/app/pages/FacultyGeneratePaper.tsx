@@ -386,10 +386,12 @@ export function FacultyGeneratePaper() {
       setSubjectMaterials(mats);
       setSelectedMaterialIds(mats.map((m) => m.id));
 
-      // Append any detected topics to topics pool
-      const detected = Array.from(new Set(mats.flatMap((m) => m.detected_topics || [])));
-      if (detected.length > 0) {
-        setTopics((prev) => Array.from(new Set([...prev, ...detected])));
+      // Append detected topics ONLY if user has not uploaded a separate syllabus and topics is currently empty
+      if (!syllabusFile && !parsedSyllabus && topics.length === 0) {
+        const detected = Array.from(new Set(mats.flatMap((m) => m.detected_topics || [])));
+        if (detected.length > 0) {
+          setTopics(detected);
+        }
       }
     } catch (err) {
       console.error("Failed to load subject materials", err);
@@ -398,7 +400,7 @@ export function FacultyGeneratePaper() {
     } finally {
       setLoadingMaterials(false);
     }
-  }, []);
+  }, [syllabusFile, parsedSyllabus, topics.length]);
 
   const handleSubjectNameChange = (val: string) => {
     setSubjectName(val);
@@ -605,6 +607,23 @@ export function FacultyGeneratePaper() {
         localStorage.removeItem("examai_faculty_blueprint_customized");
         sessionStorage.removeItem("examai_faculty_blueprint");
       } catch {}
+      // Reset all wizard state variables so visiting the page always starts completely clean
+      setExamTitle("");
+      setSubjectName("");
+      setDuration("60");
+      setTotalMarks("100");
+      setTopics([]);
+      setSyllabusFile(null);
+      setParsedSyllabus(null);
+      setQuestions([]);
+      setExamId(null);
+      setSelectedMaterialIds([]);
+      setUploadedFilesList([]);
+      setCurrentStep(1);
+      setActiveJobId(null);
+      setDetectedDraft(null);
+      setShowDraftBanner(false);
+      setIsDirty(false);
       return;
     }
     if (!currentUser?.id) return;

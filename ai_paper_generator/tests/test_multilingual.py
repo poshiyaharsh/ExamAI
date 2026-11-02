@@ -357,4 +357,56 @@ class MultilingualExportTests(TestCase):
         self.assertEqual(job.language, 'gu')
         self.assertEqual(job.model_assignments.get('mcq_generator'), 'gemma3:4b')
 
+    def test_parse_syllabus_units_multilingual(self):
+        from ai_paper_generator.views import parse_syllabus_units_and_topics
+        sample_gu = """૧. કોમ્પ્યુટર પરિચય
+કોમ્પ્યુટર એક ઝડપી ઇલેક્ટ્રોનિક મશીન છે.
+૨. ઇનપુટ અને આઉટપુટ સાધનો
+કીબોર્ડ, માઉસ, મોનિટર અને પ્રિન્ટર."""
+        units = parse_syllabus_units_and_topics(sample_gu)
+        self.assertGreaterEqual(len(units), 2)
+        # Topics should be in Gujarati, not English
+        self.assertTrue(any('કોમ્પ્યુટર' in u['title'] for u in units))
+
+    def test_start_generation_with_saved_study_material_ids(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.contrib.auth.models import User
+        from faculty.models import FacultyProfile, SyllabusUpload
+        from admins.models import AdminInstitution
+        from ai_paper_generator.models import GenerationJob
+        import json
+
+        admin_user, _ = User.objects.get_or_create(username="admin_test_mat", defaults={'email': 'a_mat@test.com'})
+        inst, _ = AdminInstitution.objects.get_or_create(institution_name="Test University Mat", defaults={'admin': admin_user})
+        user, _ = User.objects.get_or_create(username="faculty_mat_gu", defaults={'email': 'f_mat@test.com'})
+        f_prof, _ = FacultyProfile.objects.get_or_create(user=user, defaults={'institution': inst, 'department': 'Computer'})
+
+        guj_text = "કોમ્પ્યુટર એક ઝડપી ગણતરી કરતું સાધન છે. મોનિટર આઉટપુટ આપે છે. કીબોર્ડ ઇનપુટ આપે છે."
+        f = SimpleUploadedFile("study_material.txt", guj_text.encode('utf-8'), content_type="text/plain")
+        mat = SyllabusUpload.objects.create(
+            faculty=f_prof,
+            institution=inst,
+            original_file=f,
+            original_filename="study_material.txt",
+            content_type="text/plain",
+            extracted_text=guj_text,
+            detected_topics=["કોમ્પ્યુટર પરિચય", "ઇનપુટ આઉટપુટ"],
+        )
+
+        self.client.force_login(user)
+        payload = {
+            'title': 'પરીક્ષા પેપર',
+            'subject': 'Computer',
+            'total_marks': 10,
+            'duration': 30,
+            'sections': json.dumps([{'type': 'MCQ', 'count': 5, 'marks_per_question': 2}]),
+            'material_ids': json.dumps([mat.id]),
+            'topics': json.dumps(["કોમ્પ્યુટર પરિચય", "ઇનપુટ આઉટપુટ"]),
+        }
+        res = self.client.post('/api/ai-generator/generate/', payload)
+        self.assertEqual(res.status_code, 202)
+        job_id = res.data['job_id']
+        job = GenerationJob.objects.get(id=job_id)
+        self.assertEqual(job.language, 'gu')
+        self.assertEqual(job.model_assignments.get('mcq_generator'), 'gemma3:4b')
 

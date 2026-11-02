@@ -84,9 +84,43 @@ def extract_syllabus_text(django_file, institution_id: Optional[int] = None) -> 
 
 def _extract_pdf_pages_and_text(raw_bytes: bytes, filename: str = "") -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Extracts text and page-by-page metadata using PyMuPDF (fitz) first,
-    falling back to pdfplumber.
+    Extracts text and page-by-page metadata using language-aware load_document first
+    (which handles legacy 8-bit Shree-Lipi / Saral fonts and standard Unicode),
+    falling back to PyMuPDF and pdfplumber.
     """
+    import tempfile
+    suffix = os.path.splitext(filename)[1].lower() if filename else '.pdf'
+    if suffix not in ('.pdf', '.docx', '.doc', '.txt', '.pptx', '.ppt'):
+        suffix = '.pdf'
+
+    tmp_path = None
+    try:
+        from ai_paper_generator.rag.loader import load_document
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(raw_bytes)
+            tmp_path = tmp.name
+        doc_pages = load_document(tmp_path)
+        if doc_pages:
+            pages_data = [
+                {
+                    'page_number': p.get('page_number', idx),
+                    'text': p.get('text', '').strip(),
+                    'char_count': len(p.get('text', '').strip()),
+                }
+                for idx, p in enumerate(doc_pages, start=1)
+            ]
+            text_content = '\n'.join(p.get('text', '') for p in doc_pages).strip()
+            if text_content and len(text_content) >= 15:
+                return text_content, pages_data
+    except Exception as exc:
+        logger.info("Language-aware load_document fallback to fitz (%s): %s", filename, exc)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
     pages_data: List[Dict[str, Any]] = []
     text_content = ""
 
@@ -243,48 +277,75 @@ def detect_syllabus_hierarchy(text: str, pages: List[Dict[str, Any]] = None, raw
     total_chars = max(len(text), 1)
     detected_headings: List[Dict[str, Any]] = []
 
-    # Strategy 1: PDF bookmarks / outline
+    # Detect document language
+    doc_lang = 'en'
+    try:
+        from ai_paper_generator.language import detect_language
+        doc_lang, _, _ = detect_language(text[:5000]) if len(text.strip()) >= 20 else ('en', 1.0, {})
+    except Exception:
+        pass
+
+    # Strategy 1: PDF bookmarks / outline (Only if outline matches document language)
     if raw_bytes:
         toc_entries = detect_pdf_bookmarks_or_outlines(raw_bytes)
         if len(toc_entries) >= 2:
-            for entry in toc_entries:
-                t_clean = re.sub(r'[\r\n\t]+', ' ', entry['title']).strip()
-                if len(t_clean) >= 3 and t_clean.lower() not in [h['title'].lower() for h in detected_headings]:
-                    detected_headings.append({
-                        'title': t_clean,
-                        'page': entry.get('page'),
-                        'line': t_clean,
-                    })
+            outline_is_applicable = True
+            if doc_lang != 'en':
+                try:
+                    from ai_paper_generator.language import detect_language
+                    toc_sample = " ".join(str(e.get('title', '')) for e in toc_entries[:5])
+                    toc_lang, _, _ = detect_language(toc_sample)
+                    if toc_lang == 'en':
+                        outline_is_applicable = False
+                except Exception:
+                    pass
 
-    # Strategy 2: Regex patterns on document text
+            if outline_is_applicable:
+                for entry in toc_entries:
+                    t_clean = re.sub(r'[\r\n\t]+', ' ', entry['title']).strip()
+                    if len(t_clean) >= 3 and t_clean.lower() not in [h['title'].lower() for h in detected_headings]:
+                        detected_headings.append({
+                            'title': t_clean,
+                            'page': entry.get('page'),
+                            'line': t_clean,
+                        })
+
+    # Strategy 2: Regex patterns on document text (Language-aware & Multilingual)
     if len(detected_headings) < 2:
         heading_pattern = re.compile(
-            r'^(?:unit|module|chapter|topic|section|part)\s*[-:\dIVXLCDM]+[\s\.\:\-–—]+(.+)',
+            r'^(?:unit|module|chapter|topic|section|part|પ્રકરણ|એકમ|વિભાગ|અધ્યાય|પાઠ|ઇકાઈ|इकाई|अध्याय|खंड|पाठ)\s*[-:\dIVXLCDM૦-૯\u0966-\u096f]+[\s\.\:\-–—]+(.+)',
             re.IGNORECASE
         )
-        numbered_pattern = re.compile(r'^\d+[\.\:\)]\s+([A-Z][A-Za-z0-9\s,\-–—/&]{4,80})$')
+        numbered_pattern = re.compile(
+            r'^(\d+|[૦-૯]+|[\u0966-\u096f]+)[\.\:\)]\s+([A-Za-z\u0a80-\u0aff\u0900-\u097f\u0600-\u06ff][^\n]{3,100})$'
+        )
         lines = [line.strip() for line in text.split('\n') if line.strip()]
 
         for line in lines:
             m = heading_pattern.match(line)
             if m:
-                clean = line[:100].strip(' -:–—.')
+                clean = line[:120].strip(' -:–—.')
                 if len(clean) >= 4 and clean.lower() not in [h['title'].lower() for h in detected_headings]:
                     detected_headings.append({'title': clean, 'line': line})
                 continue
             nm = numbered_pattern.match(line)
             if nm and len(detected_headings) < 15:
-                clean = nm.group(1).strip(' -:–—.')
+                clean = line[:120].strip(' -:–—.')
                 if len(clean) >= 4 and clean.lower() not in [h['title'].lower() for h in detected_headings]:
                     detected_headings.append({'title': clean, 'line': line})
 
-    # Strategy 3: Capitalized / Title-case standalone lines
+    # Strategy 3: Capitalized / Standalone lines
     if len(detected_headings) < 2:
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         for line in lines:
-            if 6 <= len(line) <= 60 and not line.endswith(('.', '?', '!', ';')):
+            if 6 <= len(line) <= 80 and not line.endswith(('.', '?', '!', ';', '।', '॥')):
                 words = line.split()
-                if 2 <= len(words) <= 8 and (line.isupper() or line.istitle()):
+                is_standalone = False
+                if doc_lang == 'en':
+                    is_standalone = 2 <= len(words) <= 8 and (line.isupper() or line.istitle())
+                else:
+                    is_standalone = 2 <= len(words) <= 8
+                if is_standalone:
                     clean = line.strip(' -:–—.')
                     lower_clean = clean.lower()
                     if lower_clean not in [h['title'].lower() for h in detected_headings]:
@@ -295,16 +356,21 @@ def detect_syllabus_hierarchy(text: str, pages: List[Dict[str, Any]] = None, raw
 
     # Strategy 4: Fallback LLM prompt ONLY if completely unstructured (< 2 topics)
     if len(detected_headings) < 2:
-        llm_topics = _detect_topics_with_short_llm_fallback(text[:3000])
+        llm_topics = _detect_topics_with_short_llm_fallback(text[:3000], language=doc_lang)
         for t in llm_topics:
             detected_headings.append({'title': t, 'line': t})
 
     # Ensure at least 1-3 baseline topics
     if not detected_headings:
         paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
+        sec_prefix = 'Section'
+        if doc_lang == 'gu':
+            sec_prefix = 'એકમ'
+        elif doc_lang == 'hi':
+            sec_prefix = 'इकाई'
         for idx, p in enumerate(paragraphs[:4], start=1):
             first_line = p.split('\n')[0].strip(' -:–—.')[:60]
-            detected_headings.append({'title': first_line or f"Section {idx}", 'line': first_line})
+            detected_headings.append({'title': first_line or f"{sec_prefix} {idx}", 'line': first_line})
 
     # Build structured units with page spans, weights, and summaries
     units = []
@@ -396,15 +462,19 @@ def detect_syllabus_hierarchy(text: str, pages: List[Dict[str, Any]] = None, raw
     }
 
 
-def _detect_topics_with_short_llm_fallback(compressed_outline: str) -> List[str]:
+def _detect_topics_with_short_llm_fallback(compressed_outline: str, language: str = 'en') -> List[str]:
     """
     Short, fallback prompt when no deterministic outline was detected.
     Uses format 'json' and short max tokens.
     """
     try:
         from .ollama_client import call_ollama, parse_json_safely
+        lang_note = ""
+        if language and language != 'en':
+            from ai_paper_generator.language import get_language_name
+            lang_note = f" Extract all topic titles in {get_language_name(language)} ({language}) and its native script. Do NOT translate to English."
         prompt = (
-            "Extract 4 to 8 academic syllabus unit or chapter topic titles from this text as a JSON array of strings.\n"
+            f"Extract 4 to 8 academic syllabus unit or chapter topic titles from this text as a JSON array of strings.{lang_note}\n"
             "Return JSON only: {\"topics\": [\"Unit 1 Title\", \"Unit 2 Title\", ...]}\n\n"
             f"Text:\n{compressed_outline[:2500]}"
         )
