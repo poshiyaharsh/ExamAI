@@ -137,6 +137,7 @@ class Paper(models.Model):
     duration = models.PositiveIntegerField()
     total_marks = models.PositiveIntegerField()
     generated_questions = models.JSONField(default=list)
+    language = models.CharField(max_length=20, blank=True, default="en", help_text="Detected ISO language code")
     is_published = models.BooleanField(default=True)
     published_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

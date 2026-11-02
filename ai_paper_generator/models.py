@@ -50,6 +50,7 @@ class GenerationJob(models.Model):
     error_message = models.TextField(blank=True, default='')
     saved_paper_id = models.PositiveIntegerField(null=True, blank=True)
     saved_exam_id = models.PositiveIntegerField(null=True, blank=True)
+    language = models.CharField(max_length=20, blank=True, default="en", help_text="Detected ISO language code for generated paper")
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
