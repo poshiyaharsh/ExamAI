@@ -207,10 +207,22 @@ def detect_language(text: str) -> Tuple[str, float, Dict[str, Any]]:
                 best_iso = 'ar'
                 best_score = max(ar_score, arab_share)
 
-        # Hinglish Detection (Hindi written in Devanagari with technical English terms)
-        if dev_share >= 0.25 and best_iso == 'en':
+        # Hinglish Detection:
+        # 1. Hindi written in Devanagari with technical English terms
+        if dev_share >= 0.20 and best_iso == 'en':
             best_iso = 'hi'
             best_score = 0.85
+        # 2. Romanized Hindi written in Latin script with English technical terms
+        elif best_iso == 'en' and scripts.get('Latin', 0) >= 0.80:
+            hinglish_markers = {
+                'mein', 'hai', 'hain', 'kaise', 'karta', 'karna', 'liye', 'aur', 'jaise',
+                'kya', 'kyun', 'hota', 'hoti', 'hote', 'hoga', 'wali', 'wale', 'wala',
+                'samjhaiye', 'bataiye', 'kijiye', 'karein', 'hona', 'mukhya'
+            }
+            word_tokens = set(re.findall(r'[a-zA-Z]{3,}', cleaned.lower()))
+            if len(word_tokens.intersection(hinglish_markers)) >= 3:
+                best_iso = 'hi'
+                best_score = 0.85
 
         return best_iso, float(best_score), {
             'scripts': scripts,

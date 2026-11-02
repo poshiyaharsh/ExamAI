@@ -1,0 +1,288 @@
+{
+  "en": {
+    "qwen3:4b": {
+      "tps": 7.9,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.3,
+      "tokens": 104,
+      "sample": "{\n  \"question\": \"Which of the following best describes the primary purpose of photosynthesis?\",\n  \"options\": [\n    \"To release carbon dioxide into the atmosphere.\",\n    \"To convert light energy into chemical energy in the form of sugars.\",\n    \"To absorb water from the soil and transport it to the leaves.\",\n    \"To break down sugars for energy production.\"\n  ],\n  \"answer\": \"To convert light energy into chemical energy in the form of sugars.\"\n}"
+    },
+    "llama3.2:3b": {
+      "tps": 5.6,
+      "tokens": 39,
+      "sample": "{\"question\": \"What is the primary product of photosynthesis?\", \"options\": [\"Carbon dioxide\", \"Water\", \"Glucose\", \"Oxygen\"], \"answer\": \"Glucose\"}"
+    },
+    "granite3.3:2b": {
+      "tps": 9.8,
+      "tokens": 71,
+      "sample": "{\n  \"question\": \"Photosynthesis in English (Latin script): What is the primary light requirement for this process?\",\n  \"options\": [\n    \"UV light\",\n    \"Infrared light\",\n    \"Visible light\",\n    \"Ultraviolet-A light\"\n  ],\n  \"answer\": \"Visible light\"\n}"
+    }
+  },
+  "hi": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.2,
+      "tokens": 78,
+      "sample": "{\"question\": \"प्रकाश संश्लेषण (Photosynthesis) में, पौधे सूर्य के प्रकाश का उपयोग करके किस पदार्थ का निर्माण करते हैं?\", \"options\": [\"पानी (Paani)\", \"कार्बन डाइऑक्साइड (Carbon Dioxide)\", \"ग्लूकोज (Glucoz)\", \"नाइट्रोजन (Nitrogen)\"], \"answer\": \"ग्लूकोज (Glucoz)\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 14.1,
+      "tokens": 250,
+      "sample": "{\"question\": \"\\u0bb7\\u0bcd\\u0bb4\\u0b95\\u0bbf\\u0bcd \\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bb4\\u0bcd\\u0bbf\\u0bcd\\u0b95\\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bb4\\u0bcd\\u0bbf\\u0bcd\\u0b95\\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd\", \"options\": [\"\\u0bbf\\u0bcd\\u0b95\\u0bb4\\u0bcd \\u0bbf\\u0bcd\\u0b95"
+    },
+    "granite3.3:2b": {
+      "tps": 16.5,
+      "tokens": 250,
+      "sample": "{\n  \"question\": \"प्रकाशसंश्लेषन के दौरान पौधे प्रकाश का उपयोग कैसे करते हैं?\",\n  \"options\": [\n    \"प्रकाश को अपने पौधे के पत्तों में संग्रहीत करते हैं और बाद में इसका उपयोग करते हैं\",\n    \"प्रकाश को अपने पौधे के पत्तों में प्रतिबिंबित करते हैं"
+    }
+  },
+  "gu": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 5.0,
+      "tokens": 137,
+      "sample": "{\"question\": \"વનસ્પતિઓમાં પ્રકાશસંશ્લેષણ (Photosynthesis) દરમિયાન, નીચેનામાંથી કયો પ્રક્રિયા મુખ્યત્વે થાય છે? \",\n \"options\": [\"A. કાર્બન ડાયોક્સાઇડનું પાણીમાં વિઘટન.\",\n             \"B. પાણી અને કાર્બન ડાયોક્સાઇડનું ગ્લુકોઝ અને ઓક્સિજનમાં રૂપાંતર.\",\n             \"C. ઓક્સિજનનું પાણીમાં વિઘટન.\",\n             \"D. ગ્લુકોઝનું પાણીમાં વિઘટન.\"],\n \"answer\": \"B\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 14.1,
+      "tokens": 250,
+      "sample": "{\n  \"question\": \"ફોટોસિંથસિસ દ્વારા પ્રાપ્ત કરવામાં આવતી જીવાણુઓની રચના કેવી છે?\",\n  \"options\": [\n    \"કાર્બોહાઈડ્રેટ્સ, પ્રોટીન્સ અને લિપિડ્સ\",\n    \"કાર્બોહાઈડ્રેટ્સ, પ્રોટીન્સ અ"
+    },
+    "granite3.3:2b": {
+      "tps": 16.1,
+      "tokens": 233,
+      "sample": "{\n  \"question\": \"પાણી કેવી રીતે થયે છે તે માટે કેટ್લા ચલ છે?\",\n  \"options\": [\n    \"એક ચલ\",\n    \"દાના ચલ\",\n    \"બહુ ચલ\",\n    \"કોઈ ચલ નથી\"\n  ],\n  \"answer\": \"બહુ ચલ\"\n}"
+    }
+  },
+  "mr": {
+    "qwen3:4b": {
+      "tps": 8.2,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.4,
+      "tokens": 92,
+      "sample": "{\"question\": \"वनस्पदांमध्ये प्रकाशसंश्लेषणाची (Photosynthesis) प्रक्रिया नेमके कशासाठी आवश्यक आहे?\",\n \"options\": [\"A) वनस्पतींना ऊर्जा निर्माण करण्यासाठी.\",\n            \"B) वनस्पतींना रंग देण्यासाठी.\",\n            \"C) वनस्पतींना फक्त अन्न वाढवण्यासाठी.\",\n            \"D) वनस्पतींना इतर प्राण्यांकडून पाणी मिळवण्यासाठी.\"],\n \"answer\": \"A) वनस्पतींना ऊर्जा निर्माण करण्यासाठी.\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 14.1,
+      "tokens": 247,
+      "sample": "{\n  \"question\": \"प्रकाशसंश्लेषणातील प्रमुख प्रक्रिया की होती?\",\n  \"options\": [\n    \"वायुमंडलातील कार्बन डाइऑक्साइड आणि पाणी वापरून ऑक्सीजन निर्माण करणे\",\n    \"वायुमंडलातील कार्बन डाइऑक्साइड आणि पाणी वापरून ऑक्सीजन निर्माण करणे\",\n    \"वायुमंडलातील ऑक्सीजन आणि कार्बन डाइऑक्साइड वापरून पाणी निर्माण करणे\",\n    \"वायुमंडलातील ऑक्सीजन आणि कार्बन डाइऑक्साइड वापरून पाणी निर्माण करणे\"\n  ],\n  \"answer\": \"वायुमंडलातील कार्बन डाइऑक्साइड आणि पाणी वापरून ऑक्सीजन निर्माण करणे\"\n}"
+    },
+    "granite3.3:2b": {
+      "tps": 16.2,
+      "tokens": 250,
+      "sample": "{\n  \"question\": \"पौधे सूर्य की रोशनी का उपयोग करके किस प्रकार की प्रक्रिया करते हैं?\",\n  \"options\": [\n    \"पौधे सूर्य की रोशनी का उपयोग करके खाद्य उत्पादन करते हैं.\",\n    \"पौधे सूर्य की रोशनी का उपयोग करके पानी का विघटन करते हैं.\",\n    \"पौधे सूर्य की रोशनी का उ"
+    }
+  },
+  "ta": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 3.8,
+      "tokens": 65,
+      "sample": "{\"question\": \"தாவரங்கள் சூரிய ஒளியைப் பயன்படுத்தி உணவைத் தயாரிக்க உதவும் செயல்முறை எது?\",\n \"options\": [\"உணவு உற்பத்தி\", \"சுவாசப் பரிமாற்றம்\", \"ஒளிச்சேர்க்கை\", \"நீர் உறிஞ்சுதல்\"],\n \"answer\": \"ஒளிச்சேர்க்கை\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 14.2,
+      "tokens": 250,
+      "sample": "{\"question\": \"\\u0ba8\\u0bb2\\u0bcd\\u0baa\\u0bbf \\u0ba3\\u0bbf\\u0bcd\\u0bbf\\u0baa\\u0bbf\\u0ba9\\u0bbf\\u0bcd\\u0bae\\u0bbf\\u0ba9\\u0bbf\\u0baa\\u0bbf\\u0ba8\\u0bbf\\u0ba9\\u0bbf\\u0baa\\u0bbf\\u0ba3\\u0bbf\\u0bcd\\u0bbf\\u0baa\\u0bbf\\u0ba9\\u0bbf\\u0baa\\u0bbf\\u0ba3\\u0bbf\\u0bcd\\u0bbf\\u0baa\\u0bbf\\u0ba8\\u0bbf\\u0ba9\\u0bbf\\u0baa\\u0bbf\\u0ba3\\u0bbf\\u0bcd\\u0bbf\\u0baa\\u0bbf\\u0ba8\\u0bbf\\u0ba9\\u0bbf\\u0baa\\u0bbf\\u0ba3\\u0bbf\\u0bcd"
+    },
+    "granite3.3:2b": {
+      "tps": 16.2,
+      "tokens": 250,
+      "sample": "{\n  \"question\": \"ஒரு பாதையில் வெள்ளியை விட்டுப் பாதையில் வெள்ளுள்ள வெளிப்புற்றின் வகையை எண்ணுவோம். இது வில்லியல் என அழைக்கப்படும் ஒரு வெளிப்பாடு. இந்த வெளிப்பாட்டை எப்படி எழுதலாம்?\",\n  \"options\": {\n    \"option_1\": \"கால்சியம்\",\n    \"option_2\": \"சோடியம்\",\n    \"option_3\": \"அமீன் சோடியம்\",\n    \"option_4\": \"அமீ"
+    }
+  },
+  "bn": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.3,
+      "tokens": 89,
+      "sample": "{\"question\": \"উদ্ভিদ সালোকসংশ্লেষণে কার্বন ডাই অক্সাইড গ্রহণ করে এবং অক্সিজেন নির্গত করে। এই প্রক্রিয়ায় সূর্যের আলো কী কাজে লাগে?\", \"options\": [\"ক) মাটি থেকে জল শোষণ করতে\", \"খ) পাতা verdes করতে\", \"গ) সূর্যের আলো শক্তি শোষণ করে\", \"ঘ) বাতাস থেকে নাইট্রোজেন সংগ্রহ করতে\"], \"answer\": \"গ) সূর্যের আলো শক্তি শোষণ করে\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 12.1,
+      "tokens": 154,
+      "sample": "{\"question\": \"\\nফটোসিনথেসিসে কী হয় তা নির্ধারণ করে এমন বিষয়গুলির মধ্যে একটি হল কী?\", \"\\noptions\": [\"পানি\", \"গ্যাস\", \"শক্তি\", \"পৃষ্ঠতত্ত্ব\"], \"\\nanswer\": \"শক্তি\"}"
+    },
+    "granite3.3:2b": {
+      "tps": 15.4,
+      "tokens": 199,
+      "sample": "{\n  \"question\": \"বায়োলুক সম্পর্কে কোনো বাংলা বাক্য নির্ধারণ করুন যার উত্তর হলো\",\n  \"options\": [\n    \"a) ফটোসিন্থেসিস\",\n    \"b) ফটোসিগন্স\",\n    \"c) ফটোসিক্স\",\n    \"d) ফটোসিউরি\",\n    \"answer: a) ফটোসিন্থেসিস\",\n    \"b) ফটোসিগন্স\",\n    \"c) ফটোসিক্স\",\n    \"d) ফটোসিউরি\"\n  ]\n}"
+    }
+  },
+  "ur": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.7,
+      "tokens": 94,
+      "sample": "{\"question\": \"تھک گیا ہے؟ پودے سبز رنگ کیوں ہیں؟\",\n \"options\": [\"کیونکہ وہ سورج کی روشنی جذب کرتے ہیں.\",\n  \"کیونکہ وہ ہوا سے کربن ڈائی اکسائیڈ لیتے ہیں.\",\n  \"کیونکہ وہ پانی لیتے ہیں.\",\n  \"کیونکہ وہ حیوانات سے غذا لیتے ہیں.\"],\n \"answer\": \"کیونکہ وہ سورج کی روشنی جذب کرتے ہیں.\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 12.3,
+      "tokens": 160,
+      "sample": "{\n  \"question\": \"فوتو سینتھسس کا تعلق کیا ہے؟\",\n  \"options\": [\n    \"پودوں کے لیے پانی اور گیس کا استعمال\",\n    \"جاندوں کے لیے پانی اور گیس کا استعمال\",\n    \"پودوں کے لیے گیس اور پانی کا استعمال\",\n    \"جاندوں کے لیے گیس اور پانی کا استعمال\"\n  ],\n  \"answer\": \"پودوں کے لیے گیس اور پانی کا استعمال\"\n}"
+    },
+    "granite3.3:2b": {
+      "tps": 14.8,
+      "tokens": 176,
+      "sample": "{\n  \"question\": \"Photosynthesis کے درمیان میں کیا عملیات مرتب کی جاتی है؟\",\n  \"options\": [\n    \"a) کرنے کی عملیات\",\n    \"b) جلنے کی عملیات\",\n    \"c) نقل کی عملیات\",\n    \"d) تبدیل کی عملیات\",\n    \"e) جلنے کی عملیات\",\n    \"f) کرنے کی عملیات\"\n  ],\n  \"answer\": \"d) تبدیل کی عملیات\"\n}"
+    }
+  },
+  "ar": {
+    "qwen3:4b": {
+      "tps": 8.2,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.5,
+      "tokens": 107,
+      "sample": "{\"question\": \"ما هي العملية الرئيسية التي تستخدمها النباتات لتحويل ضوء الشمس إلى طاقة؟\\n\\nأ) التنفس الخلوي\\nب) التحلل الذاتي\\nج) التمثيل الضوئي\\nد) التبريد\", \"options\": [\"أ) التنفس الخلوي\", \"ب) التحلل الذاتي\", \"ج) التمثيل الضوئي\", \"د) التبريد\"], \"answer\": \"ج) التمثيل الضوئي\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 14.1,
+      "tokens": 250,
+      "sample": "{\"question\": \"\\u0631\\u0645\\u0631\\u0627\\u0631\\u0648\\u0631\\u0645\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0631\\u0645\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u0644\\u0627\\u0631\\u0648\\u0644 \\u0645\\u"
+    },
+    "granite3.3:2b": {
+      "tps": 15.0,
+      "tokens": 183,
+      "sample": "{\n  \"question\": \"ما هو العملية التي تُعرف بأنها 'تحويل الضوء إلى طاقة' في النباتات؟\",\n  \"options\": [\n    \"تحويل الطاقة إلى ضوء\",\n    \"تحويل ضوء إلى طاقة\",\n    \"تحويل طاقة إلى ضوء\",\n    \"تحويل ضوء إلى ضوء\"\n  ],\n  \"answer\": \"تحويل ضوء إلى طاقة\"\n}"
+    }
+  },
+  "fr": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.7,
+      "tokens": 94,
+      "sample": "{\"question\": \"Quel processus biologique permet aux plantes de convertir l'énergie lumineuse en énergie chimique, en utilisant le dioxyde de carbone et l'eau ?\\n\\nA) La respiration cellulaire\\nB) La transpiration\\nC) La photosynthèse\\nD) La fermentation\", \"options\": [\"La respiration cellulaire\", \"La transpiration\", \"La photosynthèse\", \"La fermentation\"], \"answer\": \"La photosynthèse\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 8.1,
+      "tokens": 71,
+      "sample": "{\"question\": \"Quel est le nom scientifique de la réaction par laquelle les plantes produisent leur propre nourriture en utilisant l'énergie du soleil ?\", \"options\": [\"Photosynthèse\", \"Respiration\", \"Transpiration\", \"Fermentation\"], \"answer\": \"Photosynthèse\"}"
+    },
+    "granite3.3:2b": {
+      "tps": 10.4,
+      "tokens": 77,
+      "sample": "{\n  \"question\": \"Quelle est la couleur des lumières absorbées par les chlorophylles lors de la photosynthèse?\",\n  \"options\": [\n    \"Rouge\",\n    \"Vert\",\n    \"Bleu\",\n    \"Jaune\"\n  ],\n  \"answer\": \"Vert\"\n}"
+    }
+  },
+  "es": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.3,
+      "tokens": 88,
+      "sample": "{\"question\": \"¿Cuál de las siguientes opciones describe mejor la función principal de la fotosíntesis?\", \"options\": [\"A. Liberar dióxido de carbono a la atmósfera.\", \"B. Convertir la energía solar en energía química almacenada en glucosa.\", \"C. Absorber agua del suelo para el crecimiento de las plantas.\", \"D. Transportar nutrientes desde las raíces hasta las hojas.\"], \"answer\": \"B\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 13.0,
+      "tokens": 190,
+      "sample": "{\"question\": \"¿Qué es la fórmula química de la fotosíntesis?\", \"options\": [\"6 CO2 + 6 H2O + Láminas de clorofila → C6H12O6 + 6 O2\", \"6 CO2 + 6 H2O + Láminas de clorofila → C6H12O6 + 6 H2O\", \"6 CO2 + 6 O2 + Láminas de clorofila → C6H12O6 + 6 H2O\", \"6 H2O + 6 O2 → C6H12O6 + Láminas de clorofila\"], \"answer\": \"6 CO2 + 6 H2O + Láminas de clorofila → C6H12O6 + 6 O2\"}"
+    },
+    "granite3.3:2b": {
+      "tps": 16.3,
+      "tokens": 250,
+      "sample": "{\n  \"question\": \"¿Cuál de las siguientes descripciones es la correcta sobre la fotosíntesis en español?\",\n  \"options\": [\n    \"La fotosíntesis es el proceso por el cual las plantas convierten el agua y el dióxido de carbono en azúcares y oxígeno.\",\n    \"La fotosíntesis es el proceso por el cual las plantas convierten el oxígeno y el dióxido de carbono en agua y azúcares.\",\n    \"La fotosíntesis es el proceso por el cual las plantas convierten el agua y el oxígeno en azúcares y dióxido de carbono.\",\n    \"La fotosíntesis es el proceso por el cual las plantas convierten el dióxido de carbono y el agua en oxígeno y azúcares.\"\n  ],\n  \"answer\": \"La fotosíntesis es el proceso por el cual las plantas convierten el agua y el dióxido de carbon"
+    }
+  },
+  "de": {
+    "qwen3:4b": {
+      "tps": 8.2,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.3,
+      "tokens": 96,
+      "sample": "{\"question\": \"Welche der folgenden Aussagen beschreibt am besten den Hauptzweck der Photosynthese?\", \"options\": [\"A) Die Aufnahme von Wasser und Mineralien aus dem Boden.\", \"B) Die Umwandlung von Lichtenergie in chemische Energie in Form von Zucker.\", \"C) Die Freisetzung von Kohlendioxid in die Atmosphäre.\", \"D) Die Atmung von Pflanzen zur Energiegewinnung.\"], \"answer\": \"B\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 7.5,
+      "tokens": 59,
+      "sample": "{\"question\": \"Was ist die Hauptsubstanz, die durch Photosynthese produziert wird?\", \"options\": [\"Wasser\", \"Kohlenstoffdioxid\", \"Sauerstoff\", \"Natrium\"], \"answer\": \"Kohlenstoffdioxid\"}"
+    },
+    "granite3.3:2b": {
+      "tps": 11.5,
+      "tokens": 94,
+      "sample": "{\n  \"question\": \"Wie wird das grundlegende chemische Prozess der Photosynthese in Deutsch bezeichnet?\",\n  \"options\": [\n    \"Lichtreaktion\",\n    \"Dunkelreaktion\",\n    \"Fotosynthese-Prozess\",\n    \"Kohlenstoffkreislauf\"\n  ],\n  \"answer\": \"Lichtreaktion\"\n}"
+    }
+  },
+  "zh": {
+    "qwen3:4b": {
+      "tps": 8.4,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 4.0,
+      "tokens": 86,
+      "sample": "{\"question\": \"下列哪一项描述了光合作用的主要过程？\", \"options\": [\"A. 植物吸收土壤中的水分和矿物质。\", \"B. 植物通过根吸收二氧化碳，释放氧气。\", \"C. 植物利用光能将二氧化碳和水转化为糖类和氧气。\", \"D. 植物通过呼吸作用消耗氧气，产生能量。\"], \"answer\": \"C\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 11.3,
+      "tokens": 129,
+      "sample": "{\"question\": \"\\u8d83\\u53d1\\u5b50\\u3002 \\u4e2d\\u56fd\\u5b50\\u3002\", \"options\": [\"\\u5f20\\u4e09\\u5b50\\u3002\", \"\\u5f20\\u4e09\\u5b50\\u3002\", \"\\u5f20\\u4e09\\u5b50\\u3002\", \"\\u5f20\\u4e09\\u5b50\\u3002\"], \"answer\": \"\\u5f20\\u4e09\\u5b50\\u3002\"}"
+    },
+    "granite3.3:2b": {
+      "tps": 11.7,
+      "tokens": 101,
+      "sample": "{\n  \"question\": \"在光合作用的光依存反应中，光能主要被用于\",\n  \"options\": [\n    \"光合作用中的水分解\",\n    \"光合作用中的CO2固定\",\n    \"光合作用的光能转化为化学能\",\n    \"光合作用的光能转化为热能\"\n  ],\n  \"answer\": \"光合作用的光能转化为化学能\"\n}"
+    }
+  },
+  "ja": {
+    "qwen3:4b": {
+      "tps": 8.3,
+      "tokens": 250,
+      "sample": ""
+    },
+    "gemma3:4b": {
+      "tps": 5.0,
+      "tokens": 127,
+      "sample": "{\"question\": \"光合成において、葉緑体内で水（H₂O）と二酸化炭素（CO₂）からグルコース（C₆H₁₂O₆）が生成される主な反応はどれですか？\",\n \"options\": [\"A. 酸素（O₂）を生成する反応\", \"B. 光エネルギーを利用して、水と二酸化炭素を糖に変換する反応\", \"C. 糖を分解して、水と二酸化炭素を生成する反応\", \"D. 葉緑体を保護する反応\"],\n \"answer\": \"B\"}"
+    },
+    "llama3.2:3b": {
+      "tps": 13.9,
+      "tokens": 250,
+      "sample": "{\"question\": \"\\u65e5\\u672c\\u8a9a\\u5b50\\u3002\\u8a9a\\u5b50\\u3002\\u8a9a\\u5b50\\u3002\\u8a9a\\u5b50\\u3002\", \"options\": [\"\\u30a2\\u30f3\\u30c8\\u30f3\\u30c8\\u30a2\\u30fc\\u30f3\\u30c8\\u30fc\\u30a2\", \"\\u30a2\\u30f3\\u30c8\\u30f3\\u30c8\\u30a2\\u30fc\\u30f3\\u30c8\\u30fc\\u30a2\\u30e9\\u30fc\", \"\\u30a2\\u30f3\\u30c8\\u30f3\\u30c8\\u30a2\\u30fc\\u30f3\\u30c8\\u30fc\\u30a2\\u30e9\\u30fc\", \"\\u30a2\\u30f3\\u30c8\\u30f3\\u30c8\\u30a2\\u30fc\\u30f3\\u30c8\\u30fc\\u"
+    },
+    "granite3.3:2b": {
+      "tps": 15.8,
+      "tokens": 224,
+      "sample": "{\n  \"question\": \"日本語での質問: 光合成に関する以下の4つの選択肢の中で、正しい定義を選んでください。\",\n  \"options\": [\n    \"光合成は、植物が太陽光を直接吸収してエネルギーを生成する過程です。\",\n    \"光合成は、植物が二酸化炭素と水を利用して光エネルギーを生成する過程です。\",\n    \"光合成は、植物が二酸化炭素と水を利用して酸素を生成する過程です。\",\n    \"光合成は、植物が太陽光を利用して糖を生成する過程です。\"\n  ],\n  \"answer\": \"光合成は、植物が二酸化炭素と水を利用して光エネルギーを生成する過程です。\"\n}"
+    }
+  }
+}
