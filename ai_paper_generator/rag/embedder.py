@@ -1,7 +1,7 @@
 """
 Embedder for RAG.
-1. Checks if Ollama has an embedding model (e.g., nomic-embed-text) installed and uses it.
-2. If not, falls back to local fast TF-IDF / word-embedding vectorizer, ensuring zero crashes.
+1. Checks if Ollama has an embedding model (e.g., nomic-embed-text for English, bge-m3 for multilingual) installed and uses it.
+2. If not, falls back to local fast TF-IDF / word-embedding vectorizer with Unicode support, ensuring zero crashes.
 3. Logs all decisions to rag.log.
 """
 import math
@@ -9,7 +9,7 @@ import re
 import logging
 from collections import Counter
 from typing import List, Optional, Union
-from ..config import PREFERRED_EMBEDDING_MODEL
+from ..config import get_embedding_model_for_language, PREFERRED_EMBEDDING_MODEL
 from ..ollama_client import OllamaClient
 from ..logging_setup import log_event
 
@@ -20,13 +20,15 @@ class LocalTfIdfEmbedder:
     """
     Self-contained, ultra-fast vectorizer.
     Produces normalized vector representations without requiring heavy PyTorch installations.
+    Multilingual support with Unicode word tokenization.
     """
     def __init__(self):
         self.vocab = {}
         self.idf = {}
 
     def _tokenize(self, text: str) -> List[str]:
-        return re.findall(r'\b[a-zA-Z0-9_]{2,}\b', text.lower())
+        # Unicode word characters of length >= 2
+        return re.findall(r'[\w\d]{2,}', text.lower(), flags=re.UNICODE)
 
     def fit(self, documents: List[str]):
         doc_count = len(documents)
@@ -59,9 +61,15 @@ class LocalTfIdfEmbedder:
 
 
 class RAGEmbedder:
-    def __init__(self, ollama_client: Optional[OllamaClient] = None, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        ollama_client: Optional[OllamaClient] = None,
+        model_name: Optional[str] = None,
+        language: str = "en"
+    ):
         self.client = ollama_client or OllamaClient()
-        self.model_name = model_name
+        self.language = language or "en"
+        self.model_name = model_name or get_embedding_model_for_language(self.language)
         self.local_embedder = LocalTfIdfEmbedder()
         self.using_ollama = False
         self._initialized = False
@@ -78,7 +86,7 @@ class RAGEmbedder:
                 self.using_ollama = True
                 log_event(
                     'RAG',
-                    f"RAG initialized with Ollama embedding model: '{self.model_name}'",
+                    f"RAG initialized with Ollama embedding model: '{self.model_name}' (language='{self.language}')",
                     level=logging.INFO
                 )
                 self._initialized = True
@@ -89,7 +97,7 @@ class RAGEmbedder:
         self.using_ollama = False
         log_event(
             'RAG',
-            "RAG initialized with local optimized embedder (Ollama embedding model not found).",
+            f"RAG initialized with local optimized embedder (Ollama model '{self.model_name}' unavailable).",
             level=logging.INFO
         )
         self._initialized = True

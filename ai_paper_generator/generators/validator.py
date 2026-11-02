@@ -5,17 +5,18 @@ Tier 1: Code Verification (Instant)
 - Answer in context check
 - Distractor quality: pairwise similarity < 0.85, distractor != correct, no banned phrases, correct <= 2.2x distractor len
 - Fill in the blank: single blank (_____), answer 1-4 words in quote
-- True/False: exactly True or False, correct statement for false
+- True/False: exactly True or False, correct statement for false (canonical multilingual normalization)
 - Short/Long: non-empty, points matching marks, within word limits
 - Deduplication: similarity < 0.8, distinct source quotes
 
-Tier 2: AI Verification (phi3:mini)
+Tier 2: AI Verification (phi3:mini / multilingual model)
 - Batches of up to 5 items with compact JSON schema
 - Run ONLY for Long answers and items flagged by code rules
 - Never run for standard clean MCQs, True/False, or Fill Blank
 """
 import re
 import difflib
+import unicodedata
 import logging
 from typing import Dict, Any, Tuple, Optional, List
 from ..ollama_client import OllamaClient
@@ -39,14 +40,26 @@ STOPWORDS = {
     'the', 'is', 'at', 'which', 'on', 'and', 'a', 'an', 'in', 'to', 'for', 'of', 'with', 'by', 'as', 'that'
 }
 
+TRUE_STRINGS = {
+    'true', 't', 'yes', 'y', '1',
+    'सत्य', 'सही', 'સાચું', 'સત્ય', 'बरोबर', 'খাঁটি', 'உண்மை', 'صحیح', 'صحيح',
+    'vrai', 'verdadero', 'wahr', '正确', '正しい', '맞다'
+}
+
+FALSE_STRINGS = {
+    'false', 'f', 'no', 'n', '0',
+    'असत्य', 'गलत', 'ખોટું', 'અસત્ય', 'चूक', 'ভুল', 'தவறு', 'غلط', 'خطأ',
+    'faux', 'falso', 'falsch', '错误', '誤り', '틀리다'
+}
+
 
 def check_grounding_quote(source_quote: str, context: str) -> Tuple[bool, float]:
     """Checks that source_quote appears in context with difflib ratio >= 0.85."""
     if not source_quote or not context:
         return False, 0.0
 
-    sq = source_quote.strip().lower()
-    ctx = context.lower()
+    sq = unicodedata.normalize('NFC', source_quote.strip().lower())
+    ctx = unicodedata.normalize('NFC', context.lower())
 
     if sq in ctx:
         return True, 1.0
@@ -57,8 +70,8 @@ def check_grounding_quote(source_quote: str, context: str) -> Tuple[bool, float]
     if match.size >= len(sq) * 0.85:
         return True, match.size / len(sq)
 
-    # Sentence-level fuzzy match
-    sentences = re.split(r'[.\n]+', ctx)
+    # Sentence-level fuzzy match (script-aware delimiters: . \n । ॥ ؟ ؛ 。 ！？)
+    sentences = re.split(r'[.\n।॥؟؛。！？]+', ctx)
     best_ratio = 0.0
     for s in sentences:
         s_clean = s.strip()
@@ -76,15 +89,15 @@ def check_answer_in_context(answer: str, source_quote: str, context: str) -> boo
     """Checks that key terms of answer appear in source_quote or context."""
     if not answer:
         return False
-    ans_clean = str(answer).strip().lower()
-    if ans_clean in ('true', 'false'):
+    ans_clean = unicodedata.normalize('NFC', str(answer).strip().lower())
+    if ans_clean in TRUE_STRINGS or ans_clean in FALSE_STRINGS:
         return True
 
-    words = [w for w in re.findall(r'\b\w+\b', ans_clean) if len(w) >= 3 and w not in STOPWORDS]
+    words = [w for w in re.findall(r'[\w\d]+', ans_clean, flags=re.UNICODE) if len(w) >= 2 and w not in STOPWORDS]
     if not words:
         return True
 
-    haystack = (source_quote + " " + context).lower()
+    haystack = unicodedata.normalize('NFC', (source_quote + " " + context).lower())
     matches = sum(1 for w in words if w in haystack)
     return (matches / len(words)) >= 0.5
 
@@ -92,17 +105,18 @@ def check_answer_in_context(answer: str, source_quote: str, context: str) -> boo
 def validate_rules(
     question_data: Dict[str, Any],
     context: str = "",
-    job_id: Optional[int] = None
+    job_id: Optional[int] = None,
+    language: str = "en"
 ) -> Tuple[bool, str]:
     """
     Tier 1 Instant Rule Checks (Section 4). Returns (is_valid, reason).
     """
     slot_num = question_data.get('slot_index')
     q_type = question_data.get('type')
-    text = str(question_data.get('question') or question_data.get('text') or '').strip()
-    answer = str(question_data.get('answer') or '').strip()
+    text = unicodedata.normalize('NFC', str(question_data.get('question') or question_data.get('text') or '').strip())
+    answer = unicodedata.normalize('NFC', str(question_data.get('answer') or '').strip())
     options = question_data.get('options') or []
-    source_quote = str(question_data.get('source_quote') or '').strip()
+    source_quote = unicodedata.normalize('NFC', str(question_data.get('source_quote') or '').strip())
 
     # 1. General checks
     if not text or len(text) < 8:
@@ -140,7 +154,7 @@ def validate_rules(
             log_event('RULE_FAIL', f"Rule failed: {reason}", job_id=job_id, slot_number=slot_num)
             return False, reason
 
-        clean_options = [str(opt).strip() for opt in options if str(opt).strip()]
+        clean_options = [unicodedata.normalize('NFC', str(opt).strip()) for opt in options if str(opt).strip()]
         if len(clean_options) != 4:
             reason = "MCQ contains empty or whitespace options."
             log_event('RULE_FAIL', f"Rule failed: {reason}", job_id=job_id, slot_number=slot_num)
@@ -181,16 +195,15 @@ def validate_rules(
         question_data['answer'] = matched_option
 
     elif q_type == 'True/False':
-        normalized_ans = answer.strip().capitalize()
-        if normalized_ans not in ('True', 'False'):
-            if 'true' in answer.lower():
-                normalized_ans = 'True'
-            elif 'false' in answer.lower():
-                normalized_ans = 'False'
-            else:
-                reason = f"True/False answer must be 'True' or 'False', got '{answer}'."
-                log_event('RULE_FAIL', f"Rule failed: {reason}", job_id=job_id, slot_number=slot_num)
-                return False, reason
+        raw_ans = answer.strip().lower()
+        if raw_ans in TRUE_STRINGS or any(k in raw_ans for k in ('true', 'सत्य', 'સાચું', 'vrai', 'wahr', 'verdadero', '正确')):
+            normalized_ans = 'True'
+        elif raw_ans in FALSE_STRINGS or any(k in raw_ans for k in ('false', 'असत्य', 'ખોટું', 'faux', 'falsch', 'falso', '错误')):
+            normalized_ans = 'False'
+        else:
+            reason = f"True/False answer must resolve to 'True' or 'False', got '{answer}'."
+            log_event('RULE_FAIL', f"Rule failed: {reason}", job_id=job_id, slot_number=slot_num)
+            return False, reason
 
         question_data['answer'] = normalized_ans
         question_data['options'] = ['True', 'False']
@@ -207,7 +220,7 @@ def validate_rules(
 
         # Blank word limit (Section 4.5: 1 to 4 words)
         words = answer.split()
-        if not words:
+        if not words and not answer:
             reason = "Fill in the blank answer is empty."
             log_event('RULE_FAIL', f"Rule failed: {reason}", job_id=job_id, slot_number=slot_num)
             return False, reason
@@ -231,12 +244,12 @@ def validate_rules(
         valid_rub = (
             isinstance(pts, list) and
             len(pts) == expected_pts and
-            all(isinstance(p, str) and 3 <= len(p.split()) <= 30 for p in pts)
+            all(isinstance(p, str) and (len(p.split()) >= 2 or len(p) >= 10) for p in pts)
         )
         if not valid_rub:
             # Auto-heal with build_rubric
             raw_pts = question_data.get('key_points') or question_data.get('answer_points') or answer
-            new_rub = build_rubric('Short Answer', marks, raw_pts, question_text=text, model_answer=answer)
+            new_rub = build_rubric('Short Answer', marks, raw_pts, question_text=text, model_answer=answer, language=language)
             question_data['rubric'] = new_rub
             question_data['key_points'] = new_rub[0]['key_points']
             pts = new_rub[0]['key_points']
@@ -248,9 +261,14 @@ def validate_rules(
     elif q_type == 'Long Answer':
         marks = int(question_data.get('marks') or 5)
         min_words = max(15, marks * 3)
-        word_count = len(answer.split())
-        if not answer or word_count < min_words:
-            reason = f"Long Answer model answer is too short ({word_count} words vs required minimum {min_words} words)."
+
+        # CJK check
+        cjk_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u30ff]', answer))
+        is_cjk = cjk_chars > len(answer) * 0.3
+        effective_word_count = int(len(answer) / 2) if is_cjk else len(answer.split())
+
+        if not answer or effective_word_count < min_words:
+            reason = f"Long Answer model answer is too short ({effective_word_count} words/units vs required minimum {min_words})."
             log_event('RULE_FAIL', f"Rule failed: {reason}", job_id=job_id, slot_number=slot_num)
             return False, reason
 
@@ -262,12 +280,12 @@ def validate_rules(
         valid_rub = (
             isinstance(pts, list) and
             len(pts) == expected_pts and
-            all(isinstance(p, str) and 3 <= len(p.split()) <= 30 for p in pts)
+            all(isinstance(p, str) and (len(p.split()) >= 2 or len(p) >= 10) for p in pts)
         )
         if not valid_rub:
             # Auto-heal with build_rubric
             raw_pts = question_data.get('key_points') or question_data.get('answer_points') or answer
-            new_rub = build_rubric('Long Answer', marks, raw_pts, question_text=text, model_answer=answer)
+            new_rub = build_rubric('Long Answer', marks, raw_pts, question_text=text, model_answer=answer, language=language)
             question_data['rubric'] = new_rub
             question_data['key_points'] = new_rub[0]['key_points']
             pts = new_rub[0]['key_points']
@@ -300,7 +318,7 @@ def validate_batch_with_ai(
     job_id: Optional[int] = None
 ) -> Dict[int, Tuple[bool, str]]:
     """
-    Section 5.7 AI Validator: Batched validation of up to 5 items with phi3:mini.
+    Section 5.7 AI Validator: Batched validation of up to 5 items.
     Returns mapping {slot_index: (verdict_bool, issues_str)}.
     """
     if not items:

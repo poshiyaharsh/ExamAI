@@ -3,16 +3,35 @@ Document Loader for RAG.
 Extracts clean, structured text from:
 - PDF (via pymupdf / fitz or pdfplumber)
 - DOCX (via python-docx)
-- TXT
+- TXT (with automatic encoding detection)
 - PPTX (via XML text extraction from slides)
 Returns list of pages/sections with metadata (source file, page/slide number).
+Ensures Unicode NFC normalization and legacy 8-bit font detection across all formats.
 """
 import os
 import re
+import unicodedata
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Any
+
+try:
+    import charset_normalizer
+except ImportError:
+    charset_normalizer = None
+
+from ai_paper_generator.language import is_garbled_legacy_text
+
+
+def _normalize_text(text: str) -> str:
+    """Normalizes text to Unicode NFC and cleans abnormal control chars."""
+    if not text:
+        return ""
+    # NFC canonical composition
+    normalized = unicodedata.normalize("NFC", text)
+    # Remove control characters except standard whitespace (keep \n, \r, \t)
+    return "".join(ch for ch in normalized if ch in "\n\r\t" or not unicodedata.category(ch).startswith("C"))
 
 
 def load_pdf(file_path: str) -> List[Dict[str, Any]]:
@@ -23,14 +42,16 @@ def load_pdf(file_path: str) -> List[Dict[str, Any]]:
         doc = fitz.open(file_path)
         for page_idx, page in enumerate(doc, start=1):
             text = page.get_text() or ''
-            if text.strip():
+            clean_text = _normalize_text(text).strip()
+            if clean_text:
                 pages.append({
                     'page_number': page_idx,
-                    'text': text.strip(),
+                    'text': clean_text,
                     'source': Path(file_path).name,
                 })
         doc.close()
-        return pages
+        if pages:
+            return pages
     except Exception:
         pass
 
@@ -39,10 +60,11 @@ def load_pdf(file_path: str) -> List[Dict[str, Any]]:
         with pdfplumber.open(file_path) as pdf:
             for page_idx, page in enumerate(pdf.pages, start=1):
                 text = page.extract_text() or ''
-                if text.strip():
+                clean_text = _normalize_text(text).strip()
+                if clean_text:
                     pages.append({
                         'page_number': page_idx,
-                        'text': text.strip(),
+                        'text': clean_text,
                         'source': Path(file_path).name,
                     })
         return pages
@@ -55,12 +77,12 @@ def load_docx(file_path: str) -> List[Dict[str, Any]]:
     try:
         import docx
         doc = docx.Document(file_path)
-        paragraphs = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+        paragraphs = [_normalize_text(p.text) for p in doc.paragraphs if p.text and p.text.strip()]
 
         # Also extract table cells
         for table in doc.tables:
             for row in table.rows:
-                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                row_text = " | ".join(_normalize_text(cell.text).strip() for cell in row.cells if cell.text.strip())
                 if row_text:
                     paragraphs.append(row_text)
 
@@ -68,7 +90,7 @@ def load_docx(file_path: str) -> List[Dict[str, Any]]:
         if not full_text.strip():
             return []
 
-        # Split into ~1000 character logical sections
+        # Split into ~1500 character logical sections
         chunks = [full_text[i:i + 1500] for i in range(0, len(full_text), 1500)]
         return [
             {
@@ -83,13 +105,38 @@ def load_docx(file_path: str) -> List[Dict[str, Any]]:
 
 
 def load_txt(file_path: str) -> List[Dict[str, Any]]:
-    """Loads plain text files."""
+    """Loads plain text files with automatic encoding detection."""
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read()
-        if not content.strip():
+        with open(file_path, 'rb') as f:
+            raw_bytes = f.read()
+
+        if not raw_bytes:
             return []
-        chunks = [content[i:i + 1500] for i in range(0, len(content), 1500)]
+
+        content = ""
+        # 1. Try charset_normalizer
+        if charset_normalizer:
+            try:
+                result = charset_normalizer.from_bytes(raw_bytes).best()
+                if result and result.encoding:
+                    content = str(result)
+            except Exception:
+                content = ""
+
+        # 2. Fallbacks
+        if not content:
+            for enc in ('utf-8-sig', 'utf-8', 'latin-1'):
+                try:
+                    content = raw_bytes.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+        clean_text = _normalize_text(content)
+        if not clean_text.strip():
+            return []
+
+        chunks = [clean_text[i:i + 1500] for i in range(0, len(clean_text), 1500)]
         return [
             {
                 'page_number': idx,
@@ -114,7 +161,7 @@ def load_pptx(file_path: str) -> List[Dict[str, Any]]:
             for idx, slide_name in enumerate(slide_names, start=1):
                 xml_content = z.read(slide_name)
                 tree = ET.fromstring(xml_content)
-                text_parts = [elem.text for elem in tree.iter() if elem.text and elem.text.strip()]
+                text_parts = [_normalize_text(elem.text) for elem in tree.iter() if elem.text and elem.text.strip()]
                 slide_text = " ".join(text_parts).strip()
                 if slide_text:
                     slides.append({
@@ -131,16 +178,34 @@ def load_document(file_path: str) -> List[Dict[str, Any]]:
     """
     Auto-detects document format from file extension and extracts sections.
     Supported: .pdf, .docx, .txt, .pptx
+    Checks for scanned image-only PDFs and garbled legacy 8-bit text.
     """
     ext = Path(file_path).suffix.lower()
     if ext == '.pdf':
-        return load_pdf(file_path)
+        sections = load_pdf(file_path)
     elif ext in ('.docx', '.doc'):
-        return load_docx(file_path)
+        sections = load_docx(file_path)
     elif ext == '.txt':
-        return load_txt(file_path)
+        sections = load_txt(file_path)
     elif ext in ('.pptx', '.ppt'):
-        return load_pptx(file_path)
+        sections = load_pptx(file_path)
     else:
         # Fallback to plain text read
-        return load_txt(file_path)
+        sections = load_txt(file_path)
+
+    if not sections:
+        if ext == '.pdf':
+            raise ValueError(
+                "No extractable text found in PDF. Scanned or image-only PDFs without an "
+                "embedded text layer are not supported."
+            )
+        return []
+
+    combined_text = "\n".join(s.get('text', '') for s in sections)
+    if is_garbled_legacy_text(combined_text):
+        raise ValueError(
+            "The uploaded document appears to use legacy 8-bit encoded text (such as Kruti Dev or Shree-Lipi) "
+            "rather than standard Unicode. Please convert it to standard Unicode font or UTF-8 text before uploading."
+        )
+
+    return sections

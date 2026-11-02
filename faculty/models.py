@@ -96,8 +96,11 @@ import re
 
 def faculty_syllabus_upload_path(instance, filename):
     inst_id = getattr(instance, 'institution_id', None) or 'general'
-    safe_name = os.path.basename(filename)
-    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', safe_name)
+    base, ext = os.path.splitext(os.path.basename(filename))
+    clean_base = re.sub(r'[^\w\-.]', '_', base, flags=re.UNICODE).strip('_')
+    if not clean_base:
+        clean_base = 'document'
+    safe_name = f"{clean_base}{ext}"
     return f'syllabi/inst_{inst_id}/faculty_{instance.faculty_id}/{safe_name}'
 
 

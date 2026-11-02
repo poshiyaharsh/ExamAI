@@ -2,7 +2,7 @@
 Local Vector Store for RAG.
 Stores embeddings and chunk metadata in an isolated index per generation job.
 Ensures generation jobs never mix material.
-Supports persistence to JSON for job resumability.
+Supports persistence to UTF-8 JSON for job resumability.
 """
 import json
 import math
@@ -25,9 +25,15 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 
 
 class LocalVectorStore:
-    def __init__(self, job_id: int, embedder: Optional[RAGEmbedder] = None):
+    def __init__(
+        self,
+        job_id: int,
+        embedder: Optional[RAGEmbedder] = None,
+        language: str = "en"
+    ):
         self.job_id = job_id
-        self.embedder = embedder or RAGEmbedder()
+        self.language = language or "en"
+        self.embedder = embedder or RAGEmbedder(language=self.language)
         self.chunks: List[Dict[str, Any]] = []
         self.vectors: List[List[float]] = []
         self.storage_file = RAG_STORAGE_DIR / f"job_{job_id}.json"
@@ -74,14 +80,16 @@ class LocalVectorStore:
         return scored_results[:top_k]
 
     def save_to_disk(self):
-        """Persists the vector store to disk for job resumability."""
+        """Persists the vector store to disk for job resumability with ensure_ascii=False."""
         data = {
             'job_id': self.job_id,
+            'language': self.language,
+            'model_name': getattr(self.embedder, 'model_name', None),
             'chunks': self.chunks,
             'vectors': self.vectors,
         }
         with open(self.storage_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f)
+            json.dump(data, f, ensure_ascii=False)
 
     def load_from_disk(self) -> bool:
         """Loads cached vector store from disk."""
@@ -92,6 +100,9 @@ class LocalVectorStore:
                 data = json.load(f)
             self.chunks = data.get('chunks', [])
             self.vectors = data.get('vectors', [])
+            saved_lang = data.get('language')
+            if saved_lang:
+                self.language = saved_lang
             return True
         except Exception:
             return False

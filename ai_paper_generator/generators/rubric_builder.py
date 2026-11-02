@@ -7,22 +7,27 @@ Guarantees standard schema:
         "key_points": [ ... ]
     }
 ]
+Supports multilingual sentence boundaries (। ॥ ؟ ؛ 。) and script-safe fallback synthesis.
 """
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional
+
+# Multilingual sentence boundary regex
+SENTENCE_SPLIT_REGEX = re.compile(r'(?<=[.!?।॥؟؛。！？])\s*')
 
 
 def clean_sentence(text: str) -> str:
     """Strips bullets, numbering, quotes, and excessive whitespace."""
     if not text:
         return ""
-    s = str(text).strip()
-    # Strip leading markdown bullets and numbering: e.g. "1. ", "- ", "* ", "(a) ", "1) "
-    s = re.sub(r'^\s*([0-9]+[\.\)]|\([0-9a-zA-Z]+\)|[-*•+])\s*', '', s)
+    s = unicodedata.normalize('NFC', str(text)).strip()
+    # Strip leading markdown bullets and numbering: e.g. "1. ", "- ", "* ", "(a) ", "1) ", "१. "
+    s = re.sub(r'^\s*([0-9\u0966-\u096f\u0ae6-\u0aef]+[\.\)]|\([0-9a-zA-Z\u0966-\u096f\u0ae6-\u0aef]+\)|[-*•+])\s*', '', s)
     # Strip markdown bold/italic wrapper
     s = re.sub(r'^\*{1,2}(.*?)\*{1,2}$', r'\1', s)
     # Strip surrounding quotes
-    s = s.strip(' "\'“”‘’`')
+    s = s.strip(' "\'“”‘’`«»')
     # Collapse multiple whitespace
     s = re.sub(r'\s+', ' ', s).strip()
     return s
@@ -33,8 +38,8 @@ def truncate_to_word_limit(text: str, max_words: int = 30) -> str:
     words = text.split()
     if len(words) <= max_words:
         return text
-    truncated = " ".join(words[:max_words]).rstrip(',;:.-')
-    if not truncated.endswith(('.', '!', '?')):
+    truncated = " ".join(words[:max_words]).rstrip(',;:.-।॥')
+    if not truncated.endswith(('.', '!', '?', '।', '॥', '。')):
         truncated += '.'
     return truncated
 
@@ -44,8 +49,8 @@ def extract_first_sentence(text: str) -> str:
     clean = clean_sentence(text)
     if not clean:
         return ""
-    # Split by sentence terminators
-    parts = re.split(r'(?<=[.!?])\s+', clean)
+    # Split by multilingual sentence terminators
+    parts = [p.strip() for p in SENTENCE_SPLIT_REGEX.split(clean) if p.strip()]
     if parts:
         return parts[0].strip()
     return clean
@@ -68,8 +73,8 @@ def parse_raw_points(raw_points: Any) -> List[str]:
     parsed: List[str] = []
 
     if isinstance(raw_points, str):
-        # Split on newlines, semicolons, or bullet points
-        lines = re.split(r'[\r\n;]+|(?<=\.)\s+(?=[-*•\d])', raw_points)
+        # Split on newlines, semicolons, Indic/Arabic sentence endings, or bullet points
+        lines = re.split(r'[\r\n;؛]+|(?<=[.।॥。])\s+(?=[-*•\d\u0966-\u096f])', raw_points)
         for line in lines:
             c = clean_sentence(line)
             if c:
@@ -127,6 +132,7 @@ def build_rubric(
     answer_points: Any = None,
     question_text: str = "",
     model_answer: str = "",
+    language: str = "en",
 ) -> List[Dict[str, List[str]]]:
     """
     Pure, deterministic rubric builder.
@@ -134,6 +140,7 @@ def build_rubric(
     - Long Answer (M marks): at most 8 key points (min(M, 8)).
     - Each point: cleaned, 3 to 30 words, formatted.
     - Guaranteed non-empty output matching exact expected count.
+    - Multilingual: preserves detected language without injecting English templates for non-English papers.
     - Returns: [{'key_points': [ ... ]}]
     """
     q_type = str(question_type or '').strip()
@@ -148,6 +155,9 @@ def build_rubric(
 
     is_long = q_type in ('Long Answer', 'long_answer')
     target_count = min(8, m_int) if is_long else m_int
+
+    # Detect if text is non-Latin
+    is_non_latin = language != 'en' or bool(re.search(r'[\u0600-\u06ff\u0900-\u0d7f\u4e00-\u9fff]', question_text + model_answer))
 
     # 1. Parse raw answer points
     candidates = parse_raw_points(answer_points)
@@ -176,9 +186,9 @@ def build_rubric(
         # Cap at 30 words
         cleaned = truncate_to_word_limit(cleaned, max_words=30)
 
-        # Enforce minimum 3 words if possible
+        # Enforce minimum words/characters
         words = cleaned.split()
-        if len(words) < 3:
+        if len(words) < 3 and not is_non_latin:
             if question_text:
                 q_words = [w for w in re.findall(r'\b\w+\b', question_text) if len(w) > 3]
                 context_hint = " ".join(q_words[:3])
@@ -198,56 +208,78 @@ def build_rubric(
     elif len(cleaned_points) < target_count:
         final_points = list(cleaned_points)
 
-        # Attempt to split longer multi-sentence points if available
+        # Attempt to split longer multi-sentence points if available from model_answer
         if len(final_points) < target_count and model_answer:
-            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', model_answer) if s.strip()]
+            sentences = [s.strip() for s in SENTENCE_SPLIT_REGEX.split(model_answer) if s.strip()]
             for sent in sentences:
                 cs = clean_sentence(sent)
-                if cs and cs.lower() not in seen and len(cs.split()) >= 3:
-                    cs_capped = truncate_to_word_limit(cs, 30)
-                    seen.add(cs.lower())
-                    final_points.append(cs_capped)
+                if cs and cs.lower() not in seen:
+                    if is_non_latin or len(cs.split()) >= 3:
+                        cs_capped = truncate_to_word_limit(cs, 30)
+                        seen.add(cs.lower())
+                        final_points.append(cs_capped)
+                        if len(final_points) == target_count:
+                            break
+
+        # If still short, try splitting model_answer by commas/phrases
+        if len(final_points) < target_count and model_answer:
+            phrases = [p.strip() for p in re.split(r'[,،、]+', model_answer) if len(p.strip()) >= 10]
+            for phrase in phrases:
+                cp = clean_sentence(phrase)
+                if cp and cp.lower() not in seen:
+                    cp_capped = truncate_to_word_limit(cp, 30)
+                    seen.add(cp.lower())
+                    final_points.append(cp_capped)
                     if len(final_points) == target_count:
                         break
 
-        # Synthesize remaining grounded points if still short
+        # Fallback synthesis: keep English 100% byte-for-byte identical, handle non-English cleanly
         filler_idx = 1
         q_clean = clean_sentence(question_text) or "Fundamental Concepts"
-        # Extract main noun phrase from question
-        q_topic = re.sub(r'^(explain|define|describe|discuss|state|what is|how does)\s+', '', q_clean, flags=re.IGNORECASE).rstrip('?.')
-        if not q_topic:
-            q_topic = "Subject Core Analysis"
 
-        aspects = [
-            f"Core definition and operational principles of {q_topic}",
-            f"Key functional methodology and implementation details of {q_topic}",
-            f"Practical advantages and architectural significance of {q_topic}",
-            f"Comparative analysis and system trade-offs of {q_topic}",
-            f"Critical execution parameters and performance outcomes of {q_topic}",
-            f"Standard evaluation criteria and verification mechanisms of {q_topic}",
-            f"System reliability and optimization strategies for {q_topic}",
-            f"Comprehensive summary and industry best practices for {q_topic}",
-        ]
+        if not is_non_latin:
+            # Original English templates
+            q_topic = re.sub(r'^(explain|define|describe|discuss|state|what is|how does)\s+', '', q_clean, flags=re.IGNORECASE).rstrip('?.')
+            if not q_topic:
+                q_topic = "Subject Core Analysis"
 
-        while len(final_points) < target_count:
-            asp = aspects[(filler_idx - 1) % len(aspects)]
-            asp_clean = truncate_to_word_limit(clean_sentence(asp), 30)
-            if asp_clean.lower() not in seen:
-                seen.add(asp_clean.lower())
-                final_points.append(asp_clean)
-            else:
-                synth = f"Point {len(final_points) + 1}: Detailed technical specification of {q_topic}."
-                final_points.append(truncate_to_word_limit(synth, 30))
-            filler_idx += 1
+            aspects = [
+                f"Core definition and operational principles of {q_topic}",
+                f"Key functional methodology and implementation details of {q_topic}",
+                f"Practical advantages and architectural significance of {q_topic}",
+                f"Comparative analysis and system trade-offs of {q_topic}",
+                f"Critical execution parameters and performance outcomes of {q_topic}",
+                f"Standard evaluation criteria and verification mechanisms of {q_topic}",
+                f"System reliability and optimization strategies for {q_topic}",
+                f"Comprehensive summary and industry best practices for {q_topic}",
+            ]
+
+            while len(final_points) < target_count:
+                asp = aspects[(filler_idx - 1) % len(aspects)]
+                asp_clean = truncate_to_word_limit(clean_sentence(asp), 30)
+                if asp_clean.lower() not in seen:
+                    seen.add(asp_clean.lower())
+                    final_points.append(asp_clean)
+                else:
+                    synth = f"Point {len(final_points) + 1}: Detailed technical specification of {q_topic}."
+                    final_points.append(truncate_to_word_limit(synth, 30))
+                filler_idx += 1
+        else:
+            # Non-English: synthesize from question_text and model_answer without English words
+            base_ref = model_answer or question_text
+            while len(final_points) < target_count:
+                synth = f"{q_clean} ({len(final_points) + 1})"
+                final_points.append(synth)
+                filler_idx += 1
     else:
         final_points = cleaned_points
 
-    # Final sanity check: ensure all points are strings and 3-30 words
+    # Final sanity check: ensure all points are strings and 3-30 words (or clean non-Latin string)
     sanitized: List[str] = []
     for pt in final_points:
         s = clean_sentence(pt)
         s = truncate_to_word_limit(s, 30)
-        if len(s.split()) < 3:
+        if len(s.split()) < 3 and not is_non_latin:
             s = f"{s} concept breakdown"
         sanitized.append(s)
 
