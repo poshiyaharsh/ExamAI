@@ -80,6 +80,32 @@ def _do_run_grouped_generation_job(job_id: int):
     )
 
     vector_store = LocalVectorStore(job.id, language=lang)
+    vector_store.load_from_disk()
+
+    # Safety verification: If job.language is 'en', verify against loaded chunks and blueprint topics
+    if lang == 'en' and vector_store.chunks:
+        try:
+            from .language import determine_paper_language
+            from .rag.embedder import RAGEmbedder
+            vs_sample_texts = [c.get('text', '') for c in vector_store.chunks[:15]]
+            bp_topics = [s.get('topic', '') for s in (job.blueprint or []) if s.get('topic')]
+            detected_vs_lang, conf, _ = determine_paper_language(vs_sample_texts, topics=bp_topics)
+            if detected_vs_lang != 'en' and conf >= 0.4:
+                lang = detected_vs_lang
+                job.language = lang
+                role_info = get_model_roles_for_language(lang)
+                job.model_assignments = role_info
+                job.save(update_fields=['language', 'model_assignments'])
+                mcq_model = role_info.get('mcq_generator') or 'gemma3:4b'
+                fast_model = role_info.get('fast_generator') or 'gemma3:4b'
+                writer_model = role_info.get('answer_writer') or 'gemma3:4b'
+                validator_model = role_info.get('validator') or 'gemma3:4b'
+                fallback_model = role_info.get('fallback') or 'qwen3:4b'
+                vector_store.language = lang
+                vector_store.embedder = RAGEmbedder(language=lang)
+        except Exception as lang_exc:
+            logger.warning(f"Failed vector store language verification: {lang_exc}")
+
     retriever = RAGRetriever(vector_store, job.id)
     deduplicator = QuestionDeduplicator()
     q_gen = QuestionGenerator(client, retriever, job_id=job.id, language=lang)

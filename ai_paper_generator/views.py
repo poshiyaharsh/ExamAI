@@ -256,11 +256,8 @@ class FacultyAiModelsAPIView(AIPaperGeneratorBaseAPIView):
 # ---------------------------------------------------------
 
 UNIT_PATTERNS = [
-
-    re.compile(r'(?i)^(?:unit|chapter|module|section|part)\s*[-:]?\s*([0-9ivxlcdm]+)[\s\-:.]*([^\n\r]+)'),
-
-    re.compile(r'(?i)^([0-9ivxlcdm]+)\.\s+([A-Z][^\n\r]+)'),
-
+    re.compile(r'(?i)^(?:unit|chapter|module|section|part|પ્રકરણ|એકમ|વિભાગ|અધ્યાય|પાઠ|ઇકાઇ|इकाई|अध्याय|पाठ|भाग)\s*[-:]?\s*([0-9ivxlcdm૦-૯०-९]+)[\s\-:.]*([^\n\r]+)'),
+    re.compile(r'(?i)^([0-9ivxlcdm૦-૯०-९]+)\.\s+([A-Z\u0A80-\u0AFF\u0900-\u097F][^\n\r]+)'),
 ]
 
 DOMAIN_KEYWORDS = {
@@ -1024,6 +1021,25 @@ class SuggestBlueprintView(APIView):
 
 
 
+def _collect_uploaded_files(request) -> List[Any]:
+    """Collects uploaded document files from request.FILES across all known form field names."""
+    files = []
+    seen = set()
+    for key in ['files', 'file', 'syllabus', 'material', 'study_material', 'document', 'syllabus_file']:
+        if key in request.FILES:
+            for f in request.FILES.getlist(key):
+                if id(f) not in seen:
+                    seen.add(id(f))
+                    files.append(f)
+
+    for key, flist in request.FILES.lists():
+        for f in flist:
+            if id(f) not in seen:
+                seen.add(id(f))
+                files.append(f)
+    return files
+
+
 class StartGenerationView(AIPaperGeneratorBaseAPIView):
 
     """
@@ -1155,8 +1171,7 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
         total_marks = vdata['total_marks']
 
         sections = vdata['sections']
-
-        topics = vdata['topics']
+        topics = vdata.get('topics') or []
 
         diff_dist = vdata.get('difficulty_distribution') or {'Easy': 30, 'Medium': 50, 'Hard': 20}
 
@@ -1237,12 +1252,7 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
 
 
         # 3. Validate uploaded document files
-
-        uploaded_files = request.FILES.getlist('files')
-
-        if not uploaded_files and 'file' in request.FILES:
-
-            uploaded_files = [request.FILES['file']]
+        uploaded_files = _collect_uploaded_files(request)
 
 
 
@@ -1327,16 +1337,7 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
         )
 
         # Handle uploaded document files for RAG index
-
-        uploaded_files = request.FILES.getlist('files')
-
-        if not uploaded_files and 'file' in request.FILES:
-
-            uploaded_files = [request.FILES['file']]
-
-
-
-
+        uploaded_files = _collect_uploaded_files(request)
 
         all_chunks = []
         uploaded_doc_sections = []
@@ -1357,12 +1358,52 @@ class StartGenerationView(AIPaperGeneratorBaseAPIView):
                 finally:
                     if os.path.exists(tmp_path):
                         os.unlink(tmp_path)
-        else:
-            # If no files uploaded, create synthetic topic chunks so RAG still operates
+
+        # Also load materials selected by material_ids if passed
+        material_ids = request.data.getlist('material_ids') if hasattr(request.data, 'getlist') else request.data.get('material_ids')
+        if material_ids:
+            if isinstance(material_ids, str):
+                try:
+                    material_ids = json.loads(material_ids)
+                except Exception:
+                    material_ids = [material_ids]
+            if not isinstance(material_ids, list):
+                material_ids = [material_ids]
+
+            try:
+                from faculty.models import SyllabusUpload
+                for mat_id in material_ids:
+                    try:
+                        mat_obj = SyllabusUpload.objects.filter(id=int(mat_id)).first()
+                        if mat_obj:
+                            if mat_obj.file and hasattr(mat_obj.file, 'path') and os.path.exists(mat_obj.file.path):
+                                pages = load_document(mat_obj.file.path)
+                                uploaded_doc_sections.extend(pages)
+                                chunks = chunk_document_pages(pages, default_topic=topics[0] if topics else 'Study Material')
+                                all_chunks.extend(chunks)
+                            elif mat_obj.extracted_text:
+                                pages = [{'page_number': 1, 'text': mat_obj.extracted_text, 'source': mat_obj.original_filename or 'study_material'}]
+                                uploaded_doc_sections.extend(pages)
+                                chunks = chunk_document_pages(pages, default_topic=topics[0] if topics else 'Study Material')
+                                all_chunks.extend(chunks)
+                    except Exception as mat_exc:
+                        logger.warning(f"Failed to load material id {mat_id}: {mat_exc}")
+            except Exception:
+                pass
+
+        if not all_chunks:
+            # If no files uploaded, create synthetic topic chunks that adapt to topic language
+            from .language import detect_language
+            combined_topics = " ".join(topics) if topics else ""
+            t_lang, t_conf, _ = detect_language(combined_topics) if len(combined_topics.strip()) >= 4 else ('en', 1.0, {})
             for t in topics:
+                if t_lang != 'en' and t_conf >= 0.4:
+                    chunk_text = f"{t}. {vdata['subject']}."
+                else:
+                    chunk_text = f"Curriculum Unit: {t}. Core principles, fundamental concepts, and applied analytical methodologies of {vdata['subject']}."
                 all_chunks.append({
                     'chunk_id': f"topic_{t}",
-                    'text': f"Curriculum Unit: {t}. Core principles, fundamental concepts, and applied analytical methodologies of {vdata['subject']}.",
+                    'text': chunk_text,
                     'source': 'curriculum_topics',
                     'page': 1,
                     'topic': t,

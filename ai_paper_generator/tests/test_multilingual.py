@@ -325,3 +325,36 @@ class MultilingualExportTests(TestCase):
         self.assertIn("મુખ્ય", converted)
         self.assertIn("લક્ષણો", converted)
 
+    def test_start_generation_with_frontend_syllabus_file_field(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.contrib.auth.models import User
+        from faculty.models import FacultyProfile
+        from admins.models import AdminInstitution
+        from ai_paper_generator.models import GenerationJob
+        import json
+
+        admin_user, _ = User.objects.get_or_create(username="admin_test", defaults={'email': 'a@test.com'})
+        inst, _ = AdminInstitution.objects.get_or_create(institution_name="Test University", defaults={'admin': admin_user})
+        user, _ = User.objects.get_or_create(username="faculty_gujarati", defaults={'email': 'f@test.com'})
+        FacultyProfile.objects.get_or_create(user=user, defaults={'institution': inst, 'department': 'Computer'})
+
+        gujarati_content = "કોમ્પ્યુટર એક ઇલેક્ટ્રોનિક યંત્ર છે જે માહિતીનું પ્રોસેસિંગ કરે છે અને ઇચ્છિત પરિણામ આપે છે. ઇનપુટ ડિવાઇસ તરીકે કીબોર્ડ અને માઉસ વપરાય છે."
+        uploaded_file = SimpleUploadedFile("syllabus.txt", gujarati_content.encode('utf-8'), content_type="text/plain")
+
+        self.client.force_login(user)
+        payload = {
+            'title': 'ગુજરાતી કમ્પ્યુટર પેપર',
+            'subject': 'Computer',
+            'total_marks': 10,
+            'duration': 30,
+            'sections': json.dumps([{'type': 'MCQ', 'count': 5, 'marks_per_question': 2}]),
+            'syllabus': uploaded_file,  # Frontend React wizard sends file under 'syllabus'
+        }
+        res = self.client.post('/api/ai-generator/generate/', payload, format='multipart')
+        self.assertEqual(res.status_code, 202)
+        job_id = res.data['job_id']
+        job = GenerationJob.objects.get(id=job_id)
+        self.assertEqual(job.language, 'gu')
+        self.assertEqual(job.model_assignments.get('mcq_generator'), 'gemma3:4b')
+
+
