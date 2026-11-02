@@ -315,3 +315,13 @@ class MultilingualExportTests(TestCase):
         # DOCX is a zip archive starting with PK (0x50, 0x4B)
         self.assertTrue(docx_bytes.startswith(b'PK'))
         self.assertGreater(len(docx_bytes), 5000)
+
+    def test_legacy_gujarati_shree_lipi_converter(self):
+        from ai_paper_generator.rag.legacy_fonts import convert_shree_to_unicode
+        sample_8bit = "ÀùQMÝðËß ±õËáõ åð_? ÀùQMÝðËßÞë_ ÜðAÝ áZëHëù"
+        converted = convert_shree_to_unicode(sample_8bit)
+        self.assertIn("કોમ્પ્યુટર", converted)
+        self.assertIn("એટલે", converted)
+        self.assertIn("મુખ્ય", converted)
+        self.assertIn("લક્ષણો", converted)
+

@@ -141,6 +141,14 @@ def get_num_predict_for_language(question_type: str, language: str = 'en') -> in
     return int(base * factor)
 
 
+def get_num_ctx_for_language(model: str, language: str = 'en') -> int:
+    """Returns num_ctx for model; English is unchanged, non-Latin scripts use 4096."""
+    base_ctx = NUM_CTX_BY_MODEL.get(model, DEFAULT_NUM_CTX)
+    if not language or language == 'en':
+        return base_ctx
+    return max(4096, base_ctx * 2)
+
+
 def get_batch_size_for_language(question_type: str, language: str = 'en') -> int:
     """Safely adjusts batch size for Indic/Arabic to prevent VRAM swapping on RTX 2050."""
     base = BATCH_SIZE_BY_TYPE.get(question_type, 5)

@@ -21,7 +21,7 @@ from ..prompts.short import build_batch_short_prompt, build_short_prompt, SHORT_
 from ..prompts.long import build_batch_long_prompt, build_long_prompt, LONG_JSON_SCHEMA, get_batch_long_schema
 from ..prompts.system_rules import BASE_SYSTEM_PROMPT
 from ..logging_setup import log_event
-from ..config import TEMPERATURE_BY_TYPE, BASE_TOKENS_BY_TYPE, get_token_expansion_factor
+from ..config import TEMPERATURE_BY_TYPE, BASE_TOKENS_BY_TYPE, get_token_expansion_factor, get_num_ctx_for_language
 from .json_repair import parse_and_repair_json, extract_questions_list
 from .mcq_normalizer import normalize_mcq
 from .rubric_builder import build_rubric
@@ -109,6 +109,7 @@ class QuestionGenerator:
                     json_mode=True,
                     format=schema,
                     temperature=temp,
+                    num_ctx=get_num_ctx_for_language(model_name, self.language),
                     num_predict=num_predict,
                     job_id=self.job_id,
                     stage=f"batch_{q_type.lower().replace(' ', '_')}",

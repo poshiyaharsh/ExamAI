@@ -203,6 +203,20 @@ def load_document(file_path: str) -> List[Dict[str, Any]]:
 
     combined_text = "\n".join(s.get('text', '') for s in sections)
     if is_garbled_legacy_text(combined_text):
+        # Attempt transparent legacy font conversion (e.g. Shree-Lipi / Saral Gujarati)
+        if ext == '.pdf':
+            try:
+                from ai_paper_generator.rag.legacy_fonts import extract_legacy_pdf
+                from ai_paper_generator.language import analyze_scripts
+                converted_sections = extract_legacy_pdf(file_path)
+                if converted_sections:
+                    converted_text = "\n".join(s.get('text', '') for s in converted_sections)
+                    scripts = analyze_scripts(converted_text)
+                    if (scripts.get('Gujarati', 0.0) > 0.20 or scripts.get('Devanagari', 0.0) > 0.20) and not is_garbled_legacy_text(converted_text):
+                        return converted_sections
+            except Exception:
+                pass
+
         raise ValueError(
             "The uploaded document appears to use legacy 8-bit encoded text (such as Kruti Dev or Shree-Lipi) "
             "rather than standard Unicode. Please convert it to standard Unicode font or UTF-8 text before uploading."
